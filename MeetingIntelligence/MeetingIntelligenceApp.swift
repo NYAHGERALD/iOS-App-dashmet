@@ -6,12 +6,21 @@
 //
 
 import SwiftUI
+import FirebaseCore
 
 @main
 struct MeetingIntelligenceApp: App {
+    
+    // Use AppDelegate for Firebase Auth
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
+    
+    init() {
+        print("🚀 MeetingIntelligence App Starting...")
+    }
+    
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
         }
     }
 }

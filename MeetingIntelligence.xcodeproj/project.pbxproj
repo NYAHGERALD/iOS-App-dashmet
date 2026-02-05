@@ -6,6 +6,17 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		17C551842F344C2C00EA0E2F /* FirebaseAI in Frameworks */ = {isa = PBXBuildFile; productRef = 17C551832F344C2C00EA0E2F /* FirebaseAI */; };
+		17C551862F344C2C00EA0E2F /* FirebaseAILogic in Frameworks */ = {isa = PBXBuildFile; productRef = 17C551852F344C2C00EA0E2F /* FirebaseAILogic */; };
+		17C551882F344C2C00EA0E2F /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = 17C551872F344C2C00EA0E2F /* FirebaseAnalytics */; };
+		17C5518A2F344C2C00EA0E2F /* FirebaseAppCheck in Frameworks */ = {isa = PBXBuildFile; productRef = 17C551892F344C2C00EA0E2F /* FirebaseAppCheck */; };
+		17C5518C2F344C2C00EA0E2F /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 17C5518B2F344C2C00EA0E2F /* FirebaseAuth */; };
+		17C5518E2F344C2C00EA0E2F /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 17C5518D2F344C2C00EA0E2F /* FirebaseCore */; };
+		17C551902F344C2C00EA0E2F /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 17C5518F2F344C2C00EA0E2F /* FirebaseFirestore */; };
+		17C551922F344C2C00EA0E2F /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = 17C551912F344C2C00EA0E2F /* FirebaseStorage */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		17C551452F34204F00EA0E2F /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -29,9 +40,22 @@
 		17C5514E2F34204F00EA0E2F /* MeetingIntelligenceUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MeetingIntelligenceUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		17C551942F344EFF00EA0E2F /* Exceptions for "MeetingIntelligence" folder in "MeetingIntelligence" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 17C551362F34204E00EA0E2F /* MeetingIntelligence */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		17C551392F34204E00EA0E2F /* MeetingIntelligence */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				17C551942F344EFF00EA0E2F /* Exceptions for "MeetingIntelligence" folder in "MeetingIntelligence" target */,
+			);
 			path = MeetingIntelligence;
 			sourceTree = "<group>";
 		};
@@ -52,6 +76,14 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				17C5518A2F344C2C00EA0E2F /* FirebaseAppCheck in Frameworks */,
+				17C5518C2F344C2C00EA0E2F /* FirebaseAuth in Frameworks */,
+				17C551862F344C2C00EA0E2F /* FirebaseAILogic in Frameworks */,
+				17C551842F344C2C00EA0E2F /* FirebaseAI in Frameworks */,
+				17C5518E2F344C2C00EA0E2F /* FirebaseCore in Frameworks */,
+				17C551922F344C2C00EA0E2F /* FirebaseStorage in Frameworks */,
+				17C551882F344C2C00EA0E2F /* FirebaseAnalytics in Frameworks */,
+				17C551902F344C2C00EA0E2F /* FirebaseFirestore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -79,6 +111,7 @@
 				17C551392F34204E00EA0E2F /* MeetingIntelligence */,
 				17C551472F34204F00EA0E2F /* MeetingIntelligenceTests */,
 				17C551512F34204F00EA0E2F /* MeetingIntelligenceUITests */,
+				17C551972F3458DB00EA0E2F /* Frameworks */,
 				17C551382F34204E00EA0E2F /* Products */,
 			);
 			sourceTree = "<group>";
@@ -98,6 +131,13 @@
 			children = (
 			);
 			path = doc;
+			sourceTree = "<group>";
+		};
+		17C551972F3458DB00EA0E2F /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -120,6 +160,14 @@
 			);
 			name = MeetingIntelligence;
 			packageProductDependencies = (
+				17C551832F344C2C00EA0E2F /* FirebaseAI */,
+				17C551852F344C2C00EA0E2F /* FirebaseAILogic */,
+				17C551872F344C2C00EA0E2F /* FirebaseAnalytics */,
+				17C551892F344C2C00EA0E2F /* FirebaseAppCheck */,
+				17C5518B2F344C2C00EA0E2F /* FirebaseAuth */,
+				17C5518D2F344C2C00EA0E2F /* FirebaseCore */,
+				17C5518F2F344C2C00EA0E2F /* FirebaseFirestore */,
+				17C551912F344C2C00EA0E2F /* FirebaseStorage */,
 			);
 			productName = MeetingIntelligence;
 			productReference = 17C551372F34204E00EA0E2F /* MeetingIntelligence.app */;
@@ -203,6 +251,9 @@
 			);
 			mainGroup = 17C5512E2F34204E00EA0E2F;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				17C551822F344C2C00EA0E2F /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 17C551382F34204E00EA0E2F /* Products */;
 			projectDirPath = "";
@@ -408,6 +459,7 @@
 				DEVELOPMENT_TEAM = F9M458TK87;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MeetingIntelligence/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -440,6 +492,7 @@
 				DEVELOPMENT_TEAM = F9M458TK87;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MeetingIntelligence/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -586,6 +639,60 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		17C551822F344C2C00EA0E2F /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 12.9.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		17C551832F344C2C00EA0E2F /* FirebaseAI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 17C551822F344C2C00EA0E2F /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAI;
+		};
+		17C551852F344C2C00EA0E2F /* FirebaseAILogic */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 17C551822F344C2C00EA0E2F /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAILogic;
+		};
+		17C551872F344C2C00EA0E2F /* FirebaseAnalytics */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 17C551822F344C2C00EA0E2F /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAnalytics;
+		};
+		17C551892F344C2C00EA0E2F /* FirebaseAppCheck */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 17C551822F344C2C00EA0E2F /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAppCheck;
+		};
+		17C5518B2F344C2C00EA0E2F /* FirebaseAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 17C551822F344C2C00EA0E2F /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAuth;
+		};
+		17C5518D2F344C2C00EA0E2F /* FirebaseCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 17C551822F344C2C00EA0E2F /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseCore;
+		};
+		17C5518F2F344C2C00EA0E2F /* FirebaseFirestore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 17C551822F344C2C00EA0E2F /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFirestore;
+		};
+		17C551912F344C2C00EA0E2F /* FirebaseStorage */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 17C551822F344C2C00EA0E2F /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseStorage;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 17C5512F2F34204E00EA0E2F /* Project object */;
 }
