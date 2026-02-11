@@ -492,6 +492,9 @@ class ConflictResolutionManager: ObservableObject {
             if currentCase?.id == updatedCase.id {
                 currentCase = caseToUpdate
             }
+            
+            // Explicitly notify observers
+            objectWillChange.send()
         }
         saveCases()
     }
@@ -502,14 +505,16 @@ class ConflictResolutionManager: ObservableObject {
         if currentCase?.id == caseToDelete.id {
             currentCase = nil
         }
+        objectWillChange.send()
         saveCases()
     }
     
     /// Add document to case
     func addDocument(to caseId: UUID, document: CaseDocument) {
         if let index = cases.firstIndex(where: { $0.id == caseId }) {
-            cases[index].documents.append(document)
-            cases[index].updatedAt = Date()
+            var updatedCase = cases[index]
+            updatedCase.documents.append(document)
+            updatedCase.updatedAt = Date()
             
             // Add audit entry
             let auditEntry = CaseAuditEntry(
@@ -518,11 +523,17 @@ class ConflictResolutionManager: ObservableObject {
                 userId: "",
                 userName: "Supervisor"
             )
-            cases[index].auditLog.append(auditEntry)
+            updatedCase.auditLog.append(auditEntry)
+            
+            // Replace the case in the array to trigger @Published update
+            cases[index] = updatedCase
             
             if currentCase?.id == caseId {
-                currentCase = cases[index]
+                currentCase = updatedCase
             }
+            
+            // Explicitly notify observers
+            objectWillChange.send()
         }
         saveCases()
     }
@@ -530,10 +541,11 @@ class ConflictResolutionManager: ObservableObject {
     /// Delete document from case
     func deleteDocument(from caseId: UUID, documentId: UUID) {
         if let index = cases.firstIndex(where: { $0.id == caseId }) {
-            if let docIndex = cases[index].documents.firstIndex(where: { $0.id == documentId }) {
-                let documentType = cases[index].documents[docIndex].type.displayName
-                cases[index].documents.remove(at: docIndex)
-                cases[index].updatedAt = Date()
+            var updatedCase = cases[index]
+            if let docIndex = updatedCase.documents.firstIndex(where: { $0.id == documentId }) {
+                let documentType = updatedCase.documents[docIndex].type.displayName
+                updatedCase.documents.remove(at: docIndex)
+                updatedCase.updatedAt = Date()
                 
                 // Add audit entry
                 let auditEntry = CaseAuditEntry(
@@ -542,11 +554,17 @@ class ConflictResolutionManager: ObservableObject {
                     userId: "",
                     userName: "Supervisor"
                 )
-                cases[index].auditLog.append(auditEntry)
+                updatedCase.auditLog.append(auditEntry)
+                
+                // Replace case in array to trigger @Published update
+                cases[index] = updatedCase
                 
                 if currentCase?.id == caseId {
-                    currentCase = cases[index]
+                    currentCase = updatedCase
                 }
+                
+                // Explicitly notify observers
+                objectWillChange.send()
             }
         }
         saveCases()
@@ -555,9 +573,10 @@ class ConflictResolutionManager: ObservableObject {
     /// Finalize and close a case
     func finalizeCase(_ caseToClose: ConflictCase) {
         if let index = cases.firstIndex(where: { $0.id == caseToClose.id }) {
-            cases[index].status = .closed
-            cases[index].closedAt = Date()
-            cases[index].updatedAt = Date()
+            var updatedCase = cases[index]
+            updatedCase.status = .closed
+            updatedCase.closedAt = Date()
+            updatedCase.updatedAt = Date()
             
             // Add audit entry
             let auditEntry = CaseAuditEntry(
@@ -566,11 +585,17 @@ class ConflictResolutionManager: ObservableObject {
                 userId: "",
                 userName: "Supervisor"
             )
-            cases[index].auditLog.append(auditEntry)
+            updatedCase.auditLog.append(auditEntry)
+            
+            // Replace case in array to trigger @Published update
+            cases[index] = updatedCase
             
             if currentCase?.id == caseToClose.id {
-                currentCase = cases[index]
+                currentCase = updatedCase
             }
+            
+            // Explicitly notify observers
+            objectWillChange.send()
         }
         saveCases()
     }

@@ -615,6 +615,49 @@ struct DecisionSupportView: View {
             return
         }
         
+        // Get witness statements from case documents
+        let witnessStatements = conflictCase.documents.filter { $0.type == .witnessStatement }
+        
+        // Build prior history info from case documents
+        let hasPriorComplaints = conflictCase.documents.contains { $0.type == .priorRecord }
+        let hasPriorCounseling = conflictCase.documents.contains { $0.type == .counselingRecord }
+        let hasPriorWarnings = conflictCase.documents.contains { $0.type == .warningDocument }
+        
+        // Build notes from prior history documents
+        var priorHistoryNotes: [String] = []
+        if hasPriorComplaints {
+            let priorDocs = conflictCase.documents.filter { $0.type == .priorRecord }
+            for doc in priorDocs {
+                if let text = doc.cleanedText.isEmpty ? doc.originalText : doc.cleanedText, !text.isEmpty {
+                    priorHistoryNotes.append("Prior complaint: \(text.prefix(200))...")
+                }
+            }
+        }
+        if hasPriorCounseling {
+            let counselingDocs = conflictCase.documents.filter { $0.type == .counselingRecord }
+            for doc in counselingDocs {
+                if let text = doc.cleanedText.isEmpty ? doc.originalText : doc.cleanedText, !text.isEmpty {
+                    priorHistoryNotes.append("Counseling record: \(text.prefix(200))...")
+                }
+            }
+        }
+        if hasPriorWarnings {
+            let warningDocs = conflictCase.documents.filter { $0.type == .warningDocument }
+            for doc in warningDocs {
+                if let text = doc.cleanedText.isEmpty ? doc.originalText : doc.cleanedText, !text.isEmpty {
+                    priorHistoryNotes.append("Warning: \(text.prefix(200))...")
+                }
+            }
+        }
+        
+        let priorHistory: PriorHistoryInfo? = (hasPriorComplaints || hasPriorCounseling || hasPriorWarnings) ?
+            PriorHistoryInfo(
+                hasPriorComplaints: hasPriorComplaints,
+                hasPriorCounseling: hasPriorCounseling,
+                hasPriorWarnings: hasPriorWarnings,
+                notes: priorHistoryNotes.isEmpty ? nil : priorHistoryNotes.joined(separator: "\n")
+            ) : nil
+        
         isLoading = true
         errorMessage = nil
         
@@ -628,8 +671,8 @@ struct DecisionSupportView: View {
                     complaintBEmployee: employees[1],
                     analysisResult: analysisResult,
                     policyMatches: policyMatches,
-                    witnessStatements: [],
-                    priorHistory: nil
+                    witnessStatements: witnessStatements,
+                    priorHistory: priorHistory
                 )
                 
                 await MainActor.run {

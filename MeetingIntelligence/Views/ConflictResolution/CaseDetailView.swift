@@ -684,70 +684,94 @@ struct CaseDetailView: View {
     
     // MARK: - Analysis Tab
     private func analysisTab(_ caseItem: ConflictCase) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            if let comparison = caseItem.comparisonResult {
-                // Show analysis summary with button to view full analysis
-                analysisReadyView(comparison)
-                
-                // Phase 5: Evidence Expansion
-                EvidenceExpansionView(
-                    conflictCase: caseItem,
-                    onAddWitness: {
-                        showAddEmployeeSheet = true
-                    },
-                    onScanWitnessStatement: { witness in
-                        selectedWitnessForStatement = witness
-                        showWitnessStatementScanner = true
-                    },
-                    onAddPriorHistory: {
-                        showAddDocument = true
-                    },
-                    onReAnalyze: {
-                        runAIAnalysis(for: caseItem)
-                    },
-                    onSkip: {
-                        // Continue to policy alignment
+        ZStack {
+            VStack(alignment: .leading, spacing: 16) {
+                if let comparison = caseItem.comparisonResult {
+                    // Show analysis summary with button to view full analysis
+                    analysisReadyView(comparison)
+                    
+                    // Phase 5: Evidence Expansion
+                    EvidenceExpansionView(
+                        conflictCase: caseItem,
+                        onAddWitness: {
+                            showAddEmployeeSheet = true
+                        },
+                        onScanWitnessStatement: { witness in
+                            selectedWitnessForStatement = witness
+                            showWitnessStatementScanner = true
+                        },
+                        onAddPriorHistory: {
+                            showAddDocument = true
+                        },
+                        onReAnalyze: {
+                            runAIAnalysis(for: caseItem)
+                        },
+                        onSkip: {
+                            // Continue to policy alignment
+                        }
+                    )
+                    
+                    // Phase 6: Policy Alignment
+                    PolicyAlignmentView(
+                        conflictCase: caseItem,
+                        policy: manager.activePolicy,
+                        analysisResult: comparison,
+                        onRunPolicyMatch: {
+                            // Policy matching is handled internally by the view
+                        },
+                        onSkip: {
+                            // Continue to decision support
+                        }
+                    )
+                    
+                    // Phase 7: Decision Support
+                    DecisionSupportView(
+                        conflictCase: caseItem,
+                        analysisResult: comparison,
+                        policyMatches: policyMatchResults.isEmpty ? nil : policyMatchResults,
+                        onSelectRecommendation: { recommendation in
+                            selectedRecommendation = recommendation
+                            // Move to action generation phase
+                            showActionGeneration = true
+                        },
+                        onSkip: {
+                            selectedTab = 3 // Timeline tab
+                        }
+                    )
+                    
+                    // Phase 8: Action Generation (shown after recommendation selected)
+                    if let recommendation = selectedRecommendation {
+                        actionGenerationSection(caseItem: caseItem, comparison: comparison, recommendation: recommendation)
                     }
-                )
-                
-                // Phase 6: Policy Alignment
-                PolicyAlignmentView(
-                    conflictCase: caseItem,
-                    policy: manager.activePolicy,
-                    analysisResult: comparison,
-                    onRunPolicyMatch: {
-                        // Policy matching is handled internally by the view
-                    },
-                    onSkip: {
-                        // Continue to decision support
-                    }
-                )
-                
-                // Phase 7: Decision Support
-                DecisionSupportView(
-                    conflictCase: caseItem,
-                    analysisResult: comparison,
-                    policyMatches: policyMatchResults.isEmpty ? nil : policyMatchResults,
-                    onSelectRecommendation: { recommendation in
-                        selectedRecommendation = recommendation
-                        // Move to action generation phase
-                        showActionGeneration = true
-                    },
-                    onSkip: {
-                        selectedTab = 3 // Timeline tab
-                    }
-                )
-                
-                // Phase 8: Action Generation (shown after recommendation selected)
-                if let recommendation = selectedRecommendation {
-                    actionGenerationSection(caseItem: caseItem, comparison: comparison, recommendation: recommendation)
+                } else {
+                    pendingAnalysisView(caseItem)
                 }
-            } else {
-                pendingAnalysisView(caseItem)
+            }
+            .frame(maxWidth: .infinity)
+            .opacity(isAnalyzing && caseItem.comparisonResult != nil ? 0.5 : 1.0)
+            .disabled(isAnalyzing)
+            
+            // Re-Analysis Loading Overlay
+            if isAnalyzing && caseItem.comparisonResult != nil {
+                VStack(spacing: 16) {
+                    ProgressView()
+                        .scaleEffect(1.5)
+                        .tint(AppColors.primary)
+                    
+                    Text("Re-Analyzing with New Evidence...")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(textPrimary)
+                    
+                    Text("This may take a moment")
+                        .font(.system(size: 13))
+                        .foregroundColor(textSecondary)
+                }
+                .padding(32)
+                .background(cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .shadow(color: Color.black.opacity(0.2), radius: 20)
             }
         }
-        .frame(maxWidth: .infinity)
-    }
     
     // MARK: - Phase 8: Action Generation Section
     private func actionGenerationSection(caseItem: ConflictCase, comparison: AIComparisonResult, recommendation: RecommendationOption) -> some View {
