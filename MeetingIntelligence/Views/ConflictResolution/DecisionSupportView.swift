@@ -58,7 +58,8 @@ struct DecisionSupportView: View {
             // Action Buttons
             actionButtons
         }
-        .padding()
+        .padding(.horizontal, 12)
+        .padding(.vertical, 16)
         .frame(maxWidth: .infinity)
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
@@ -615,8 +616,17 @@ struct DecisionSupportView: View {
             return
         }
         
-        // Get witness statements from case documents
-        let witnessStatements = conflictCase.documents.filter { $0.type == .witnessStatement }
+        // Get witness statements from case documents and convert to WitnessStatementInput
+        let witnessStatements: [WitnessStatementInput] = conflictCase.documents
+            .filter { $0.type == .witnessStatement && (!$0.cleanedText.isEmpty || !$0.originalText.isEmpty) }
+            .compactMap { doc in
+                if let employeeId = doc.employeeId,
+                   let witness = conflictCase.involvedEmployees.first(where: { $0.id == employeeId }) {
+                    let text = doc.cleanedText.isEmpty ? doc.originalText : doc.cleanedText
+                    return WitnessStatementInput(witnessName: witness.name, text: text)
+                }
+                return nil
+            }
         
         // Build prior history info from case documents
         let hasPriorComplaints = conflictCase.documents.contains { $0.type == .priorRecord }
@@ -628,7 +638,8 @@ struct DecisionSupportView: View {
         if hasPriorComplaints {
             let priorDocs = conflictCase.documents.filter { $0.type == .priorRecord }
             for doc in priorDocs {
-                if let text = doc.cleanedText.isEmpty ? doc.originalText : doc.cleanedText, !text.isEmpty {
+                let text = doc.cleanedText.isEmpty ? doc.originalText : doc.cleanedText
+                if !text.isEmpty {
                     priorHistoryNotes.append("Prior complaint: \(text.prefix(200))...")
                 }
             }
@@ -636,7 +647,8 @@ struct DecisionSupportView: View {
         if hasPriorCounseling {
             let counselingDocs = conflictCase.documents.filter { $0.type == .counselingRecord }
             for doc in counselingDocs {
-                if let text = doc.cleanedText.isEmpty ? doc.originalText : doc.cleanedText, !text.isEmpty {
+                let text = doc.cleanedText.isEmpty ? doc.originalText : doc.cleanedText
+                if !text.isEmpty {
                     priorHistoryNotes.append("Counseling record: \(text.prefix(200))...")
                 }
             }
@@ -644,7 +656,8 @@ struct DecisionSupportView: View {
         if hasPriorWarnings {
             let warningDocs = conflictCase.documents.filter { $0.type == .warningDocument }
             for doc in warningDocs {
-                if let text = doc.cleanedText.isEmpty ? doc.originalText : doc.cleanedText, !text.isEmpty {
+                let text = doc.cleanedText.isEmpty ? doc.originalText : doc.cleanedText
+                if !text.isEmpty {
                     priorHistoryNotes.append("Warning: \(text.prefix(200))...")
                 }
             }

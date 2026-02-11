@@ -96,7 +96,8 @@ struct CaseDetailView: View {
                                 // Tab Content
                                 tabContent(caseItem)
                             }
-                            .padding()
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 16)
                             .frame(width: geometry.size.width)
                         }
                     }
@@ -772,6 +773,7 @@ struct CaseDetailView: View {
                 .shadow(color: Color.black.opacity(0.2), radius: 20)
             }
         }
+    }
     
     // MARK: - Phase 8: Action Generation Section
     private func actionGenerationSection(caseItem: ConflictCase, comparison: AIComparisonResult, recommendation: RecommendationOption) -> some View {
@@ -969,7 +971,8 @@ struct CaseDetailView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             }
         }
-        .padding()
+        .padding(.horizontal, 12)
+        .padding(.vertical, 16)
         .frame(maxWidth: .infinity)
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 14))
@@ -981,7 +984,7 @@ struct CaseDetailView: View {
                 .font(.system(size: 20, weight: .bold))
                 .foregroundColor(color)
             Text(label)
-                .font(.system(size: 9))
+                .font(.system(size: 11))
                 .foregroundColor(textSecondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)

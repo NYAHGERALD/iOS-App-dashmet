@@ -68,7 +68,8 @@ struct EvidenceExpansionView: View {
             // Action Buttons
             actionButtons
         }
-        .padding()
+        .padding(.horizontal, 12)
+        .padding(.vertical, 16)
         .frame(maxWidth: .infinity)
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))

@@ -63,7 +63,8 @@ struct PolicyAlignmentView: View {
             // Action Buttons
             actionButtons
         }
-        .padding()
+        .padding(.horizontal, 12)
+        .padding(.vertical, 16)
         .frame(maxWidth: .infinity)
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
@@ -119,6 +120,7 @@ struct PolicyAlignmentView: View {
                 .font(.system(size: 14))
                 .foregroundColor(textSecondary)
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.vertical, 20)
     }
@@ -151,6 +153,7 @@ struct PolicyAlignmentView: View {
                 .font(.system(size: 13))
                 .foregroundColor(textSecondary)
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.vertical, 20)
     }
@@ -180,6 +183,7 @@ struct PolicyAlignmentView: View {
                 .font(.system(size: 14))
                 .foregroundColor(textSecondary)
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
             
             Button {
                 matchingError = nil
@@ -241,12 +245,13 @@ struct PolicyAlignmentView: View {
                 .font(.system(size: 13))
                 .foregroundColor(textSecondary)
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
     
     // MARK: - Results Section
     private func resultsSection(_ result: PolicyMatchingResult) -> some View {
-        VStack(spacing: 16) {
+        VStack(alignment: .leading, spacing: 16) {
             // Match count summary
             HStack(spacing: 16) {
                 VStack(spacing: 4) {
@@ -282,7 +287,7 @@ struct PolicyAlignmentView: View {
                         .foregroundColor(textSecondary)
                 }
             }
-            .padding(.horizontal, 20)
+            .padding(.horizontal, 8)
             
             // Matched sections
             if result.hasMatches {
@@ -312,6 +317,7 @@ struct PolicyAlignmentView: View {
                         .font(.system(size: 13))
                         .foregroundColor(textSecondary)
                         .lineSpacing(4)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(12)
                 .background(Color.yellow.opacity(0.1))
@@ -322,7 +328,7 @@ struct PolicyAlignmentView: View {
     
     // MARK: - Match Card
     private func matchCard(_ match: PolicyMatchResult) -> some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             // Header (always visible)
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -363,10 +369,9 @@ struct PolicyAlignmentView: View {
                         Text(match.sectionTitle)
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundColor(textPrimary)
-                            .lineLimit(expandedMatchId == match.id ? nil : 2)
+                            .lineLimit(expandedMatchId == match.id ? nil : 3)
                             .multilineTextAlignment(.leading)
-                        
-                        Spacer()
+                            .fixedSize(horizontal: false, vertical: true)
                         
                         Image(systemName: expandedMatchId == match.id ? "chevron.up" : "chevron.down")
                             .font(.system(size: 12, weight: .semibold))
@@ -388,23 +393,25 @@ struct PolicyAlignmentView: View {
                         .font(.system(size: 13))
                         .foregroundColor(textSecondary)
                         .lineSpacing(4)
+                        .fixedSize(horizontal: false, vertical: true)
                     
-                    // Key phrases
+                    // Key phrases - displayed as wrapped text items
                     if !match.keyPhrases.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Key Phrases")
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundColor(textSecondary)
                             
-                            PolicyFlowLayout(spacing: 6) {
+                            VStack(alignment: .leading, spacing: 6) {
                                 ForEach(match.keyPhrases, id: \.self) { phrase in
                                     Text(phrase)
-                                        .font(.system(size: 11))
+                                        .font(.system(size: 12))
                                         .foregroundColor(.purple)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
                                         .background(Color.purple.opacity(0.1))
-                                        .clipShape(Capsule())
+                                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                                        .fixedSize(horizontal: false, vertical: true)
                                 }
                             }
                         }
@@ -425,7 +432,8 @@ struct PolicyAlignmentView: View {
                 }
             }
         }
-        .padding(16)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 14)
         .background(innerCardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
@@ -453,6 +461,7 @@ struct PolicyAlignmentView: View {
                 .font(.system(size: 13))
                 .foregroundColor(textSecondary)
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.vertical, 16)
     }
