@@ -1267,6 +1267,33 @@ struct CaseDetailView: View {
                 return nil
             }
         
+        // Get prior history documents
+        let priorHistoryDocs: [PriorHistoryInput] = caseItem.documents
+            .filter { $0.type == .priorRecord || $0.type == .counselingRecord || $0.type == .warningDocument }
+            .compactMap { doc in
+                let text = doc.cleanedText.isEmpty ? (doc.translatedText ?? doc.originalText) : doc.cleanedText
+                guard !text.isEmpty else { return nil }
+                
+                let typeString: String
+                switch doc.type {
+                case .priorRecord:
+                    typeString = "prior_complaint"
+                case .counselingRecord:
+                    typeString = "counseling_record"
+                case .warningDocument:
+                    typeString = "warning_document"
+                default:
+                    typeString = "other"
+                }
+                
+                return PriorHistoryInput(
+                    type: typeString,
+                    documentDate: doc.createdAt.formatted(date: .abbreviated, time: .omitted),
+                    summary: text,
+                    employeeName: doc.submittedBy
+                )
+            }
+        
         // Build case details
         let caseDetails = CaseComparisonDetails(
             incidentDate: caseItem.incidentDate.formatted(date: .abbreviated, time: .omitted),
@@ -1284,7 +1311,8 @@ struct CaseDetailView: View {
                     complaintB: complaintBDoc,
                     complaintBEmployee: complainantB,
                     caseDetails: caseDetails,
-                    witnessStatements: witnessStatements
+                    witnessStatements: witnessStatements,
+                    priorHistory: priorHistoryDocs
                 )
                 
                 await MainActor.run {

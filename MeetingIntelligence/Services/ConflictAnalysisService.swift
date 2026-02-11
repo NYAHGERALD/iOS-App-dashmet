@@ -31,7 +31,8 @@ class ConflictAnalysisService {
         complaintB: CaseDocument,
         complaintBEmployee: InvolvedEmployee,
         caseDetails: CaseComparisonDetails,
-        witnessStatements: [WitnessStatementInput] = []
+        witnessStatements: [WitnessStatementInput] = [],
+        priorHistory: [PriorHistoryInput] = []
     ) async throws -> AIComparisonResult {
         
         guard let url = URL(string: baseURL + "/compare") else {
@@ -66,6 +67,23 @@ class ConflictAnalysisService {
                     "witnessName": witness.witnessName,
                     "text": witness.text
                 ]
+            }
+        }
+        
+        // Add prior history if available
+        if !priorHistory.isEmpty {
+            requestBody["priorHistory"] = priorHistory.map { history in
+                var historyDict: [String: Any] = [
+                    "type": history.type,
+                    "summary": history.summary
+                ]
+                if let date = history.documentDate {
+                    historyDict["documentDate"] = date
+                }
+                if let name = history.employeeName {
+                    historyDict["employeeName"] = name
+                }
+                return historyDict
             }
         }
         
@@ -199,6 +217,13 @@ struct CaseComparisonDetails {
 struct WitnessStatementInput {
     let witnessName: String
     let text: String
+}
+
+struct PriorHistoryInput {
+    let type: String  // "prior_complaint", "counseling_record", "warning_document"
+    let documentDate: String?
+    let summary: String
+    let employeeName: String?
 }
 
 // MARK: - Errors
