@@ -265,10 +265,11 @@ class AuthViewModel: ObservableObject {
     }
     
     /// Link Firebase UID to existing user after OTP verification
-    func linkFirebaseUID() async {
+    /// Returns user profile data if successful
+    func linkFirebaseUID() async -> LinkedUserInfo? {
         guard let firebaseUID = authService.firebaseUID else {
             print("❌ No Firebase UID to link")
-            return
+            return nil
         }
         
         do {
@@ -277,13 +278,16 @@ class AuthViewModel: ObservableObject {
                 firebaseUid: firebaseUID
             )
             
-            if response.success {
-                print("✅ Firebase UID linked to user")
+            if response.success, let user = response.user {
+                print("✅ Firebase UID linked to user: \(user.id)")
+                return user
             } else {
                 print("⚠️ Failed to link Firebase UID: \(response.error ?? "Unknown")")
+                return nil
             }
         } catch {
             print("⚠️ Error linking Firebase UID: \(error)")
+            return nil
         }
     }
 }

@@ -9,7 +9,7 @@ import Foundation
 
 /// Environment configuration with placeholder values
 /// Replace placeholders with actual values before deployment
-enum Environment {
+enum AppEnvironment {
     
     // MARK: - Firebase Configuration
     static let firebaseProjectID = "YOUR_FIREBASE_PROJECT_ID"

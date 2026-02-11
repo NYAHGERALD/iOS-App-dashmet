@@ -16,6 +16,12 @@ struct MeetingIntelligenceApp: App {
     
     init() {
         print("🚀 MeetingIntelligence App Starting...")
+        
+        // Clean up any pending audio deletions from previous session
+        // This ensures audio is deleted even if user quit the app during deletion
+        Task { @MainActor in
+            ComplianceService.shared.performPendingDeletionsOnLaunch()
+        }
     }
     
     var body: some Scene {

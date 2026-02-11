@@ -4,6 +4,18 @@
 <dict>
 	<key>FirebaseAppDelegateProxyEnabled</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Meeting Intelligence needs access to your camera to capture photos for action item evidence and attachments.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Meeting Intelligence needs access to your photo library to attach images as evidence for action items.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Meeting Intelligence needs access to your microphone to record meetings for transcription and analysis.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Meeting Intelligence uses speech recognition to provide real-time live transcription during your meetings, automatically identifying speakers and converting speech to text.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

@@ -1,384 +1,454 @@
-# CLEAN DEVELOPMENT BLUEPRINT  
-## AI Meeting Intelligence & Action Management App  
-### iOS (Swift) First — Test-Gated, Step-by-Step Execution
+📌 FEATURE FLOW
+Policy-Aware Conflict Resolution Assistant (Supervisor Module)
+🔵 PHASE 1 — POLICY FOUNDATION (One-Time or Update)
+Step 1 — Upload Workplace Policy
 
-> RULE: **Never move forward unless the current step RUNS and is VERIFIED**
+Supervisor/HR uploads policy document (PDF/DOC).
 
----
+System extracts text.
 
-## CORE DEVELOPMENT PRINCIPLES (MANDATORY)
+System divides into structured sections.
 
-1. **One feature at a time**
-2. **Every step must run successfully**
-3. **Manual verification before automation**
-4. **No feature stacking**
-5. **Backend + iOS validated together**
-6. **If something breaks, STOP and fix immediately**
+System stores sections in database.
 
-This blueprint is written to **prevent hidden bugs** and **reduce debugging time**.
+✅ Output:
 
----
+Policy is now searchable and referenceable.
 
-## TECHNOLOGY LOCK (NO CHANGES MIDWAY)
+Policy becomes “active” for all future cases.
 
-- iOS: Swift (SwiftUI preferred)
-- Auth: Firebase Phone Authentication
-- Storage: Firebase Storage
-- Database: PostgreSQL (Render)
-- Backend: API service + Worker service
-- AI: Managed AI APIs (transcription + diarization)
-- Notifications: Push (APNs via Firebase)
+🔵 PHASE 2 — CREATE NEW CASE
+Step 2 — Start Case
 
----
+Supervisor taps:
 
-# PHASE 0 — PROJECT FOUNDATION (NO FEATURES YET)
+“Create New Conflict Case”
 
-### STEP 0.1 — Create Repositories
-Create **three clean repositories**:
-- `meeting-ai-ios`
-- `meeting-ai-backend`
-- `meeting-ai-worker`
+System asks:
 
-✅ TEST / VERIFY:
-- Each repo builds or runs a default scaffold
-- No errors, no warnings
+Case type (Conflict / Conduct / Safety / Other)
 
-❌ DO NOT PROCEED if any repo does not start cleanly
+Date of incident
 
----
+Location / Department / Shift
 
-### STEP 0.2 — Environment Configuration (NO SECRETS)
-Define environment variables using **placeholders only**.
+Names of involved employees
 
-Backend must start with:
-- DATABASE_URL (placeholder)
-- FIREBASE_PROJECT_ID
-- FIREBASE_CONFIG_PATH
+Case status = Draft
 
-✅ TEST / VERIFY:
-- Backend boots without crashing
-- Logs show “environment loaded”
+🔵 PHASE 3 — SCAN COMPLAINTS
+Step 3 — Scan Complaint A
 
----
+Supervisor scans handwritten or printed complaint.
 
-# PHASE 1 — AUTHENTICATION (FOUNDATION OF EVERYTHING)
+Scan Entry Screen
+Screen: “Scan Document”
 
-## WHY FIRST?
-If auth is broken, **everything else is useless**.
+Options:
 
----
+📷 Scan with Camera
 
-### STEP 1.1 — iOS Login UI ONLY
-Build:
-- Phone number input
-- OTP input
-- Verify button
-- Loading + error states
+📁 Upload Existing File
 
-❌ No backend calls yet
+If user taps Scan with Camera →
 
-✅ TEST / VERIFY:
-- UI renders correctly
-- Input validation works
-- Error messages show properly
+↓
 
----
+🟦 Live Edge Detection Screen (Real-Time Tracking)
+Screen: Live Camera Scanner
 
-### STEP 1.2 — Firebase Phone Auth (iOS)
-Connect UI to Firebase Phone Auth:
-- Send OTP
-- Verify OTP
-- Receive Firebase ID token
+Behavior:
 
-✅ TEST / VERIFY:
-- Login succeeds on real device
-- Invalid OTP fails correctly
-- Token is returned
+Camera opens full screen.
 
-❌ DO NOT proceed without real-device verification
+System detects rectangular document in view.
 
----
+Edges are outlined with animated border.
 
-### STEP 1.3 — Backend Auth Verification
-Backend:
-- Accept Firebase ID token
-- Verify token
-- Extract firebase_uid
+Corners snap into alignment automatically.
 
-Create `/me` endpoint.
+Real-time perspective correction preview.
 
-✅ TEST / VERIFY:
-- iOS sends token
-- Backend validates token
-- `/me` returns user identity
+Auto-capture when stable.
 
-🚫 STOP if token verification fails
+User sees:
 
----
+Blue outline when detected
 
-### STEP 1.4 — Auto-Create User in Postgres
-On first login:
-- Create user record in Postgres
-- Map firebase_uid → user_id
+Green outline when ready to auto-capture
 
-✅ TEST / VERIFY:
-- First login inserts user row
-- Second login does NOT duplicate user
-- `/me` returns Postgres user data
+Manual capture button (backup option)
 
----
+Flash toggle
 
-# PHASE 2 — TASK SYSTEM (NO AI YET)
+Cancel button
 
-## WHY?
-Tasks are the **core value**, AI is just an accelerator.
+System behavior:
 
----
+If document is shaky → no capture.
 
-### STEP 2.1 — Create Task API (MINIMAL)
-Backend:
-- Create task (title, owner, due date)
-- Fetch tasks assigned to user
+If edges unclear → prompt: “Adjust lighting or flatten paper.”
 
-✅ TEST / VERIFY:
-- API creates task
-- API fetches task
-- Data persists in Postgres
+This is the Adobe Scan-style experience.
 
----
+🟦 Auto-Capture + Processing Screen
 
-### STEP 2.2 — iOS Task List UI
-Build:
-- Task list screen
-- Empty state
-- Loading state
+After auto snap:
 
-❌ No edit, no comments yet
+System:
 
-✅ TEST / VERIFY:
-- Tasks display correctly
-- Refresh works
-- App does not crash offline
+Applies perspective correction
 
----
+Auto-crops
 
-### STEP 2.3 — Assign Task + Status Change
-Add:
-- Assign task to user
-- Change task status
+Straightens
 
-✅ TEST / VERIFY:
-- Assignment updates DB
-- Status changes persist
-- UI reflects changes immediately
+Enhances contrast (document mode)
 
----
+Removes shadow
 
-### STEP 2.4 — Push Notifications (TASK ASSIGNED)
-Implement:
-- Device token registration
-- Push notification when task assigned
+Smooths edges
 
-✅ TEST / VERIFY:
-- Assign task
-- Assignee receives push notification
-- Notification opens correct task
+User sees:
 
-🚫 If notifications fail, STOP and fix
+Before / After toggle (optional)
 
----
+Option to manually adjust corners (drag control points)
 
-# PHASE 3 — MEETING CREATION (NO AI PROCESSING YET)
+Retake button
 
----
+Add Page button
 
-### STEP 3.1 — Create Meeting UI
-iOS:
-- Create meeting screen
-- Title input
-- Start / Stop recording button
+Multi-page scanning allowed.
 
-❌ No upload yet
+Button:
+👉 Continue
 
-✅ TEST / VERIFY:
-- UI works
-- Timer works
-- Audio file saved locally
+↓
 
----
+🟦 Document Review Screen
 
-### STEP 3.2 — Firebase Storage Upload
-Implement:
-- Upload recorded audio
-- Save storage path
+User sees:
 
-✅ TEST / VERIFY:
-- Audio uploads successfully
-- File visible in Firebase Storage
-- No public access
+Thumbnail list of all scanned pages
 
----
+Ability to:
 
-### STEP 3.3 — Backend Meeting Record
-Backend:
-- Create meeting record
-- Attach audio asset reference
+Reorder pages
 
-✅ TEST / VERIFY:
-- Meeting stored in Postgres
-- Audio path linked
-- Meeting status = UPLOADED
+Delete page
 
----
+Re-scan page
 
-# PHASE 4 — AI PROCESSING (CONTROLLED INTRODUCTION)
+Preview full PDF
 
----
+Button:
+👉 Confirm & Process
 
-### STEP 4.1 — Transcription ONLY
-Worker:
-- Pull meeting audio
-- Generate transcript
-- Store transcript text
+↓
 
-❌ No diarization yet
+🟦 Background Processing Screen
 
-✅ TEST / VERIFY:
-- Transcript generated
-- Stored correctly
-- Visible in iOS
+System now:
 
----
+Runs OCR
 
-### STEP 4.2 — Speaker Diarization
-Add:
-- Speaker count
-- Speaker segments
+Detects handwriting vs typed
 
-✅ TEST / VERIFY:
-- Multiple speakers detected
-- Segments align with transcript
+Detects language
 
----
+Translates if needed
 
-### STEP 4.3 — Summary Generation
-Add:
-- Summary
-- Key points
-- Decisions
+Corrects spelling
 
-✅ TEST / VERIFY:
-- Summary readable
-- No hallucinated content
-- Confidence score stored
+Adjusts sentences
 
----
+Stores original image + processed image + raw text
 
-### STEP 4.4 — Action Item Suggestions
-Generate:
-- Suggested tasks (NOT auto-created)
+User sees:
 
-iOS:
-- Review screen
-- Accept / edit / discard
+“Processing Document…”
 
-✅ TEST / VERIFY:
-- Suggestions make sense
-- Accepted items become real tasks
+Estimated time indicator
 
----
+When done:
 
-# PHASE 5 — REVIEW → PUBLISH WORKFLOW
+↓
 
----
+🟦 Text Review Screen
 
-### STEP 5.1 — Review Gate
-Implement:
-- Meeting status = READY_FOR_REVIEW
-- Creator approval required
+Tabs:
 
-✅ TEST / VERIFY:
-- Tasks NOT visible until published
-- Review edits persist
+📄 Original Text (raw OCR)
 
----
+🌍 Translated (if needed)
 
-### STEP 5.2 — Publish & Notify
-On publish:
-- Tasks created
-- Assignees notified
+✍ Cleaned & Structured
 
-✅ TEST / VERIFY:
-- Notifications sent
-- Tasks appear in assignee list
+User confirms:
+👉 Accept Document
 
----
+Now document becomes part of the case.
 
-# PHASE 6 — IMPORT SYSTEM (OPTIONAL BUT CONTROLLED)
+🔁 This Scan Flow Repeats For:
 
----
+Policy upload
 
-### STEP 6.1 — CSV Import ONLY
-Implement:
-- Upload CSV
-- Preview rows
-- Validate columns
+Complaint A
 
-✅ TEST / VERIFY:
-- Invalid rows rejected
-- Valid rows imported
+Complaint B
 
----
+Witness statements
 
-### STEP 6.2 — Excel Import
-Add Excel → CSV conversion
+Prior records
 
-✅ TEST / VERIFY:
-- Same behavior as CSV
 
----
+System extracts text (OCR).
 
-# PHASE 7 — HARDENING & SAFETY
+Detect language.
 
----
+Translate to English (if needed).
 
-### STEP 7.1 — Error Handling
-- Network failures
-- Partial AI failures
-- Retry logic
+Correct spelling and grammar.
 
----
+Adjust sentences for clarity (context-based).
 
-### STEP 7.2 — Audit Logs
-Track:
-- Who changed what
-- When
-- Before/after
+Preserve original text separately.
 
-✅ TEST / VERIFY:
-- Every action logged
+System stores:
 
----
+Original
 
-# FINAL ACCEPTANCE CRITERIA
+Translated
 
-You can:
-- Login reliably
-- Create and assign tasks
-- Receive push notifications
-- Record a meeting
-- Get transcript, summary, and action items
-- Review before publishing
-- Import tasks safely
-- Audit all changes
+Cleaned version
 
----
+Step 4 — Scan Complaint B
 
-## NON-NEGOTIABLE RULE
-> **If a step fails, you STOP and fix it before proceeding.**
+Same process as Complaint A.
 
-This is how clean systems are built.
+🔵 PHASE 4 — INITIAL AI COMPARISON
+Step 5 — Compare Both Statements
 
----
+AI analyzes:
 
-END OF CLEAN BLUEPRINT
+Timeline differences
+
+Agreement points
+
+Contradictions
+
+Emotional escalation language
+
+Missing details (date/time/location)
+
+System displays:
+
+Side-by-side comparison
+
+Highlighted inconsistencies
+
+Neutral summary of incident
+f
+AI does NOT accuse.
+It only identifies differences.
+
+🔵 PHASE 5 — EVIDENCE EXPANSION
+Step 6 — Ask for Witness Statements
+
+System asks:
+
+“Are there any witnesses?”
+
+If yes:
+
+Scan witness statements
+
+Process same as complaints
+
+If no:
+
+Continue
+
+Step 7 — Ask for Previous History (Optional)
+
+System asks:
+
+Any prior complaints between these employees?
+
+Any prior counseling records?
+
+Any previous warnings?
+
+Supervisor can:
+
+Upload documents
+
+Or select from past cases in system
+
+AI updates context.
+
+🔵 PHASE 6 — POLICY ALIGNMENT
+Step 8 — Policy Matching
+
+AI checks:
+
+Do statements potentially align with any policy sections?
+
+If yes, which section(s)?
+
+System shows:
+
+Policy section reference
+
+Short explanation of why it may be relevant
+
+No accusations.
+Only relevance suggestions.
+
+🔵 PHASE 7 — DECISION SUPPORT
+Step 9 — AI Recommendation Layer
+
+AI presents structured options:
+
+Option A — Coaching Recommended
+Option B — Documented Counseling
+Option C — Written Warning Draft
+Option D — Escalate to HR
+
+Each option includes:
+
+Why this option is suggested
+
+Risk level assessment
+
+Suggested next step
+
+Supervisor must choose.
+AI does not decide.
+
+🔵 PHASE 8 — ACTION GENERATION
+
+Depending on selection:
+
+If Coaching Selected:
+
+System generates:
+
+Neutral discussion outline
+
+Talking points
+
+Questions to ask
+
+Behavioral focus areas
+
+Follow-up timeline suggestion
+
+If Counseling Selected:
+
+System generates:
+
+Counseling documentation draft
+
+Objective language
+
+Policy references (if applicable)
+
+If Warning Selected:
+
+System generates:
+
+Professional warning draft
+
+Policy-aligned language
+
+Neutral tone
+
+Structured format ready for HR review
+
+If Escalate to HR:
+
+System generates:
+
+Full case summary
+
+Attached statements
+
+Timeline
+
+Policy references
+
+Supervisor notes
+
+🔵 PHASE 9 — SUPERVISOR REVIEW
+
+Supervisor:
+
+Reviews AI outputs
+
+Edits if needed
+
+Approves final version
+
+System logs:
+
+All edits
+
+Final selected action
+
+🔵 PHASE 10 — FINALIZATION
+
+Supervisor taps:
+
+“Finalize Case”
+
+System:
+
+Locks case record
+
+Stores full audit trail
+
+Generates exportable PDF package
+
+Option to send to HR
+
+Case status = Closed
+
+🔁 Optional Enhancements (Later Phase)
+
+Push notification when case ready
+
+Supervisor reflection notes
+
+Risk scoring over time
+
+Pattern detection (repeat conflicts)
+
+🔄 Complete Flow Summary (Simple View)
+
+Upload policy
+
+Create case
+
+Scan complaint A
+
+Scan complaint B
+
+AI compare
+
+Add witnesses
+
+Add history
+
+Policy match
+
+AI suggests actions
+
+Supervisor selects action
+
+Draft generated
+
+Supervisor edits
+
+Finalize + export

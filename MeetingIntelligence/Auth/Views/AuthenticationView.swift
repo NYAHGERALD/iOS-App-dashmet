@@ -36,14 +36,24 @@ struct AuthenticationView: View {
                 case .success:
                     AuthSuccessView(userID: viewModel.currentUserID ?? "")
                         .onAppear {
-                            // Link Firebase UID to user in database
+                            // Link Firebase UID to user in database and get profile
                             Task {
-                                await viewModel.linkFirebaseUID()
+                                if let user = await viewModel.linkFirebaseUID() {
+                                    // Save user profile to AppState
+                                    appState.setUserProfile(
+                                        userId: user.id,
+                                        firstName: user.firstName,
+                                        lastName: user.lastName,
+                                        organizationId: user.organizationId ?? "",
+                                        facilityId: user.facilityId,
+                                        role: user.role ?? ""
+                                    )
+                                }
                             }
                             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                                if let userID = viewModel.currentUserID {
-                                    onAuthenticated(userID, viewModel.idToken)
-                                }
+                                // Use database user ID if available, fallback to Firebase UID
+                                let userID = appState.currentUserID ?? viewModel.currentUserID ?? ""
+                                onAuthenticated(userID, viewModel.idToken)
                             }
                         }
                 case .error:

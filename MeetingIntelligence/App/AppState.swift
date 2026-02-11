@@ -33,6 +33,8 @@ class AppState: ObservableObject {
     @Published var firstName: String?
     @Published var lastName: String?
     @Published var userRole: String?
+    @Published var email: String?
+    @Published var profilePictureUrl: String?
     
     // UserDefaults keys for persistence
     private enum UserDefaultsKeys {
@@ -42,6 +44,8 @@ class AppState: ObservableObject {
         static let firstName = "first_name"
         static let lastName = "last_name"
         static let userRole = "user_role"
+        static let email = "user_email"
+        static let profilePicture = "profile_picture_url"
     }
     
     // MARK: - Initialization
@@ -49,7 +53,7 @@ class AppState: ObservableObject {
         isLoading = true
         
         // Validate environment configuration
-        let configValid = Environment.validateConfiguration()
+        let configValid = AppEnvironment.validateConfiguration()
         
         if !configValid {
             errorMessage = "Invalid environment configuration"
@@ -93,6 +97,8 @@ class AppState: ObservableObject {
         firstName = defaults.string(forKey: UserDefaultsKeys.firstName)
         lastName = defaults.string(forKey: UserDefaultsKeys.lastName)
         userRole = defaults.string(forKey: UserDefaultsKeys.userRole)
+        email = defaults.string(forKey: UserDefaultsKeys.email)
+        profilePictureUrl = defaults.string(forKey: UserDefaultsKeys.profilePicture)
         
         if currentUserID != nil {
             print("📦 Loaded persisted user data: \(firstName ?? "") \(lastName ?? "")")
@@ -114,7 +120,9 @@ class AppState: ObservableObject {
         lastName: String,
         organizationId: String,
         facilityId: String?,
-        role: String
+        role: String,
+        email: String? = nil,
+        profilePictureUrl: String? = nil
     ) {
         self.currentUserID = userId
         self.firstName = firstName
@@ -122,6 +130,8 @@ class AppState: ObservableObject {
         self.organizationId = organizationId
         self.facilityId = facilityId
         self.userRole = role
+        self.email = email
+        self.profilePictureUrl = profilePictureUrl
         
         // Persist to UserDefaults
         let defaults = UserDefaults.standard
@@ -131,8 +141,26 @@ class AppState: ObservableObject {
         defaults.set(organizationId, forKey: UserDefaultsKeys.organizationId)
         defaults.set(facilityId, forKey: UserDefaultsKeys.facilityId)
         defaults.set(role, forKey: UserDefaultsKeys.userRole)
+        if let email = email {
+            defaults.set(email, forKey: UserDefaultsKeys.email)
+        }
+        if let profilePictureUrl = profilePictureUrl {
+            defaults.set(profilePictureUrl, forKey: UserDefaultsKeys.profilePicture)
+        }
         
         print("✅ User profile saved: \(firstName) \(lastName)")
+    }
+    
+    /// Update just the profile picture URL
+    func updateProfilePicture(_ url: String?) {
+        self.profilePictureUrl = url
+        let defaults = UserDefaults.standard
+        if let url = url {
+            defaults.set(url, forKey: UserDefaultsKeys.profilePicture)
+        } else {
+            defaults.removeObject(forKey: UserDefaultsKeys.profilePicture)
+        }
+        print("✅ Profile picture updated")
     }
     
     func logout() {
@@ -148,6 +176,8 @@ class AppState: ObservableObject {
             firstName = nil
             lastName = nil
             userRole = nil
+            email = nil
+            profilePictureUrl = nil
             
             // Clear persisted data
             let defaults = UserDefaults.standard
@@ -157,6 +187,8 @@ class AppState: ObservableObject {
             defaults.removeObject(forKey: UserDefaultsKeys.firstName)
             defaults.removeObject(forKey: UserDefaultsKeys.lastName)
             defaults.removeObject(forKey: UserDefaultsKeys.userRole)
+            defaults.removeObject(forKey: UserDefaultsKeys.email)
+            defaults.removeObject(forKey: UserDefaultsKeys.profilePicture)
             
             print("👋 User logged out")
         } catch {

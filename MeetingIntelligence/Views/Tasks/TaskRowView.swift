@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct TaskRowView: View {
-    let task: Task
+    let task: TaskItem
     var onStatusTap: ((TaskStatus) -> Void)?
     
     @State private var isPressed = false
@@ -161,7 +161,7 @@ extension Color {
 #if DEBUG
 struct TaskRowView_Previews: PreviewProvider {
     static var previews: some View {
-        let sampleTask = Task(
+        let sampleTask = TaskItem(
             id: "1",
             title: "Review meeting notes and prepare summary",
             description: "Go through the meeting recording and extract key action items",
@@ -169,13 +169,20 @@ struct TaskRowView_Previews: PreviewProvider {
             priority: .high,
             dueDate: Date().addingTimeInterval(3600 * 24), // Tomorrow
             completedAt: nil,
+            progress: 25,
+            sourceText: nil,
+            isAiExtracted: false,
             ownerId: "user1",
             owner: TaskUser(id: "user1", firstName: "John", lastName: "Doe", email: "john@example.com"),
             assigneeId: "user2",
             assignee: TaskUser(id: "user2", firstName: "Jane", lastName: "Smith", email: "jane@example.com"),
+            assignees: nil,
             organizationId: "org1",
             facilityId: nil,
             meetingId: nil,
+            comments: nil,
+            evidence: nil,
+            _count: nil,
             createdAt: Date(),
             updatedAt: Date()
         )
@@ -183,7 +190,7 @@ struct TaskRowView_Previews: PreviewProvider {
         VStack(spacing: 0) {
             TaskRowView(task: sampleTask)
             Divider()
-            TaskRowView(task: Task(
+            TaskRowView(task: TaskItem(
                 id: "2",
                 title: "Completed task example",
                 description: nil,
@@ -191,13 +198,20 @@ struct TaskRowView_Previews: PreviewProvider {
                 priority: .low,
                 dueDate: nil,
                 completedAt: Date(),
+                progress: 100,
+                sourceText: nil,
+                isAiExtracted: true,
                 ownerId: "user1",
                 owner: nil,
                 assigneeId: nil,
                 assignee: nil,
+                assignees: nil,
                 organizationId: "org1",
                 facilityId: nil,
                 meetingId: nil,
+                comments: nil,
+                evidence: nil,
+                _count: nil,
                 createdAt: Date(),
                 updatedAt: Date()
             ))
