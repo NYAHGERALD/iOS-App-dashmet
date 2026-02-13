@@ -1429,8 +1429,8 @@ struct DocumentProcessingView: View {
                 )
                 
                 // Upload signature if available
-                if let signatureBase64 = auditLog.signatureImageBase64,
-                   let signatureData = Data(base64Encoded: signatureBase64) {
+                if !auditLog.signatureImageBase64.isEmpty,
+                   let signatureData = Data(base64Encoded: auditLog.signatureImageBase64) {
                     currentStep = "Uploading signature..."
                     signatureURL = try await FirebaseStorageService.shared.uploadSignatureImage(
                         signatureData,
