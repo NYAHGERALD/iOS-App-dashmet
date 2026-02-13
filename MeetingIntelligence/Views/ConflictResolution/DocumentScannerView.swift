@@ -1356,7 +1356,9 @@ struct DocumentProcessingView: View {
             submittedBy: submittedBy?.name
         )
         
-        ConflictResolutionManager.shared.addDocument(to: caseId, document: document)
+        Task {
+            await ConflictResolutionManager.shared.addDocument(to: caseId, document: document)
+        }
         onComplete()
     }
     
@@ -1395,7 +1397,9 @@ struct DocumentProcessingView: View {
         )
         
         // Add document to case
-        ConflictResolutionManager.shared.addDocument(to: caseId, document: document)
+        Task {
+            await ConflictResolutionManager.shared.addDocument(to: caseId, document: document)
+        }
         
         // Submit audit log to backend (fire-and-forget)
         Task {

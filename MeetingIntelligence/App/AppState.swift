@@ -71,6 +71,12 @@ class AppState: ObservableObject {
             do {
                 idToken = try await authService.getIDToken()
                 print("✅ Existing session restored for user: \(user.uid)")
+                
+                // If we have a token but no organizationId (new device), fetch profile from backend
+                if organizationId == nil || organizationId?.isEmpty == true {
+                    print("📥 Fetching user profile from backend (new device or missing data)...")
+                    await fetchAndSetUserProfile()
+                }
             } catch {
                 print("⚠️ Failed to get ID token: \(error.localizedDescription)")
             }
@@ -102,6 +108,15 @@ class AppState: ObservableObject {
         
         if currentUserID != nil {
             print("📦 Loaded persisted user data: \(firstName ?? "") \(lastName ?? "")")
+            
+            // Initialize ConflictResolutionManager with user context for database sync
+            if let userId = currentUserID, let orgId = organizationId {
+                ConflictResolutionManager.shared.setUserContext(
+                    userId: userId,
+                    organizationId: orgId,
+                    facilityId: facilityId
+                )
+            }
         }
     }
     
@@ -148,6 +163,13 @@ class AppState: ObservableObject {
             defaults.set(profilePictureUrl, forKey: UserDefaultsKeys.profilePicture)
         }
         
+        // Initialize ConflictResolutionManager with user context for database sync
+        ConflictResolutionManager.shared.setUserContext(
+            userId: userId,
+            organizationId: organizationId,
+            facilityId: facilityId
+        )
+        
         print("✅ User profile saved: \(firstName) \(lastName)")
     }
     
@@ -161,6 +183,35 @@ class AppState: ObservableObject {
             defaults.removeObject(forKey: UserDefaultsKeys.profilePicture)
         }
         print("✅ Profile picture updated")
+    }
+    
+    /// Fetch user profile from backend and set it (for new device login)
+    private func fetchAndSetUserProfile() async {
+        guard let token = idToken else {
+            print("❌ Cannot fetch profile: No ID token")
+            return
+        }
+        
+        do {
+            let response = try await APIService.shared.getCurrentUserProfile(token: token)
+            if response.success, let userData = response.data?.user {
+                setUserProfile(
+                    userId: userData.id,
+                    firstName: userData.firstName,
+                    lastName: userData.lastName,
+                    organizationId: userData.organizationId ?? "",
+                    facilityId: nil,  // Not available from profile API
+                    role: userData.role ?? "user",
+                    email: userData.email,
+                    profilePictureUrl: userData.profilePicture
+                )
+                print("✅ User profile fetched and set from backend")
+            } else {
+                print("❌ Failed to fetch user profile: \(response.error ?? "Unknown error")")
+            }
+        } catch {
+            print("❌ Error fetching user profile: \(error.localizedDescription)")
+        }
     }
     
     func logout() {

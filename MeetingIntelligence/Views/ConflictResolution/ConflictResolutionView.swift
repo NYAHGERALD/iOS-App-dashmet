@@ -311,7 +311,9 @@ struct ConflictResolutionView: View {
                         conflictCase: conflictCase,
                         colorScheme: colorScheme,
                         onDelete: {
-                            manager.deleteCase(conflictCase)
+                            Task {
+                                await manager.deleteCase(conflictCase)
+                            }
                         }
                     )
                     .onTapGesture {

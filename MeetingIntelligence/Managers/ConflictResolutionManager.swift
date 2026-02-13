@@ -46,6 +46,19 @@ class ConflictResolutionManager: ObservableObject {
     private let policiesKey = "conflictResolution.policies"
     private let casesKey = "conflictResolution.cases"
     private let activePolicyKey = "conflictResolution.activePolicy"
+    private let policyBackendIdsKey = "conflictResolution.policyBackendIds" // Maps local UUID to backend ID
+    
+    // Database sync services
+    private let caseService = ConflictCaseService.shared
+    private let policyService = WorkplacePolicyService.shared
+    
+    // Policy backend ID mapping
+    private var policyBackendIds: [UUID: String] = [:]
+    
+    // User context for API calls (set from AppState)
+    var currentUserId: String?
+    var currentOrganizationId: String?
+    var currentFacilityId: String?
     
     private var cancellables = Set<AnyCancellable>()
     
@@ -53,15 +66,79 @@ class ConflictResolutionManager: ObservableObject {
     
     init() {
         loadPolicies()
-        loadCases()
+        // Cases will be loaded from database when user context is set
     }
     
-    // MARK: - Policy Management
-    
-    /// Load policies from storage
-    func loadPolicies() {
-        isLoadingPolicies = true
+    /// Set user context for API calls (call this when user logs in)
+    func setUserContext(userId: String, organizationId: String, facilityId: String?) {
+        self.currentUserId = userId.isEmpty ? nil : userId
+        self.currentOrganizationId = organizationId.isEmpty ? nil : organizationId
+        self.currentFacilityId = facilityId
         
+        print("📋 ConflictResolutionManager context set - userId: \(userId), orgId: \(organizationId), facilityId: \(facilityId ?? "nil")")
+        
+        // Load policies and cases from database
+        if !userId.isEmpty && !organizationId.isEmpty {
+            Task {
+                await loadPoliciesFromDatabase()
+                await loadCasesFromDatabase()
+            }
+        } else {
+            print("⚠️ User context incomplete - loading from local cache only")
+            loadPoliciesFromCache()
+            loadCasesFromCache()
+        }
+    }
+    
+    // MARK: - Policy Management (Database-Backed)
+    
+    /// Load policies from database
+    func loadPoliciesFromDatabase() async {
+        guard let organizationId = currentOrganizationId else {
+            print("Cannot load policies: organizationId not set")
+            loadPoliciesFromCache()
+            return
+        }
+        
+        isLoadingPolicies = true
+        policyError = nil
+        
+        do {
+            let remotePolicies = try await policyService.fetchPolicies(organizationId: organizationId)
+            
+            // Convert and store
+            policies = remotePolicies.map { apiData in
+                let policy = apiData.toWorkplacePolicy()
+                // Store backend ID mapping
+                policyBackendIds[policy.id] = apiData.id
+                return policy
+            }
+            
+            // Save backend ID mapping
+            savePolicyBackendIds()
+            
+            // Save to local cache
+            savePolicies()
+            
+            // Set active policy
+            activePolicy = policies.first { $0.status == .active }
+            if activePolicy == nil {
+                activePolicy = policies.first
+            }
+            
+            print("✅ Loaded \(policies.count) policies from database")
+        } catch {
+            policyError = "Failed to load policies: \(error.localizedDescription)"
+            print("Error loading policies from database: \(error)")
+            // Fall back to local cache
+            loadPoliciesFromCache()
+        }
+        
+        isLoadingPolicies = false
+    }
+    
+    /// Load policies from local cache (fallback)
+    private func loadPoliciesFromCache() {
         if let data = userDefaults.data(forKey: policiesKey),
            let decoded = try? JSONDecoder().decode([WorkplacePolicy].self, from: data) {
             policies = decoded
@@ -71,15 +148,22 @@ class ConflictResolutionManager: ObservableObject {
                let activeId = try? JSONDecoder().decode(UUID.self, from: activePolicyData) {
                 activePolicy = policies.first { $0.id == activeId }
             } else {
-                // Default to first active policy
                 activePolicy = policies.first { $0.status == .active }
             }
         }
         
+        // Load backend ID mapping
+        loadPolicyBackendIds()
+    }
+    
+    /// Load policies from storage (legacy - now loads from cache)
+    func loadPolicies() {
+        isLoadingPolicies = true
+        loadPoliciesFromCache()
         isLoadingPolicies = false
     }
     
-    /// Save policies to storage
+    /// Save policies to local cache
     private func savePolicies() {
         if let encoded = try? JSONEncoder().encode(policies) {
             userDefaults.set(encoded, forKey: policiesKey)
@@ -88,6 +172,27 @@ class ConflictResolutionManager: ObservableObject {
         if let activePolicy = activePolicy,
            let encoded = try? JSONEncoder().encode(activePolicy.id) {
             userDefaults.set(encoded, forKey: activePolicyKey)
+        }
+    }
+    
+    /// Save policy backend ID mapping
+    private func savePolicyBackendIds() {
+        let stringKeyDict = Dictionary(uniqueKeysWithValues: policyBackendIds.map { (key, value) in
+            (key.uuidString, value)
+        })
+        if let encoded = try? JSONEncoder().encode(stringKeyDict) {
+            userDefaults.set(encoded, forKey: policyBackendIdsKey)
+        }
+    }
+    
+    /// Load policy backend ID mapping
+    private func loadPolicyBackendIds() {
+        if let data = userDefaults.data(forKey: policyBackendIdsKey),
+           let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
+            policyBackendIds = Dictionary(uniqueKeysWithValues: decoded.compactMap { (key, value) -> (UUID, String)? in
+                guard let uuid = UUID(uuidString: key) else { return nil }
+                return (uuid, value)
+            })
         }
     }
     
@@ -146,15 +251,36 @@ class ConflictResolutionManager: ObservableObject {
             description: description,
             documentSource: documentSource,
             sections: sections,
-            organizationId: "", // Will be set from app state
-            createdBy: "", // Will be set from current user
+            organizationId: currentOrganizationId ?? "",
+            createdBy: currentUserId ?? "",
             createdAt: Date(),
             updatedAt: Date()
         )
         
-        // 5. Save policy
+        // 5. Save policy locally first
         policies.append(policy)
         savePolicies()
+        
+        // 6. Sync to database
+        if let userId = currentUserId, let orgId = currentOrganizationId {
+            do {
+                let created = try await policyService.createPolicy(
+                    policy,
+                    creatorId: userId,
+                    organizationId: orgId,
+                    facilityId: currentFacilityId
+                )
+                
+                // Store backend ID mapping
+                policyBackendIds[policy.id] = created.id
+                savePolicyBackendIds()
+                
+                print("✅ Policy synced to database with ID: \(created.id)")
+            } catch {
+                policyError = "Failed to sync policy to database: \(error.localizedDescription)"
+                print("Error syncing policy to database: \(error)")
+            }
+        }
         
         processingProgress = 1.0
         processingStatus = "Complete!"
@@ -163,11 +289,20 @@ class ConflictResolutionManager: ObservableObject {
     }
     
     /// Activate a policy
-    func activatePolicy(_ policy: WorkplacePolicy) {
+    func activatePolicy(_ policy: WorkplacePolicy) async {
         // Deactivate current active policy
         if let currentActive = activePolicy {
             if let index = policies.firstIndex(where: { $0.id == currentActive.id }) {
                 policies[index].status = .superseded
+                
+                // Sync to database
+                if let backendId = policyBackendIds[currentActive.id] {
+                    do {
+                        _ = try await policyService.updatePolicy(id: backendId, updates: ["status": "SUPERSEDED"])
+                    } catch {
+                        print("Error updating superseded policy: \(error)")
+                    }
+                }
             }
         }
         
@@ -176,13 +311,34 @@ class ConflictResolutionManager: ObservableObject {
             policies[index].status = .active
             policies[index].updatedAt = Date()
             activePolicy = policies[index]
+            
+            // Sync to database
+            if let backendId = policyBackendIds[policy.id] {
+                do {
+                    _ = try await policyService.updatePolicy(id: backendId, updates: ["status": "ACTIVE"])
+                } catch {
+                    print("Error updating active policy: \(error)")
+                }
+            }
         }
         
         savePolicies()
     }
     
     /// Delete a policy
-    func deletePolicy(_ policy: WorkplacePolicy) {
+    func deletePolicy(_ policy: WorkplacePolicy) async {
+        // Delete from database first
+        if let backendId = policyBackendIds[policy.id] {
+            do {
+                try await policyService.deletePolicy(id: backendId)
+                policyBackendIds.removeValue(forKey: policy.id)
+                savePolicyBackendIds()
+            } catch {
+                print("Error deleting policy from database: \(error)")
+            }
+        }
+        
+        // Remove locally
         policies.removeAll { $0.id == policy.id }
         if activePolicy?.id == policy.id {
             activePolicy = policies.first { $0.status == .active }
@@ -191,13 +347,49 @@ class ConflictResolutionManager: ObservableObject {
     }
     
     /// Update a policy
-    func updatePolicy(_ policy: WorkplacePolicy) {
+    func updatePolicy(_ policy: WorkplacePolicy) async {
         if let index = policies.firstIndex(where: { $0.id == policy.id }) {
-            policies[index] = policy
-            policies[index].updatedAt = Date()
+            var updatedPolicy = policy
+            updatedPolicy.updatedAt = Date()
+            policies[index] = updatedPolicy
             
             if activePolicy?.id == policy.id {
-                activePolicy = policies[index]
+                activePolicy = updatedPolicy
+            }
+            
+            // Sync to database
+            if let backendId = policyBackendIds[policy.id] {
+                var updates: [String: Any] = [
+                    "name": policy.name,
+                    "version": policy.version,
+                    "effectiveDate": ISO8601DateFormatter().string(from: policy.effectiveDate),
+                    "status": policy.status.rawValue,
+                    "description": policy.description
+                ]
+                
+                if let docSource = policy.documentSource {
+                    updates["documentFileName"] = docSource.fileName
+                    updates["documentFileUrl"] = docSource.fileURL
+                    updates["documentFileType"] = docSource.fileType
+                    updates["documentPageCount"] = docSource.pageCount
+                    if let originalText = docSource.originalText {
+                        updates["originalText"] = originalText
+                    }
+                }
+                
+                if !policy.sections.isEmpty {
+                    if let sectionsData = try? JSONEncoder().encode(policy.sections),
+                       let sectionsArray = try? JSONSerialization.jsonObject(with: sectionsData) {
+                        updates["sections"] = sectionsArray
+                    }
+                }
+                
+                do {
+                    _ = try await policyService.updatePolicy(id: backendId, updates: updates)
+                    print("✅ Policy updated in database")
+                } catch {
+                    print("Error updating policy in database: \(error)")
+                }
             }
         }
         savePolicies()
@@ -430,28 +622,47 @@ class ConflictResolutionManager: ObservableObject {
         return Array(keywords.prefix(10))
     }
     
-    // MARK: - Case Management
+    // MARK: - Case Management (Database-Backed)
     
-    /// Load cases from storage
-    func loadCases() {
-        isLoadingCases = true
+    /// Load cases from database
+    func loadCasesFromDatabase() async {
+        guard let organizationId = currentOrganizationId else {
+            print("Cannot load cases: organizationId not set")
+            return
+        }
         
-        if let data = userDefaults.data(forKey: casesKey),
-           let decoded = try? JSONDecoder().decode([ConflictCase].self, from: data) {
-            cases = decoded
+        isLoadingCases = true
+        caseError = nil
+        
+        do {
+            let remoteCases = try await caseService.fetchCases(organizationId: organizationId)
+            cases = remoteCases.map { $0.toConflictCase() }
+        } catch {
+            caseError = "Failed to load cases: \(error.localizedDescription)"
+            print("Error loading cases from database: \(error)")
+            // Fall back to local cache
+            loadCasesFromCache()
         }
         
         isLoadingCases = false
     }
     
-    /// Save cases to storage
-    private func saveCases() {
+    /// Load cases from local cache (fallback)
+    private func loadCasesFromCache() {
+        if let data = userDefaults.data(forKey: casesKey),
+           let decoded = try? JSONDecoder().decode([ConflictCase].self, from: data) {
+            cases = decoded
+        }
+    }
+    
+    /// Save cases to local cache (for offline support)
+    private func saveCasesToCache() {
         if let encoded = try? JSONEncoder().encode(cases) {
             userDefaults.set(encoded, forKey: casesKey)
         }
     }
     
-    /// Create a new case
+    /// Create a new case and save to database
     func createCase(
         type: CaseType,
         incidentDate: Date,
@@ -459,7 +670,7 @@ class ConflictResolutionManager: ObservableObject {
         department: String,
         shift: String?,
         involvedEmployees: [InvolvedEmployee]
-    ) -> ConflictCase {
+    ) async -> ConflictCase {
         let caseNumber = ConflictCase.generateCaseNumber()
         
         let newCase = ConflictCase(
@@ -471,19 +682,59 @@ class ConflictResolutionManager: ObservableObject {
             department: department,
             shift: shift,
             involvedEmployees: involvedEmployees,
-            createdBy: "", // Set from current user
+            createdBy: currentUserId ?? "",
             activePolicyId: activePolicy?.id
         )
         
+        // Add to local array first
         cases.insert(newCase, at: 0)
         currentCase = newCase
-        saveCases()
+        saveCasesToCache()
+        
+        // Save to database
+        print("🔍 Creating case - userId: \(currentUserId ?? "nil"), orgId: \(currentOrganizationId ?? "nil")")
+        
+        if let userId = currentUserId, !userId.isEmpty,
+           let orgId = currentOrganizationId, !orgId.isEmpty {
+            do {
+                print("📤 Saving case to database...")
+                
+                // Look up backend policy ID from local UUID
+                var backendPolicyId: String? = nil
+                if let localPolicyId = newCase.activePolicyId {
+                    backendPolicyId = policyBackendIds[localPolicyId]
+                    print("🔍 Active policy lookup - local: \(localPolicyId), backend: \(backendPolicyId ?? "not found")")
+                }
+                
+                let created = try await caseService.createCase(
+                    newCase,
+                    creatorId: userId,
+                    organizationId: orgId,
+                    facilityId: currentFacilityId,
+                    activePolicyBackendId: backendPolicyId
+                )
+                
+                // Update with backend ID
+                if let index = cases.firstIndex(where: { $0.id == newCase.id }) {
+                    cases[index].backendId = created.id
+                    currentCase?.backendId = created.id
+                    saveCasesToCache()
+                    print("✅ Case saved to database with ID: \(created.id)")
+                }
+            } catch {
+                caseError = "Failed to save case to database: \(error.localizedDescription)"
+                print("❌ Error saving case to database: \(error)")
+            }
+        } else {
+            caseError = "Cannot save to database: User context not set. Please log out and log in again."
+            print("⚠️ Cannot save to database - missing userId or organizationId")
+        }
         
         return newCase
     }
     
-    /// Update a case
-    func updateCase(_ updatedCase: ConflictCase) {
+    /// Update a case and sync to database
+    func updateCase(_ updatedCase: ConflictCase) async {
         if let index = cases.firstIndex(where: { $0.id == updatedCase.id }) {
             var caseToUpdate = updatedCase
             caseToUpdate.updatedAt = Date()
@@ -493,24 +744,129 @@ class ConflictResolutionManager: ObservableObject {
                 currentCase = caseToUpdate
             }
             
-            // Explicitly notify observers
             objectWillChange.send()
+            saveCasesToCache()
+            
+            // Sync to database
+            if let backendId = caseToUpdate.backendId, let userId = currentUserId {
+                do {
+                    var updates: [String: Any] = [
+                        "status": caseToUpdate.status.rawValue,
+                        "caseType": caseToUpdate.type.rawValue
+                    ]
+                    
+                    if !caseToUpdate.description.isEmpty {
+                        updates["description"] = caseToUpdate.description
+                    }
+                    if let notes = caseToUpdate.supervisorNotes {
+                        updates["supervisorNotes"] = notes
+                    }
+                    if let decision = caseToUpdate.supervisorDecision {
+                        updates["finalDecision"] = decision
+                    }
+                    if let action = caseToUpdate.selectedAction {
+                        updates["selectedActionType"] = action.rawValue
+                    }
+                    if let comparison = caseToUpdate.comparisonResult,
+                       let data = try? JSONEncoder().encode(comparison),
+                       let json = try? JSONSerialization.jsonObject(with: data) {
+                        updates["aiComparisonResultJson"] = json
+                    }
+                    if !caseToUpdate.recommendations.isEmpty,
+                       let data = try? JSONEncoder().encode(caseToUpdate.recommendations),
+                       let json = try? JSONSerialization.jsonObject(with: data) {
+                        updates["aiRecommendationsJson"] = json
+                    }
+                    if !caseToUpdate.policyMatches.isEmpty,
+                       let data = try? JSONEncoder().encode(caseToUpdate.policyMatches),
+                       let json = try? JSONSerialization.jsonObject(with: data) {
+                        updates["policyMatchesJson"] = json
+                    }
+                    if let actionDoc = caseToUpdate.generatedDocument,
+                       let data = try? JSONEncoder().encode(actionDoc),
+                       let json = try? JSONSerialization.jsonObject(with: data) {
+                        updates["generatedActionDocJson"] = json
+                    }
+                    
+                    _ = try await caseService.updateCase(id: backendId, updates: updates, userId: userId)
+                } catch {
+                    caseError = "Failed to sync case update: \(error.localizedDescription)"
+                    print("Error updating case in database: \(error)")
+                }
+            }
         }
-        saveCases()
     }
     
-    /// Delete a case
-    func deleteCase(_ caseToDelete: ConflictCase) {
+    /// Legacy sync version for non-async contexts
+    func updateCaseSync(_ updatedCase: ConflictCase) {
+        Task {
+            await updateCase(updatedCase)
+        }
+    }
+    
+    /// Update case status and sync to database
+    func updateCaseStatus(_ caseId: UUID, to newStatus: CaseStatus) async {
+        if let index = cases.firstIndex(where: { $0.id == caseId }) {
+            var updatedCase = cases[index]
+            updatedCase.status = newStatus
+            updatedCase.updatedAt = Date()
+            
+            // Add audit entry for status change
+            let auditEntry = CaseAuditEntry(
+                action: "Status changed to \(newStatus.rawValue)",
+                details: "Case status updated",
+                userId: currentUserId ?? "supervisor",
+                userName: "Supervisor"
+            )
+            updatedCase.auditLog.append(auditEntry)
+            
+            cases[index] = updatedCase
+            
+            if currentCase?.id == caseId {
+                currentCase = updatedCase
+            }
+            
+            objectWillChange.send()
+            saveCasesToCache()
+            
+            // Sync to database
+            if let backendId = updatedCase.backendId, let userId = currentUserId {
+                do {
+                    _ = try await caseService.updateCase(
+                        id: backendId,
+                        updates: ["status": newStatus.rawValue],
+                        userId: userId
+                    )
+                } catch {
+                    print("Error updating case status in database: \(error)")
+                }
+            }
+        }
+    }
+    
+    /// Delete a case from database
+    func deleteCase(_ caseToDelete: ConflictCase) async {
+        // Remove from local array
         cases.removeAll { $0.id == caseToDelete.id }
         if currentCase?.id == caseToDelete.id {
             currentCase = nil
         }
         objectWillChange.send()
-        saveCases()
+        saveCasesToCache()
+        
+        // Delete from database
+        if let backendId = caseToDelete.backendId {
+            do {
+                try await caseService.deleteCase(id: backendId)
+            } catch {
+                caseError = "Failed to delete case from database: \(error.localizedDescription)"
+                print("Error deleting case from database: \(error)")
+            }
+        }
     }
     
-    /// Add document to case
-    func addDocument(to caseId: UUID, document: CaseDocument) {
+    /// Add document to case and sync to database
+    func addDocument(to caseId: UUID, document: CaseDocument) async {
         if let index = cases.firstIndex(where: { $0.id == caseId }) {
             var updatedCase = cases[index]
             updatedCase.documents.append(document)
@@ -520,84 +876,99 @@ class ConflictResolutionManager: ObservableObject {
             let auditEntry = CaseAuditEntry(
                 action: "Document Added",
                 details: "Added \(document.type.displayName)",
-                userId: "",
-                userName: "Supervisor"
+                userId: currentUserId ?? "",
+                userName: "User"
             )
             updatedCase.auditLog.append(auditEntry)
             
-            // Replace the case in the array to trigger @Published update
             cases[index] = updatedCase
-            
             if currentCase?.id == caseId {
                 currentCase = updatedCase
             }
-            
-            // Explicitly notify observers
             objectWillChange.send()
+            saveCasesToCache()
+            
+            // Sync to database
+            if let backendId = updatedCase.backendId, let userId = currentUserId {
+                do {
+                    try await caseService.addDocument(caseId: backendId, document: document, userId: userId)
+                } catch {
+                    print("Error adding document to database: \(error)")
+                }
+            }
         }
-        saveCases()
     }
     
-    /// Delete document from case
-    func deleteDocument(from caseId: UUID, documentId: UUID) {
+    /// Delete document from case and sync to database
+    func deleteDocument(from caseId: UUID, documentId: UUID) async {
         if let index = cases.firstIndex(where: { $0.id == caseId }) {
             var updatedCase = cases[index]
-            if let docIndex = updatedCase.documents.firstIndex(where: { $0.id == documentId }) {
-                let documentType = updatedCase.documents[docIndex].type.displayName
-                updatedCase.documents.remove(at: docIndex)
-                updatedCase.updatedAt = Date()
-                
-                // Add audit entry
-                let auditEntry = CaseAuditEntry(
-                    action: "Document Deleted",
-                    details: "Removed \(documentType)",
-                    userId: "",
-                    userName: "Supervisor"
-                )
-                updatedCase.auditLog.append(auditEntry)
-                
-                // Replace case in array to trigger @Published update
-                cases[index] = updatedCase
-                
-                if currentCase?.id == caseId {
-                    currentCase = updatedCase
-                }
-                
-                // Explicitly notify observers
-                objectWillChange.send()
-            }
-        }
-        saveCases()
-    }
-    
-    /// Finalize and close a case
-    func finalizeCase(_ caseToClose: ConflictCase) {
-        if let index = cases.firstIndex(where: { $0.id == caseToClose.id }) {
-            var updatedCase = cases[index]
-            updatedCase.status = .closed
-            updatedCase.closedAt = Date()
+            
+            let removedDoc = updatedCase.documents.first { $0.id == documentId }
+            updatedCase.documents.removeAll { $0.id == documentId }
             updatedCase.updatedAt = Date()
             
-            // Add audit entry
-            let auditEntry = CaseAuditEntry(
-                action: "Case Finalized",
-                details: "Case closed and locked",
-                userId: "",
-                userName: "Supervisor"
-            )
-            updatedCase.auditLog.append(auditEntry)
-            
-            // Replace case in array to trigger @Published update
-            cases[index] = updatedCase
-            
-            if currentCase?.id == caseToClose.id {
-                currentCase = updatedCase
+            if let doc = removedDoc {
+                let auditEntry = CaseAuditEntry(
+                    action: "Document Removed",
+                    details: "Removed \(doc.type.displayName)",
+                    userId: currentUserId ?? "",
+                    userName: "User"
+                )
+                updatedCase.auditLog.append(auditEntry)
             }
             
-            // Explicitly notify observers
+            cases[index] = updatedCase
+            if currentCase?.id == caseId {
+                currentCase = updatedCase
+            }
             objectWillChange.send()
+            saveCasesToCache()
+            
+            // Sync to database
+            if let backendId = updatedCase.backendId, let userId = currentUserId {
+                do {
+                    try await caseService.removeDocument(
+                        caseId: backendId,
+                        documentId: documentId.uuidString,
+                        userId: userId
+                    )
+                } catch {
+                    print("Error removing document from database: \(error)")
+                }
+            }
         }
-        saveCases()
+    }
+    
+    /// Sync all cases with database
+    func syncCases() async {
+        guard let orgId = currentOrganizationId, let userId = currentUserId else {
+            return
+        }
+        
+        isLoadingCases = true
+        
+        let syncedCases = await caseService.syncCases(
+            localCases: cases,
+            organizationId: orgId,
+            creatorId: userId,
+            facilityId: currentFacilityId
+        )
+        
+        cases = syncedCases
+        saveCasesToCache()
+        isLoadingCases = false
+    }
+    
+    /// Finalize case and sync to database
+    func finalizeCase(_ caseToClose: ConflictCase) async {
+        await updateCaseStatus(caseToClose.id, to: .closed)
+        
+        // Update timestamp
+        if let index = cases.firstIndex(where: { $0.id == caseToClose.id }) {
+            cases[index].closedAt = Date()
+            saveCasesToCache()
+        }
     }
     
     // MARK: - Statistics

@@ -487,7 +487,9 @@ struct PolicyUploadView: View {
             // Actions
             VStack(spacing: 12) {
                 Button {
-                    manager.activatePolicy(policy)
+                    Task {
+                        await manager.activatePolicy(policy)
+                    }
                     dismiss()
                 } label: {
                     HStack(spacing: 8) {

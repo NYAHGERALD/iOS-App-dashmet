@@ -513,9 +513,11 @@ struct CaseAuditEntry: Identifiable, Codable {
 // MARK: - Conflict Case (Main Model)
 struct ConflictCase: Identifiable, Codable {
     let id: UUID
+    var backendId: String?  // Server-side ID for database sync
     var caseNumber: String
     var type: CaseType
     var status: CaseStatus
+    var description: String  // Case description
     var incidentDate: Date
     var location: String
     var department: String
@@ -538,6 +540,7 @@ struct ConflictCase: Identifiable, Codable {
     
     // Supervisor Notes
     var supervisorNotes: String?
+    var supervisorDecision: String?  // Final decision reason
     
     // Audit Trail
     var auditLog: [CaseAuditEntry]
@@ -551,9 +554,11 @@ struct ConflictCase: Identifiable, Codable {
     
     init(
         id: UUID = UUID(),
+        backendId: String? = nil,
         caseNumber: String = "",
         type: CaseType = .conflict,
         status: CaseStatus = .draft,
+        description: String = "",
         incidentDate: Date = Date(),
         location: String = "",
         department: String = "",
@@ -566,6 +571,7 @@ struct ConflictCase: Identifiable, Codable {
         selectedAction: RecommendedAction? = nil,
         generatedDocument: GeneratedActionDocument? = nil,
         supervisorNotes: String? = nil,
+        supervisorDecision: String? = nil,
         auditLog: [CaseAuditEntry] = [],
         createdBy: String = "",
         createdAt: Date = Date(),
@@ -574,9 +580,11 @@ struct ConflictCase: Identifiable, Codable {
         activePolicyId: UUID? = nil
     ) {
         self.id = id
+        self.backendId = backendId
         self.caseNumber = caseNumber
         self.type = type
         self.status = status
+        self.description = description
         self.incidentDate = incidentDate
         self.location = location
         self.department = department
@@ -589,6 +597,7 @@ struct ConflictCase: Identifiable, Codable {
         self.selectedAction = selectedAction
         self.generatedDocument = generatedDocument
         self.supervisorNotes = supervisorNotes
+        self.supervisorDecision = supervisorDecision
         self.auditLog = auditLog
         self.createdBy = createdBy
         self.createdAt = createdAt

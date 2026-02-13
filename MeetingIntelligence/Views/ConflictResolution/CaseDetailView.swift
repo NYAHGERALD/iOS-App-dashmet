@@ -50,6 +50,12 @@ struct CaseDetailView: View {
     @State private var showActionGeneration = false
     @State private var generatedDocument: GeneratedDocumentResult? = nil
     
+    // Phase 9: Supervisor Review State
+    @State private var showSupervisorReview = false
+    
+    // Phase 10: Finalization State
+    @State private var showFinalization = false
+    
     // Adaptive colors
     private var textPrimary: Color {
         colorScheme == .dark ? .white : .black
@@ -140,7 +146,9 @@ struct CaseDetailView: View {
                             
                             if let caseItem = conflictCase, caseItem.status != .closed {
                                 Button {
-                                    manager.finalizeCase(caseItem)
+                                    Task {
+                                        await manager.finalizeCase(caseItem)
+                                    }
                                 } label: {
                                     Label("Close Case", systemImage: "checkmark.circle")
                                 }
@@ -189,8 +197,10 @@ struct CaseDetailView: View {
                 Button("Cancel", role: .cancel) { }
                 Button("Delete", role: .destructive) {
                     if let caseItem = conflictCase {
-                        manager.deleteCase(caseItem)
-                        dismiss()
+                        Task {
+                            await manager.deleteCase(caseItem)
+                            dismiss()
+                        }
                     }
                 }
             } message: {
@@ -533,6 +543,177 @@ struct CaseDetailView: View {
             
             // Quick Stats
             quickStatsSection(caseItem)
+            
+            // Workflow Progress Card
+            workflowProgressCard(caseItem)
+        }
+    }
+    
+    // MARK: - Workflow Progress Card
+    private func workflowProgressCard(_ caseItem: ConflictCase) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Image(systemName: "arrow.triangle.turn.up.right.circle.fill")
+                    .font(.system(size: 18))
+                    .foregroundColor(AppColors.primary)
+                
+                Text("Next Steps")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(textPrimary)
+                
+                Spacer()
+            }
+            
+            switch caseItem.status {
+            case .draft, .inProgress:
+                // Need analysis
+                if caseItem.documents.count < 2 {
+                    nextStepRow(
+                        icon: "doc.text.fill",
+                        title: "Add Complaint Documents",
+                        description: "Scan at least 2 complaint documents to enable AI analysis",
+                        action: { showAddDocument = true }
+                    )
+                } else if caseItem.comparisonResult == nil {
+                    nextStepRow(
+                        icon: "brain",
+                        title: "Run AI Analysis",
+                        description: "Go to Analysis tab to compare statements",
+                        action: { selectedTab = 2 }
+                    )
+                } else {
+                    nextStepRow(
+                        icon: "checkmark.circle.fill",
+                        title: "Continue to Decision",
+                        description: "Review analysis and select recommended action",
+                        action: { selectedTab = 2 }
+                    )
+                }
+                
+            case .pendingReview:
+                // Need to select action in Analysis tab
+                nextStepRow(
+                    icon: "hand.point.right.fill",
+                    title: "Select Action",
+                    description: "Go to Analysis tab and choose a recommendation to proceed",
+                    action: { selectedTab = 2 }
+                )
+                
+            case .awaitingAction:
+                // Document generated, need review or finalization
+                if let _ = generatedDocument {
+                    nextStepRow(
+                        icon: "doc.text.magnifyingglass",
+                        title: "Review & Approve Document",
+                        description: "Complete supervisor review before finalization",
+                        action: {
+                            if let doc = generatedDocument, let rec = selectedRecommendation, let comparison = caseItem.comparisonResult {
+                                showSupervisorReview = true
+                            }
+                        }
+                    )
+                } else {
+                    nextStepRow(
+                        icon: "doc.badge.gearshape.fill",
+                        title: "Generate Document",
+                        description: "Go to Analysis tab to generate action document",
+                        action: { selectedTab = 2 }
+                    )
+                }
+                
+            case .closed:
+                completedStatusRow()
+                
+            case .escalated:
+                escalatedStatusRow()
+            }
+        }
+        .padding(16)
+        .background(cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+    
+    private func nextStepRow(icon: String, title: String, description: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(AppColors.primary.opacity(0.15))
+                        .frame(width: 40, height: 40)
+                    
+                    Image(systemName: icon)
+                        .font(.system(size: 16))
+                        .foregroundColor(AppColors.primary)
+                }
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(textPrimary)
+                    
+                    Text(description)
+                        .font(.system(size: 12))
+                        .foregroundColor(textSecondary)
+                }
+                
+                Spacer()
+                
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(textTertiary)
+            }
+        }
+    }
+    
+    private func completedStatusRow() -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(Color.green.opacity(0.15))
+                    .frame(width: 40, height: 40)
+                
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(.green)
+            }
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Case Closed")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(textPrimary)
+                
+                Text("This case has been finalized and locked")
+                    .font(.system(size: 12))
+                    .foregroundColor(textSecondary)
+            }
+            
+            Spacer()
+        }
+    }
+    
+    private func escalatedStatusRow() -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(Color.red.opacity(0.15))
+                    .frame(width: 40, height: 40)
+                
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(.red)
+            }
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Escalated to HR")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(textPrimary)
+                
+                Text("This case has been sent to HR for review")
+                    .font(.system(size: 12))
+                    .foregroundColor(textSecondary)
+            }
+            
+            Spacer()
         }
     }
     
@@ -639,7 +820,9 @@ struct CaseDetailView: View {
                             }
                         },
                         onDelete: {
-                            manager.deleteDocument(from: caseItem.id, documentId: document.id)
+                            Task {
+                                await manager.deleteDocument(from: caseItem.id, documentId: document.id)
+                            }
                         }
                     )
                 }
@@ -732,6 +915,10 @@ struct CaseDetailView: View {
                         policyMatches: policyMatchResults.isEmpty ? nil : policyMatchResults,
                         onSelectRecommendation: { recommendation in
                             selectedRecommendation = recommendation
+                            // Update status to awaiting action when recommendation is selected
+                            Task {
+                                await manager.updateCaseStatus(caseItem.id, to: .awaitingAction)
+                            }
                             // Move to action generation phase
                             showActionGeneration = true
                         },
@@ -861,8 +1048,8 @@ struct CaseDetailView: View {
                     }
                     
                     Button {
-                        // Continue to review phase
-                        selectedTab = 3 // Timeline tab for now
+                        // Continue to Phase 9: Supervisor Review
+                        showSupervisorReview = true
                     } label: {
                         HStack(spacing: 8) {
                             Image(systemName: "arrow.right.circle.fill")
@@ -909,6 +1096,64 @@ struct CaseDetailView: View {
                     }
                 )
             }
+        }
+        .sheet(isPresented: $showSupervisorReview) {
+            if let document = generatedDocument {
+                SupervisorReviewView(
+                    conflictCase: caseItem,
+                    generatedResult: document,
+                    onApprove: { updatedResult, edits in
+                        // Handle approval - update case status and proceed to finalization
+                        generatedDocument = updatedResult
+                        showSupervisorReview = false
+                        // Update case status to awaiting action
+                        Task {
+                            await manager.updateCaseStatus(caseItem.id, to: .awaitingAction)
+                        }
+                        showFinalization = true
+                    },
+                    onRequestChanges: { comments in
+                        // Handle request changes - keep in review state
+                        showSupervisorReview = false
+                    },
+                    onReject: { reason in
+                        // Handle rejection - reset document
+                        generatedDocument = nil
+                        selectedRecommendation = nil
+                        showSupervisorReview = false
+                    },
+                    onBack: {
+                        showSupervisorReview = false
+                    }
+                )
+            }
+        }
+        .sheet(isPresented: $showFinalization) {
+            CaseFinalizationView(
+                conflictCase: caseItem,
+                generatedDocument: generatedDocument,
+                onFinalize: {
+                    // Finalize and close the case
+                    Task {
+                        await manager.finalizeCase(caseItem)
+                    }
+                    showFinalization = false
+                },
+                onSendToHR: {
+                    // Update status to escalated and close
+                    Task {
+                        await manager.updateCaseStatus(caseItem.id, to: .escalated)
+                    }
+                    showFinalization = false
+                },
+                onExport: {
+                    // Export handled in view, just close
+                    showFinalization = false
+                },
+                onBack: {
+                    showFinalization = false
+                }
+            )
         }
     }
     
@@ -1194,7 +1439,7 @@ struct CaseDetailView: View {
         var updatedCase = caseItem
         if let index = updatedCase.involvedEmployees.firstIndex(where: { $0.id == updatedEmployee.id }) {
             updatedCase.involvedEmployees[index] = updatedEmployee
-            manager.updateCase(updatedCase)
+            manager.updateCaseSync(updatedCase)
         }
     }
     
@@ -1219,13 +1464,13 @@ struct CaseDetailView: View {
         
         // Remove the employee
         updatedCase.involvedEmployees.removeAll { $0.id == employee.id }
-        manager.updateCase(updatedCase)
+        manager.updateCaseSync(updatedCase)
     }
     
     private func addEmployee(_ employee: InvolvedEmployee, to caseItem: ConflictCase) {
         var updatedCase = caseItem
         updatedCase.involvedEmployees.append(employee)
-        manager.updateCase(updatedCase)
+        manager.updateCaseSync(updatedCase)
     }
     
     // MARK: - AI Analysis
@@ -1322,7 +1567,7 @@ struct CaseDetailView: View {
                     var updatedCase = caseItem
                     updatedCase.comparisonResult = result
                     updatedCase.status = .pendingReview
-                    manager.updateCase(updatedCase)
+                    manager.updateCaseSync(updatedCase)
                     isAnalyzing = false
                     
                     // After analysis completes, automatically show the results
@@ -1353,6 +1598,7 @@ struct AddEmployeeSheet: View {
     
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
+    @StateObject private var departmentService = DepartmentService.shared
     
     @State private var name = ""
     @State private var role = ""
@@ -1368,8 +1614,23 @@ struct AddEmployeeSheet: View {
         colorScheme == .dark ? .white.opacity(0.7) : .black.opacity(0.6)
     }
     
+    private var textTertiary: Color {
+        colorScheme == .dark ? .white.opacity(0.5) : .black.opacity(0.4)
+    }
+    
     private var cardBackground: Color {
         colorScheme == .dark ? Color.white.opacity(0.08) : Color.white
+    }
+    
+    private var inputBackground: Color {
+        colorScheme == .dark ? Color.white.opacity(0.05) : Color.black.opacity(0.03)
+    }
+    
+    private var isFormValid: Bool {
+        !name.trimmingCharacters(in: .whitespaces).isEmpty &&
+        !employeeId.trimmingCharacters(in: .whitespaces).isEmpty &&
+        !role.trimmingCharacters(in: .whitespaces).isEmpty &&
+        !department.trimmingCharacters(in: .whitespaces).isEmpty
     }
     
     var body: some View {
@@ -1415,10 +1676,108 @@ struct AddEmployeeSheet: View {
                         
                         // Form Fields
                         VStack(spacing: 16) {
-                            formField(title: "Name", text: $name, placeholder: "Full name")
-                            formField(title: "Role/Position", text: $role, placeholder: "e.g., Engineer, Manager")
-                            formField(title: "Department", text: $department, placeholder: "e.g., IT, HR, Sales")
-                            formField(title: "Employee ID", text: $employeeId, placeholder: "Optional")
+                            // Name (Required)
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 4) {
+                                    Text("NAME")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundColor(textSecondary)
+                                    Text("*")
+                                        .foregroundColor(.red)
+                                }
+                                
+                                TextField("Full name", text: $name)
+                                    .font(.system(size: 16))
+                                    .foregroundColor(textPrimary)
+                                    .padding(12)
+                                    .background(inputBackground)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                            }
+                            
+                            // Employee ID / File Number (Required)
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 4) {
+                                    Text("EMPLOYEE ID / FILE NUMBER")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundColor(textSecondary)
+                                    Text("*")
+                                        .foregroundColor(.red)
+                                }
+                                
+                                TextField("e.g., EMP-12345", text: $employeeId)
+                                    .font(.system(size: 16))
+                                    .foregroundColor(textPrimary)
+                                    .padding(12)
+                                    .background(inputBackground)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                            }
+                            
+                            // Role/Position and Department side by side
+                            HStack(spacing: 12) {
+                                // Role/Position (Required)
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack(spacing: 4) {
+                                        Text("ROLE/POSITION")
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundColor(textSecondary)
+                                        Text("*")
+                                            .foregroundColor(.red)
+                                    }
+                                    
+                                    TextField("e.g., Manager", text: $role)
+                                        .font(.system(size: 16))
+                                        .foregroundColor(textPrimary)
+                                        .padding(12)
+                                        .background(inputBackground)
+                                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                                }
+                                
+                                // Department (Required - Dropdown)
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack(spacing: 4) {
+                                        Text("DEPARTMENT")
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundColor(textSecondary)
+                                        Text("*")
+                                            .foregroundColor(.red)
+                                    }
+                                    
+                                    if departmentService.isLoading {
+                                        HStack {
+                                            ProgressView()
+                                                .scaleEffect(0.8)
+                                            Text("Loading...")
+                                                .font(.system(size: 14))
+                                                .foregroundColor(textTertiary)
+                                        }
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(12)
+                                        .background(inputBackground)
+                                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                                    } else {
+                                        Menu {
+                                            ForEach(departmentService.departments) { dept in
+                                                Button(dept.name) {
+                                                    department = dept.name
+                                                }
+                                            }
+                                        } label: {
+                                            HStack {
+                                                Text(department.isEmpty ? "Select" : department)
+                                                    .font(.system(size: 16))
+                                                    .foregroundColor(department.isEmpty ? textTertiary : textPrimary)
+                                                Spacer()
+                                                Image(systemName: "chevron.down")
+                                                    .font(.system(size: 12))
+                                                    .foregroundColor(textTertiary)
+                                            }
+                                            .padding(12)
+                                            .background(inputBackground)
+                                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                                        }
+                                    }
+                                }
+                            }
                         }
                         .padding()
                         .background(cardBackground)
@@ -1443,15 +1802,20 @@ struct AddEmployeeSheet: View {
                             name: name,
                             role: role,
                             department: department,
-                            employeeId: employeeId.isEmpty ? nil : employeeId,
+                            employeeId: employeeId,
                             isComplainant: isComplainant
                         )
                         onAdd(newEmployee)
                         dismiss()
                     }
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(AppColors.primary)
-                    .disabled(name.isEmpty)
+                    .foregroundColor(isFormValid ? AppColors.primary : AppColors.primary.opacity(0.5))
+                    .disabled(!isFormValid)
+                }
+            }
+            .onAppear {
+                Task {
+                    await departmentService.fetchDepartments()
                 }
             }
         }
@@ -1494,6 +1858,7 @@ struct EmployeeEditSheet: View {
     
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
+    @StateObject private var departmentService = DepartmentService.shared
     
     @State private var name: String
     @State private var role: String
@@ -1508,8 +1873,23 @@ struct EmployeeEditSheet: View {
         colorScheme == .dark ? .white.opacity(0.7) : .black.opacity(0.6)
     }
     
+    private var textTertiary: Color {
+        colorScheme == .dark ? .white.opacity(0.5) : .black.opacity(0.4)
+    }
+    
     private var cardBackground: Color {
         colorScheme == .dark ? Color.white.opacity(0.08) : Color.white
+    }
+    
+    private var inputBackground: Color {
+        colorScheme == .dark ? Color.white.opacity(0.05) : Color.black.opacity(0.03)
+    }
+    
+    private var isFormValid: Bool {
+        !name.trimmingCharacters(in: .whitespaces).isEmpty &&
+        !employeeId.trimmingCharacters(in: .whitespaces).isEmpty &&
+        !role.trimmingCharacters(in: .whitespaces).isEmpty &&
+        !department.trimmingCharacters(in: .whitespaces).isEmpty
     }
     
     init(employee: InvolvedEmployee, caseId: UUID, onSave: @escaping (InvolvedEmployee) -> Void) {
@@ -1551,10 +1931,108 @@ struct EmployeeEditSheet: View {
                         
                         // Form Fields
                         VStack(spacing: 16) {
-                            formField(title: "Name", text: $name, placeholder: "Full name")
-                            formField(title: "Role/Position", text: $role, placeholder: "e.g., Engineer, Manager")
-                            formField(title: "Department", text: $department, placeholder: "e.g., IT, HR, Sales")
-                            formField(title: "Employee ID", text: $employeeId, placeholder: "Optional")
+                            // Name (Required) - First
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 4) {
+                                    Text("NAME")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundColor(textSecondary)
+                                    Text("*")
+                                        .foregroundColor(.red)
+                                }
+                                
+                                TextField("Full name", text: $name)
+                                    .font(.system(size: 16))
+                                    .foregroundColor(textPrimary)
+                                    .padding(12)
+                                    .background(inputBackground)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                            }
+                            
+                            // Employee ID / File Number (Required)
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 4) {
+                                    Text("EMPLOYEE ID / FILE NUMBER")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundColor(textSecondary)
+                                    Text("*")
+                                        .foregroundColor(.red)
+                                }
+                                
+                                TextField("e.g., EMP-12345", text: $employeeId)
+                                    .font(.system(size: 16))
+                                    .foregroundColor(textPrimary)
+                                    .padding(12)
+                                    .background(inputBackground)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                            }
+                            
+                            // Role/Position and Department side by side
+                            HStack(spacing: 12) {
+                                // Role/Position (Required)
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack(spacing: 4) {
+                                        Text("ROLE/POSITION")
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundColor(textSecondary)
+                                        Text("*")
+                                            .foregroundColor(.red)
+                                    }
+                                    
+                                    TextField("e.g., Manager", text: $role)
+                                        .font(.system(size: 16))
+                                        .foregroundColor(textPrimary)
+                                        .padding(12)
+                                        .background(inputBackground)
+                                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                                }
+                                
+                                // Department (Required - Dropdown)
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack(spacing: 4) {
+                                        Text("DEPARTMENT")
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundColor(textSecondary)
+                                        Text("*")
+                                            .foregroundColor(.red)
+                                    }
+                                    
+                                    if departmentService.isLoading {
+                                        HStack {
+                                            ProgressView()
+                                                .scaleEffect(0.8)
+                                            Text("Loading...")
+                                                .font(.system(size: 14))
+                                                .foregroundColor(textTertiary)
+                                        }
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(12)
+                                        .background(inputBackground)
+                                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                                    } else {
+                                        Menu {
+                                            ForEach(departmentService.departments) { dept in
+                                                Button(dept.name) {
+                                                    department = dept.name
+                                                }
+                                            }
+                                        } label: {
+                                            HStack {
+                                                Text(department.isEmpty ? "Select" : department)
+                                                    .font(.system(size: 16))
+                                                    .foregroundColor(department.isEmpty ? textTertiary : textPrimary)
+                                                Spacer()
+                                                Image(systemName: "chevron.down")
+                                                    .font(.system(size: 12))
+                                                    .foregroundColor(textTertiary)
+                                            }
+                                            .padding(12)
+                                            .background(inputBackground)
+                                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                                        }
+                                    }
+                                }
+                            }
                         }
                         .padding()
                         .background(cardBackground)
@@ -1580,21 +2058,26 @@ struct EmployeeEditSheet: View {
                             name: name,
                             role: role,
                             department: department,
-                            employeeId: employeeId.isEmpty ? nil : employeeId,
+                            employeeId: employeeId,
                             isComplainant: employee.isComplainant
                         )
                         onSave(updatedEmployee)
                         dismiss()
                     }
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(AppColors.primary)
-                    .disabled(name.isEmpty)
+                    .foregroundColor(isFormValid ? AppColors.primary : AppColors.primary.opacity(0.5))
+                    .disabled(!isFormValid)
+                }
+            }
+            .onAppear {
+                Task {
+                    await departmentService.fetchDepartments()
                 }
             }
         }
     }
     
-    private func formField(title: String, text: Binding<String>, placeholder: String) -> some View {
+    private func editFormField(title: String, text: Binding<String>, placeholder: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title.uppercased())
                 .font(.system(size: 11, weight: .semibold))
@@ -1604,7 +2087,7 @@ struct EmployeeEditSheet: View {
                 .font(.system(size: 16))
                 .foregroundColor(textPrimary)
                 .padding(12)
-                .background(colorScheme == .dark ? Color.white.opacity(0.05) : Color.black.opacity(0.03))
+                .background(inputBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
         }
     }
@@ -2979,10 +3462,12 @@ struct DocumentUploadSheet: View {
             employeeId: selectedEmployee?.id,
             submittedBy: selectedEmployee?.name
         )
-        ConflictResolutionManager.shared.addDocument(
-            to: conflictCase.id,
-            document: document
-        )
+        Task {
+            await ConflictResolutionManager.shared.addDocument(
+                to: conflictCase.id,
+                document: document
+            )
+        }
         dismiss()
     }
 }

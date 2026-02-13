@@ -329,57 +329,579 @@ AI does not decide.
 
 🔵 PHASE 8 — ACTION GENERATION
 
-Depending on selection:
+Step 10 — Action Selection Confirmation
+
+After supervisor selects an action from Phase 7:
+
+🟦 Action Confirmation Screen
+Screen: "Confirm Selected Action"
+
+User sees:
+
+Selected action highlighted (e.g., "Coaching Recommended")
+
+Brief summary of case context
+
+Estimated generation time
+
+Warning: "This will generate official documentation"
+
+Buttons:
+
+👉 Confirm & Generate
+
+← Change Selection
+
+↓
+
+🟦 Generation Progress Screen
+Screen: "Generating Documents…"
+
+System behavior:
+
+AI processes case data
+
+Cross-references policy sections
+
+Applies organizational tone guidelines
+
+Generates draft content
+
+User sees:
+
+Progress indicator
+
+Current step label:
+- "Analyzing case context…"
+- "Matching policy references…"
+- "Drafting document…"
+- "Applying formatting…"
+
+Estimated time remaining
+
+↓
+
+═══════════════════════════════════════════════════════════
+📋 ACTION TYPE A — COACHING SESSION
+═══════════════════════════════════════════════════════════
 
 If Coaching Selected:
 
-System generates:
+🟦 Coaching Package Generation Screen
+Screen: "Coaching Session Package"
 
-Neutral discussion outline
+System generates 4 components:
 
-Talking points
+┌─────────────────────────────────────────────────────────┐
+│ COMPONENT 1: Discussion Outline                         │
+├─────────────────────────────────────────────────────────┤
+│ Structure:                                              │
+│ • Opening statement (neutral, non-accusatory)           │
+│ • Context setting (what triggered the conversation)     │
+│ • Key discussion points (from AI analysis)              │
+│ • Active listening prompts                              │
+│ • Resolution focus areas                                │
+│ • Closing summary template                              │
+│                                                         │
+│ Tone: Supportive, development-focused                   │
+│ Length: 1-2 pages                                       │
+└─────────────────────────────────────────────────────────┘
 
-Questions to ask
+┌─────────────────────────────────────────────────────────┐
+│ COMPONENT 2: Talking Points Card                        │
+├─────────────────────────────────────────────────────────┤
+│ Format: Bullet-point quick reference                    │
+│                                                         │
+│ Includes:                                               │
+│ • 5-7 key points to cover                               │
+│ • Specific behaviors to address (factual, no judgment)  │
+│ • Impact statements (how behavior affected team/work)   │
+│ • Expected behavior going forward                       │
+│ • Support resources available                           │
+│                                                         │
+│ Purpose: Printable card for supervisor to hold during   │
+│          conversation                                   │
+└─────────────────────────────────────────────────────────┘
 
-Behavioral focus areas
+┌─────────────────────────────────────────────────────────┐
+│ COMPONENT 3: Guided Questions                           │
+├─────────────────────────────────────────────────────────┤
+│ Categories:                                             │
+│                                                         │
+│ 🔹 Understanding Questions                              │
+│   "Can you walk me through what happened from your      │
+│    perspective?"                                        │
+│   "What were you trying to accomplish?"                 │
+│                                                         │
+│ 🔹 Reflection Questions                                 │
+│   "Looking back, what might you do differently?"        │
+│   "How do you think this affected [other party]?"       │
+│                                                         │
+│ 🔹 Forward-Looking Questions                            │
+│   "What support do you need to improve?"                │
+│   "How can we prevent this situation in the future?"    │
+│                                                         │
+│ AI tailors questions based on:                          │
+│ • Nature of conflict                                    │
+│ • Statements analyzed                                   │
+│ • Identified contradictions                             │
+└─────────────────────────────────────────────────────────┘
 
-Follow-up timeline suggestion
+┌─────────────────────────────────────────────────────────┐
+│ COMPONENT 4: Follow-Up Timeline                         │
+├─────────────────────────────────────────────────────────┤
+│ System suggests:                                        │
+│                                                         │
+│ Week 1: Initial coaching conversation                   │
+│ Week 2: Informal check-in (optional)                    │
+│ Week 4: Formal follow-up meeting                        │
+│ Week 8: Progress assessment                             │
+│                                                         │
+│ Supervisor can adjust:                                  │
+│ • Timeline duration                                     │
+│ • Check-in frequency                                    │
+│ • Add calendar reminders                                │
+│                                                         │
+│ System auto-generates reminder notifications            │
+└─────────────────────────────────────────────────────────┘
+
+🟦 Coaching Package Review Screen
+
+User sees:
+
+Tab navigation:
+📝 Outline | 💬 Talking Points | ❓ Questions | 📅 Timeline
+
+Each tab displays generated content
+
+Edit buttons on each section
+
+Preview button (full document)
+
+Buttons:
+
+👉 Accept Package
+
+✏️ Edit Section
+
+🔄 Regenerate
+
+↓
+
+═══════════════════════════════════════════════════════════
+📋 ACTION TYPE B — DOCUMENTED COUNSELING
+═══════════════════════════════════════════════════════════
 
 If Counseling Selected:
 
-System generates:
+🟦 Counseling Documentation Screen
+Screen: "Counseling Record Draft"
 
-Counseling documentation draft
+System generates formal counseling document:
 
-Objective language
+┌─────────────────────────────────────────────────────────┐
+│ COUNSELING DOCUMENTATION STRUCTURE                      │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│ HEADER SECTION:                                         │
+│ ───────────────                                         │
+│ • Document type: "Employee Counseling Record"           │
+│ • Date of counseling                                    │
+│ • Employee name                                         │
+│ • Department / Position                                 │
+│ • Supervisor name                                       │
+│ • Case reference number (auto-generated)                │
+│                                                         │
+│ INCIDENT SUMMARY:                                       │
+│ ─────────────────                                       │
+│ • Date(s) of incident                                   │
+│ • Location                                              │
+│ • Factual description (AI-generated, neutral language)  │
+│ • No accusations or assumptions                         │
+│ • Based on documented statements only                   │
+│                                                         │
+│ POLICY REFERENCE:                                       │
+│ ─────────────────                                       │
+│ • Relevant policy section(s) cited                      │
+│ • Brief excerpt from policy                             │
+│ • Explanation of relevance                              │
+│                                                         │
+│ EXPECTATIONS:                                           │
+│ ─────────────────                                       │
+│ • Specific behaviors expected going forward             │
+│ • Measurable objectives (if applicable)                 │
+│ • Support available to employee                         │
+│                                                         │
+│ CONSEQUENCES:                                           │
+│ ─────────────────                                       │
+│ • Statement of potential escalation if behavior         │
+│   continues                                             │
+│ • Next step in progressive discipline                   │
+│                                                         │
+│ ACKNOWLEDGMENT:                                         │
+│ ─────────────────                                       │
+│ • Signature line: Employee                              │
+│ • Signature line: Supervisor                            │
+│ • Date line                                             │
+│ • Statement: "Signature acknowledges receipt, not       │
+│   agreement"                                            │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
 
-Policy references (if applicable)
+🟦 Counseling Document Editor Screen
+
+User sees:
+
+Live document preview
+
+Editable fields highlighted in blue
+
+Section-by-section editing mode
+
+Tone indicator:
+🟢 Neutral | 🟡 Caution | 🔴 Review needed
+
+AI suggestions panel (right side):
+• Alternative phrasing options
+• Policy reference suggestions
+• Tone adjustments
+
+Buttons:
+
+💾 Save Draft
+
+👁️ Preview PDF
+
+✅ Finalize
+
+↓
+
+═══════════════════════════════════════════════════════════
+📋 ACTION TYPE C — WRITTEN WARNING
+═══════════════════════════════════════════════════════════
 
 If Warning Selected:
 
-System generates:
+🟦 Warning Document Generation Screen
+Screen: "Written Warning Draft"
 
-Professional warning draft
+System generates formal warning:
 
-Policy-aligned language
+┌─────────────────────────────────────────────────────────┐
+│ WRITTEN WARNING STRUCTURE                               │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│ OFFICIAL HEADER:                                        │
+│ ────────────────                                        │
+│ • Company letterhead (auto-applied)                     │
+│ • Document type: "Written Warning"                      │
+│ • Warning level: [First / Second / Final]               │
+│ • Confidential marking                                  │
+│                                                         │
+│ EMPLOYEE INFORMATION:                                   │
+│ ─────────────────────                                   │
+│ • Employee name                                         │
+│ • Employee ID                                           │
+│ • Department                                            │
+│ • Position                                              │
+│ • Hire date                                             │
+│ • Direct supervisor                                     │
+│                                                         │
+│ REASON FOR WARNING:                                     │
+│ ───────────────────                                     │
+│ • Clear statement of violation/issue                    │
+│ • Specific dates and incidents                          │
+│ • Factual description only                              │
+│ • Reference to previous counseling (if any)             │
+│                                                         │
+│ POLICY VIOLATIONS:                                      │
+│ ──────────────────                                      │
+│ • Policy name and section number                        │
+│ • Direct quote from policy                              │
+│ • How behavior relates to policy                        │
+│                                                         │
+│ CORRECTIVE ACTION REQUIRED:                             │
+│ ───────────────────────────                             │
+│ • Specific steps employee must take                     │
+│ • Timeline for improvement                              │
+│ • Success criteria                                      │
+│ • Resources/support provided                            │
+│                                                         │
+│ CONSEQUENCES OF NON-COMPLIANCE:                         │
+│ ───────────────────────────────                         │
+│ • Clear statement of next steps if behavior continues   │
+│ • May include: suspension, demotion, termination        │
+│ • Timeline for review                                   │
+│                                                         │
+│ ACKNOWLEDGMENT SECTION:                                 │
+│ ───────────────────────                                 │
+│ • Employee signature line                               │
+│ • Supervisor signature line                             │
+│ • HR representative signature line (if applicable)      │
+│ • Date                                                  │
+│ • Copy distribution list                                │
+│                                                         │
+│ EMPLOYEE RESPONSE SECTION:                              │
+│ ──────────────────────────                              │
+│ • Optional: Space for employee written response         │
+│ • Deadline for response submission                      │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
 
-Neutral tone
+🟦 Warning Level Selection Modal
 
-Structured format ready for HR review
+Before finalizing, system prompts:
 
-If Escalate to HR:
+"Select Warning Level"
 
-System generates:
+Options:
 
-Full case summary
+⚪ First Written Warning
+   - Initial formal documentation
+   - Sets baseline for progressive discipline
 
-Attached statements
+⚪ Second Written Warning
+   - Follow-up to previous warning
+   - System auto-links to prior warning record
 
-Timeline
+⚪ Final Written Warning
+   - Last step before termination consideration
+   - Requires HR review before issuance
 
-Policy references
+System auto-detects if prior warnings exist and suggests appropriate level.
 
-Supervisor notes
+🟦 Warning Document Review Screen
+
+Features:
+
+Legal compliance checker
+• Scans for potentially problematic language
+• Flags vague or subjective statements
+• Suggests specific, measurable language
+
+Policy alignment verification
+• Confirms cited policies are current
+• Validates section references
+
+Previous action history panel
+• Shows timeline of prior actions with this employee
+• Links to related case documents
+
+Buttons:
+
+⚖️ Legal Review Mode
+
+📤 Send to HR for Review
+
+✅ Approve and Finalize
+
+↓
+
+═══════════════════════════════════════════════════════════
+📋 ACTION TYPE D — HR ESCALATION
+═══════════════════════════════════════════════════════════
+
+If Escalate to HR Selected:
+
+🟦 HR Escalation Package Screen
+Screen: "HR Escalation Summary"
+
+System compiles comprehensive package:
+
+┌─────────────────────────────────────────────────────────┐
+│ HR ESCALATION PACKAGE CONTENTS                          │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│ 1. EXECUTIVE SUMMARY (1 page)                           │
+│    ────────────────────────────                         │
+│    • Case overview                                      │
+│    • Key parties involved                               │
+│    • Primary concerns                                   │
+│    • Reason for escalation                              │
+│    • Recommended urgency level                          │
+│                                                         │
+│ 2. FULL CASE TIMELINE                                   │
+│    ────────────────────                                 │
+│    • Chronological event list                           │
+│    • Date/time stamps                                   │
+│    • Source of each data point                          │
+│    • Visual timeline graphic                            │
+│                                                         │
+│ 3. STATEMENT COMPARISON REPORT                          │
+│    ─────────────────────────────                        │
+│    • Side-by-side statement analysis                    │
+│    • Highlighted agreements                             │
+│    • Highlighted contradictions                         │
+│    • Neutral observations                               │
+│                                                         │
+│ 4. ATTACHED DOCUMENTS                                   │
+│    ────────────────────                                 │
+│    • Original scanned complaints                        │
+│    • Processed/cleaned versions                         │
+│    • Witness statements                                 │
+│    • Previous related records                           │
+│    • Supporting evidence                                │
+│                                                         │
+│ 5. POLICY REFERENCE REPORT                              │
+│    ─────────────────────────                            │
+│    • All potentially relevant policies                  │
+│    • Relevance explanations                             │
+│    • Full policy excerpts                               │
+│                                                         │
+│ 6. SUPERVISOR NOTES                                     │
+│    ─────────────────                                    │
+│    • Observations                                       │
+│    • Context not captured in documents                  │
+│    • Previous interactions with parties                 │
+│    • Recommended actions considered                     │
+│                                                         │
+│ 7. AI ANALYSIS SUMMARY                                  │
+│    ────────────────────                                 │
+│    • Risk assessment                                    │
+│    • Pattern detection results                          │
+│    • Suggested investigation areas                      │
+│    • Confidence levels                                  │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
+
+🟦 Escalation Priority Selection
+
+System prompts:
+
+"Select Escalation Priority"
+
+🔴 Critical — Immediate HR attention required
+   Use for: Safety concerns, harassment, discrimination,
+            potential legal exposure
+
+🟠 High — Review within 24-48 hours
+   Use for: Repeated violations, multiple parties,
+            complex situations
+
+🟡 Standard — Review within 1 week
+   Use for: Routine escalations, policy clarification
+            needed, supervisor guidance requested
+
+🟢 Informational — For HR awareness only
+   Use for: Documentation purposes, pattern tracking,
+            no immediate action required
+
+🟦 HR Recipient Selection Screen
+
+User selects:
+
+□ Direct HR Business Partner
+□ HR Manager
+□ Employee Relations Specialist
+□ Legal/Compliance (if applicable)
+□ Department Head
+□ Other (specify)
+
+System behavior:
+• Auto-suggests recipients based on case type
+• Shows recipient availability status
+• Allows adding custom message
+
+🟦 Escalation Confirmation Screen
+
+User sees:
+
+Package summary:
+• Document count
+• Total pages
+• Attachments list
+• Selected priority
+• Selected recipients
+
+Supervisor attestation:
+☑️ "I confirm this information is accurate to the best
+    of my knowledge"
+☑️ "I understand this case will be transferred to HR
+    for further action"
+
+Buttons:
+
+📤 Submit to HR
+
+💾 Save as Draft
+
+← Return to Edit
+
+↓
+
+═══════════════════════════════════════════════════════════
+🔄 COMMON POST-GENERATION FEATURES
+═══════════════════════════════════════════════════════════
+
+After any action type is generated:
+
+🟦 Document Customization Panel
+
+Available on all generated documents:
+
+Tone Adjustment Slider:
+|──────●────────| 
+Formal ←→ Conversational
+
+Length Preference:
+⚫ Concise  ○ Standard  ○ Detailed
+
+Language Options:
+• Simplify language
+• Add more context
+• Include examples
+• Remove technical jargon
+
+🟦 Template Override Option
+
+User can:
+
+• Use AI-generated content (default)
+• Select from organizational templates
+• Apply custom template
+• Merge AI content with template
+
+🟦 AI Regeneration Options
+
+If supervisor is unsatisfied:
+
+🔄 Regenerate Section
+   - Keeps other sections
+   - Targets specific area
+
+🔄 Regenerate All
+   - Fresh generation
+   - Can adjust parameters
+
+💡 Suggest Alternative
+   - AI provides 2-3 variations
+   - User picks preferred version
+
+🟦 Export Options (Available for all actions)
+
+Export formats:
+• PDF (print-ready)
+• Word document (editable)
+• Plain text
+• Email-ready format
+
+Export destinations:
+• Download to device
+• Send via email
+• Save to case file
+• Integration with HRIS (if connected)
+
+🟦 Audit Trail Entry
+
+System automatically logs:
+
+• Action type selected
+• Generation timestamp
+• All AI parameters used
+• Supervisor ID
+• Any edits made
+• Final version snapshot
+• Export/send actions
 
 🔵 PHASE 9 — SUPERVISOR REVIEW
 

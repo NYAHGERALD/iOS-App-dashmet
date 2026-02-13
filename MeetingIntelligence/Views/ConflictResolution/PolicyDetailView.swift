@@ -98,7 +98,9 @@ struct PolicyDetailView: View {
                     Menu {
                         if policy.status != .active {
                             Button {
-                                manager.activatePolicy(policy)
+                                Task {
+                                    await manager.activatePolicy(policy)
+                                }
                             } label: {
                                 Label("Activate Policy", systemImage: "checkmark.seal")
                             }
@@ -119,7 +121,9 @@ struct PolicyDetailView: View {
             .alert("Delete Policy?", isPresented: $showDeleteAlert) {
                 Button("Cancel", role: .cancel) { }
                 Button("Delete", role: .destructive) {
-                    manager.deletePolicy(policy)
+                    Task {
+                        await manager.deletePolicy(policy)
+                    }
                     dismiss()
                 }
             } message: {
@@ -216,7 +220,9 @@ struct PolicyDetailView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             } else if policy.status == .draft {
                 Button {
-                    manager.activatePolicy(policy)
+                    Task {
+                        await manager.activatePolicy(policy)
+                    }
                 } label: {
                     HStack(spacing: 10) {
                         Image(systemName: "checkmark.seal")

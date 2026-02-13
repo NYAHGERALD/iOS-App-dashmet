@@ -9,6 +9,8 @@ import SwiftUI
 
 struct CreateCaseView: View {
     @StateObject private var manager = ConflictResolutionManager.shared
+    @StateObject private var departmentService = DepartmentService.shared
+    @StateObject private var shiftService = ShiftService.shared
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     
@@ -16,8 +18,8 @@ struct CreateCaseView: View {
     @State private var selectedCaseType: CaseType = .conflict
     @State private var incidentDate = Date()
     @State private var location = ""
-    @State private var department = ""
-    @State private var shift = ""
+    @State private var selectedDepartment: Department?
+    @State private var selectedShift: ShiftItem?
     
     // Employees
     @State private var employees: [InvolvedEmployee] = []
@@ -25,6 +27,7 @@ struct CreateCaseView: View {
     @State private var newEmployeeName = ""
     @State private var newEmployeeRole = ""
     @State private var newEmployeeDepartment = ""
+    @State private var newEmployeeId = ""
     @State private var newEmployeeIsComplainant = true
     
     // Validation
@@ -203,8 +206,36 @@ struct CreateCaseView: View {
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(textSecondary)
                     
-                    TextField("e.g., Sales", text: $department)
-                        .textFieldStyle(CustomTextFieldStyle(colorScheme: colorScheme))
+                    Menu {
+                        if departmentService.isLoading {
+                            Text("Loading...")
+                        } else if departmentService.departments.isEmpty {
+                            Text("No departments available")
+                        } else {
+                            ForEach(departmentService.departments) { dept in
+                                Button(dept.name) {
+                                    selectedDepartment = dept
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack {
+                            Text(selectedDepartment?.name ?? "Select Department")
+                                .foregroundColor(selectedDepartment != nil ? textPrimary : textTertiary)
+                            Spacer()
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(textTertiary)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .background(inputBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(cardBorder, lineWidth: 1)
+                        )
+                    }
                 }
                 
                 VStack(alignment: .leading, spacing: 8) {
@@ -212,9 +243,46 @@ struct CreateCaseView: View {
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(textSecondary)
                     
-                    TextField("e.g., Day", text: $shift)
-                        .textFieldStyle(CustomTextFieldStyle(colorScheme: colorScheme))
+                    Menu {
+                        Button("None") {
+                            selectedShift = nil
+                        }
+                        if shiftService.isLoading {
+                            Text("Loading...")
+                        } else if shiftService.shifts.isEmpty {
+                            Text("No shifts available")
+                        } else {
+                            ForEach(shiftService.shifts) { shift in
+                                Button(shift.name) {
+                                    selectedShift = shift
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack {
+                            Text(selectedShift?.name ?? "Select Shift")
+                                .foregroundColor(selectedShift != nil ? textPrimary : textTertiary)
+                            Spacer()
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(textTertiary)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .background(inputBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(cardBorder, lineWidth: 1)
+                        )
+                    }
                 }
+            }
+        }
+        .onAppear {
+            Task {
+                await departmentService.fetchDepartments()
+                await shiftService.fetchShifts()
             }
         }
     }
@@ -395,32 +463,99 @@ struct CreateCaseView: View {
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(textTertiary)
                         
+                        // Name (Required) - First field
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Name")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundColor(textSecondary)
+                            HStack(spacing: 4) {
+                                Text("Name")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(textSecondary)
+                                Text("*")
+                                    .foregroundColor(.red)
+                            }
                             
                             TextField("Full name", text: $newEmployeeName)
                                 .textFieldStyle(CustomTextFieldStyle(colorScheme: colorScheme))
                         }
                         
-                        HStack(spacing: 16) {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Role/Position")
+                        // Employee ID / File Number (Required)
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 4) {
+                                Text("Employee ID / File Number")
                                     .font(.system(size: 14, weight: .medium))
                                     .foregroundColor(textSecondary)
+                                Text("*")
+                                    .foregroundColor(.red)
+                            }
+                            
+                            TextField("e.g., EMP-12345", text: $newEmployeeId)
+                                .textFieldStyle(CustomTextFieldStyle(colorScheme: colorScheme))
+                        }
+                        
+                        HStack(spacing: 16) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 4) {
+                                    Text("Role/Position")
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundColor(textSecondary)
+                                    Text("*")
+                                        .foregroundColor(.red)
+                                }
                                 
                                 TextField("e.g., Manager", text: $newEmployeeRole)
                                     .textFieldStyle(CustomTextFieldStyle(colorScheme: colorScheme))
                             }
                             
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("Department")
-                                    .font(.system(size: 14, weight: .medium))
-                                    .foregroundColor(textSecondary)
+                                HStack(spacing: 4) {
+                                    Text("Department")
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundColor(textSecondary)
+                                    Text("*")
+                                        .foregroundColor(.red)
+                                }
                                 
-                                TextField("e.g., Sales", text: $newEmployeeDepartment)
-                                    .textFieldStyle(CustomTextFieldStyle(colorScheme: colorScheme))
+                                if departmentService.isLoading {
+                                    HStack {
+                                        ProgressView()
+                                            .scaleEffect(0.8)
+                                        Text("Loading...")
+                                            .font(.system(size: 14))
+                                            .foregroundColor(textTertiary)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(12)
+                                    .background(inputBackground)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                                    )
+                                } else {
+                                    Menu {
+                                        ForEach(departmentService.departments) { dept in
+                                            Button(dept.name) {
+                                                newEmployeeDepartment = dept.name
+                                            }
+                                        }
+                                    } label: {
+                                        HStack {
+                                            Text(newEmployeeDepartment.isEmpty ? "Select" : newEmployeeDepartment)
+                                                .font(.system(size: 16))
+                                                .foregroundColor(newEmployeeDepartment.isEmpty ? textTertiary : textPrimary)
+                                            Spacer()
+                                            Image(systemName: "chevron.down")
+                                                .font(.system(size: 12))
+                                                .foregroundColor(textTertiary)
+                                        }
+                                        .padding(12)
+                                        .background(inputBackground)
+                                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 10)
+                                                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -436,10 +571,10 @@ struct CreateCaseView: View {
                             .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 16)
-                            .background(newEmployeeName.isEmpty ? AppColors.primary.opacity(0.5) : AppColors.primary)
+                            .background(isEmployeeFormValid ? AppColors.primary : AppColors.primary.opacity(0.5))
                             .clipShape(RoundedRectangle(cornerRadius: 14))
                     }
-                    .disabled(newEmployeeName.isEmpty)
+                    .disabled(!isEmployeeFormValid)
                 }
                 .padding()
             }
@@ -454,6 +589,11 @@ struct CreateCaseView: View {
                     .foregroundColor(textSecondary)
                 }
             }
+            .onAppear {
+                Task {
+                    await departmentService.fetchDepartments()
+                }
+            }
         }
     }
     
@@ -461,8 +601,15 @@ struct CreateCaseView: View {
     
     private var isFormValid: Bool {
         !location.trimmingCharacters(in: .whitespaces).isEmpty &&
-        !department.trimmingCharacters(in: .whitespaces).isEmpty &&
+        selectedDepartment != nil &&
         employees.count >= 2
+    }
+    
+    private var isEmployeeFormValid: Bool {
+        !newEmployeeName.trimmingCharacters(in: .whitespaces).isEmpty &&
+        !newEmployeeId.trimmingCharacters(in: .whitespaces).isEmpty &&
+        !newEmployeeRole.trimmingCharacters(in: .whitespaces).isEmpty &&
+        !newEmployeeDepartment.trimmingCharacters(in: .whitespaces).isEmpty
     }
     
     private func addEmployee() {
@@ -470,6 +617,7 @@ struct CreateCaseView: View {
             name: newEmployeeName,
             role: newEmployeeRole,
             department: newEmployeeDepartment,
+            employeeId: newEmployeeId,
             isComplainant: newEmployeeIsComplainant
         )
         employees.append(employee)
@@ -481,6 +629,7 @@ struct CreateCaseView: View {
         newEmployeeName = ""
         newEmployeeRole = ""
         newEmployeeDepartment = ""
+        newEmployeeId = ""
         newEmployeeIsComplainant = true
     }
     
@@ -492,18 +641,20 @@ struct CreateCaseView: View {
             return
         }
         
-        // Create case
-        let newCase = manager.createCase(
-            type: selectedCaseType,
-            incidentDate: incidentDate,
-            location: location,
-            department: department,
-            shift: shift.isEmpty ? nil : shift,
-            involvedEmployees: employees
-        )
-        
-        // Navigate to case detail or close
-        dismiss()
+        // Create case asynchronously
+        Task {
+            let newCase = await manager.createCase(
+                type: selectedCaseType,
+                incidentDate: incidentDate,
+                location: location,
+                department: selectedDepartment?.name ?? "",
+                shift: selectedShift?.name,
+                involvedEmployees: employees
+            )
+            
+            // Navigate to case detail or close
+            dismiss()
+        }
     }
 }
 
