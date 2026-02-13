@@ -28,6 +28,7 @@ class PolicyMatchingService {
     ///   - analysisResult: Optional existing AI analysis result
     ///   - witnessStatements: Optional witness statements
     ///   - policySections: Policy sections to match against
+    ///   - priorHistoryContext: Optional prior history context (counseling, warnings, prior complaints)
     /// - Returns: Policy matching result with relevant sections
     func matchPolicies(
         conflictCase: ConflictCase,
@@ -37,7 +38,8 @@ class PolicyMatchingService {
         complaintBEmployee: InvolvedEmployee,
         analysisResult: AIComparisonResult? = nil,
         witnessStatements: [WitnessStatementInput] = [],
-        policySections: [PolicySection]
+        policySections: [PolicySection],
+        priorHistoryContext: String? = nil
     ) async throws -> PolicyMatchingResult {
         
         guard let url = URL(string: baseURL + "/match") else {
@@ -108,6 +110,11 @@ class PolicyMatchingService {
         
         if !witnessData.isEmpty {
             requestBody["witnessStatements"] = witnessData
+        }
+        
+        // Include prior history context for better policy matching
+        if let priorHistory = priorHistoryContext {
+            requestBody["priorHistoryContext"] = priorHistory
         }
         
         var request = URLRequest(url: url)

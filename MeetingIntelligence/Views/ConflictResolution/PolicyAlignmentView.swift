@@ -12,6 +12,8 @@ struct PolicyAlignmentView: View {
     let conflictCase: ConflictCase
     let policy: WorkplacePolicy?
     let analysisResult: AIComparisonResult?
+    @Binding var autoRun: Bool
+    let onPolicyMatched: ([PolicyMatchResult]) -> Void
     let onRunPolicyMatch: () -> Void
     let onSkip: () -> Void
     
@@ -19,6 +21,8 @@ struct PolicyAlignmentView: View {
     @State private var isMatching = false
     @State private var matchingError: String?
     @State private var expandedMatchId: UUID?
+    @State private var loadingProgress: CGFloat = 0
+    @State private var loadingStage: String = "Initializing..."
     
     @Environment(\.colorScheme) private var colorScheme
     
@@ -68,6 +72,19 @@ struct PolicyAlignmentView: View {
         .frame(maxWidth: .infinity)
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
+        .onAppear {
+            // Auto-run if triggered by re-analysis
+            if autoRun && policy != nil && policyMatchResult == nil {
+                autoRun = false
+                runPolicyMatching()
+            }
+        }
+        .onChange(of: autoRun) { newValue in
+            if newValue && policy != nil && !isMatching {
+                autoRun = false
+                runPolicyMatching()
+            }
+        }
     }
     
     // MARK: - Header
@@ -127,35 +144,90 @@ struct PolicyAlignmentView: View {
     
     // MARK: - Matching Loading Section
     private var matchingLoadingSection: some View {
-        VStack(spacing: 20) {
-            // Animated progress
-            HStack(spacing: 16) {
+        VStack(spacing: 24) {
+            // Animated circular progress
+            ZStack {
+                // Background circle
+                Circle()
+                    .stroke(Color.purple.opacity(0.2), lineWidth: 4)
+                    .frame(width: 80, height: 80)
+                
+                // Animated progress circle
+                Circle()
+                    .trim(from: 0, to: loadingProgress)
+                    .stroke(
+                        AngularGradient(
+                            gradient: Gradient(colors: [.purple, .purple.opacity(0.3)]),
+                            center: .center
+                        ),
+                        style: StrokeStyle(lineWidth: 4, lineCap: .round)
+                    )
+                    .frame(width: 80, height: 80)
+                    .rotationEffect(.degrees(-90))
+                
+                // Spinning dots
                 ForEach(0..<3) { index in
                     Circle()
-                        .fill(Color.purple.opacity(0.6))
-                        .frame(width: 12, height: 12)
-                        .scaleEffect(animationScale(for: index))
-                        .animation(
-                            Animation.easeInOut(duration: 0.6)
-                                .repeatForever()
-                                .delay(Double(index) * 0.2),
-                            value: isMatching
-                        )
+                        .fill(Color.purple)
+                        .frame(width: 8, height: 8)
+                        .offset(y: -40)
+                        .rotationEffect(.degrees(Double(index) * 120 + loadingProgress * 360))
+                }
+                
+                // Center icon
+                Image(systemName: "doc.text.magnifyingglass")
+                    .font(.system(size: 24))
+                    .foregroundColor(.purple)
+                    .opacity(0.8 + 0.2 * sin(loadingProgress * .pi * 4))
+            }
+            .onAppear {
+                withAnimation(.linear(duration: 2).repeatForever(autoreverses: false)) {
+                    loadingProgress = 1.0
                 }
             }
-            .padding(.top, 8)
             
-            Text("Analyzing Policy Relevance...")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundColor(textPrimary)
+            VStack(spacing: 8) {
+                Text("Analyzing Policy Relevance")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(textPrimary)
+                
+                Text(loadingStage)
+                    .font(.system(size: 13))
+                    .foregroundColor(textSecondary)
+                    .multilineTextAlignment(.center)
+                    .transition(.opacity)
+            }
             
-            Text("Our System is matching case details against policy sections")
-                .font(.system(size: 13))
-                .foregroundColor(textSecondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
+            // Loading stages indicator
+            HStack(spacing: 8) {
+                ForEach(0..<4) { index in
+                    Capsule()
+                        .fill(index <= Int(loadingProgress * 4) ? Color.purple : Color.purple.opacity(0.2))
+                        .frame(width: 24, height: 4)
+                }
+            }
         }
-        .padding(.vertical, 20)
+        .padding(.vertical, 32)
+        .onAppear {
+            animateLoadingStages()
+        }
+    }
+    
+    private func animateLoadingStages() {
+        let stages = [
+            "Reading case documents...",
+            "Extracting key terms...",
+            "Matching policy sections...",
+            "Generating recommendations..."
+        ]
+        
+        for (index, stage) in stages.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 1.5) {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    loadingStage = stage
+                }
+            }
+        }
     }
     
     private func animationScale(for index: Int) -> CGFloat {
@@ -535,8 +607,31 @@ struct PolicyAlignmentView: View {
             return
         }
         
+        // Get witness statements
+        let witnessStatements: [WitnessStatementInput] = conflictCase.documents
+            .filter { $0.type == .witnessStatement && (!$0.cleanedText.isEmpty || !$0.originalText.isEmpty) }
+            .compactMap { doc in
+                if let employeeId = doc.employeeId,
+                   let witness = conflictCase.involvedEmployees.first(where: { $0.id == employeeId }) {
+                    let text = doc.cleanedText.isEmpty ? doc.originalText : doc.cleanedText
+                    return WitnessStatementInput(witnessName: witness.name, text: text)
+                }
+                return nil
+            }
+        
+        // Get prior history document summaries for policy matching context
+        let priorHistoryContext = conflictCase.documents
+            .filter { $0.type == .priorRecord || $0.type == .counselingRecord || $0.type == .warningDocument }
+            .map { doc in
+                let text = doc.cleanedText.isEmpty ? (doc.translatedText ?? doc.originalText) : doc.cleanedText
+                return "[\(doc.type.displayName)]: \(text.prefix(200))"
+            }
+            .joined(separator: "\n")
+        
         isMatching = true
         matchingError = nil
+        loadingProgress = 0
+        loadingStage = "Initializing..."
         
         Task {
             do {
@@ -547,18 +642,23 @@ struct PolicyAlignmentView: View {
                     complaintB: docB,
                     complaintBEmployee: employees[1],
                     analysisResult: analysisResult,
-                    witnessStatements: [],
-                    policySections: policy.sections
+                    witnessStatements: witnessStatements,
+                    policySections: policy.sections,
+                    priorHistoryContext: priorHistoryContext.isEmpty ? nil : priorHistoryContext
                 )
                 
                 await MainActor.run {
                     self.policyMatchResult = result
                     self.isMatching = false
+                    self.loadingProgress = 0
+                    // Call callback with results
+                    self.onPolicyMatched(result.matches)
                 }
             } catch {
                 await MainActor.run {
                     self.matchingError = error.localizedDescription
                     self.isMatching = false
+                    self.loadingProgress = 0
                 }
             }
         }
@@ -623,6 +723,8 @@ struct PolicyFlowLayout: Layout {
 
 // MARK: - Preview
 #Preview {
+    @Previewable @State var autoRun = false
+    
     PolicyAlignmentView(
         conflictCase: ConflictCase(
             id: UUID(),
@@ -641,6 +743,8 @@ struct PolicyFlowLayout: Layout {
         ),
         policy: nil,
         analysisResult: nil,
+        autoRun: $autoRun,
+        onPolicyMatched: { _ in },
         onRunPolicyMatch: {},
         onSkip: {}
     )

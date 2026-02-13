@@ -12,6 +12,7 @@ struct DecisionSupportView: View {
     let conflictCase: ConflictCase
     let analysisResult: AIComparisonResult?
     let policyMatches: [PolicyMatchResult]?
+    @Binding var autoRun: Bool
     let onSelectRecommendation: (RecommendationOption) -> Void
     let onSkip: () -> Void
     
@@ -21,6 +22,8 @@ struct DecisionSupportView: View {
     @State private var selectedRecommendation: RecommendationOption?
     @State private var expandedOptionId: String?
     @State private var showConfirmation = false
+    @State private var loadingProgress: CGFloat = 0
+    @State private var loadingStage: String = "Initializing..."
     
     @Environment(\.colorScheme) private var colorScheme
     
@@ -68,6 +71,19 @@ struct DecisionSupportView: View {
                 confirmationSheet(recommendation)
             }
         }
+        .onAppear {
+            // Auto-run if triggered after re-analysis/policy matching
+            if autoRun && recommendationResult == nil && !isLoading {
+                autoRun = false
+                generateRecommendations()
+            }
+        }
+        .onChange(of: autoRun) { newValue in
+            if newValue && recommendationResult == nil && !isLoading {
+                autoRun = false
+                generateRecommendations()
+            }
+        }
     }
     
     // MARK: - Header
@@ -101,35 +117,98 @@ struct DecisionSupportView: View {
     
     // MARK: - Loading Section
     private var loadingSection: some View {
-        VStack(spacing: 20) {
-            // Thinking animation
-            HStack(spacing: 8) {
-                ForEach(0..<4) { index in
+        VStack(spacing: 24) {
+            // Animated brain/lightbulb thinking animation
+            ZStack {
+                // Background glow
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            gradient: Gradient(colors: [Color.indigo.opacity(0.3), Color.clear]),
+                            center: .center,
+                            startRadius: 20,
+                            endRadius: 60
+                        )
+                    )
+                    .frame(width: 120, height: 120)
+                    .scaleEffect(1.0 + loadingProgress * 0.2)
+                
+                // Rotating dots
+                ForEach(0..<6) { index in
                     Circle()
                         .fill(Color.indigo.opacity(0.6))
-                        .frame(width: 10, height: 10)
-                        .offset(y: animationOffset(for: index))
-                        .animation(
-                            Animation.easeInOut(duration: 0.5)
-                                .repeatForever()
-                                .delay(Double(index) * 0.15),
-                            value: isLoading
-                        )
+                        .frame(width: 8, height: 8)
+                        .offset(y: -45)
+                        .rotationEffect(.degrees(Double(index) * 60 + loadingProgress * 360))
+                }
+                
+                // Center icon with pulse
+                ZStack {
+                    Circle()
+                        .fill(Color.indigo.opacity(0.15))
+                        .frame(width: 70, height: 70)
+                    
+                    Image(systemName: "brain.head.profile")
+                        .font(.system(size: 32))
+                        .foregroundColor(.indigo)
+                        .symbolEffect(.pulse, options: .repeating)
                 }
             }
-            .padding(.top, 16)
+            .onAppear {
+                withAnimation(.linear(duration: 3).repeatForever(autoreverses: false)) {
+                    loadingProgress = 1.0
+                }
+            }
             
-            Text("Analyzing Case Details...")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundColor(textPrimary)
+            VStack(spacing: 8) {
+                Text("Analyzing Case Details")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(textPrimary)
+                
+                Text(loadingStage)
+                    .font(.system(size: 13))
+                    .foregroundColor(textSecondary)
+                    .multilineTextAlignment(.center)
+                    .animation(.easeInOut(duration: 0.3), value: loadingStage)
+            }
             
-            Text("Our System is evaluating all evidence to generate appropriate recommendations")
-                .font(.system(size: 13))
+            // Progress indicators
+            HStack(spacing: 6) {
+                ForEach(0..<5) { index in
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(index <= Int(loadingProgress * 5) ? Color.indigo : Color.indigo.opacity(0.2))
+                        .frame(width: 28, height: 4)
+                }
+            }
+            
+            Text("Evaluating all evidence to generate appropriate recommendations")
+                .font(.system(size: 12))
                 .foregroundColor(textSecondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
         }
-        .padding(.vertical, 24)
+        .padding(.vertical, 32)
+        .onAppear {
+            animateDecisionLoadingStages()
+        }
+    }
+    
+    private func animateDecisionLoadingStages() {
+        let stages = [
+            "Reading complaint documents...",
+            "Analyzing prior history...",
+            "Reviewing policy matches...",
+            "Evaluating severity factors...",
+            "Generating recommendations..."
+        ]
+        
+        for (index, stage) in stages.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 1.2) {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    loadingStage = stage
+                }
+            }
+        }
     }
     
     private func animationOffset(for index: Int) -> CGFloat {
@@ -673,6 +752,8 @@ struct DecisionSupportView: View {
         
         isLoading = true
         errorMessage = nil
+        loadingProgress = 0
+        loadingStage = "Initializing..."
         
         Task {
             do {
@@ -691,6 +772,7 @@ struct DecisionSupportView: View {
                 await MainActor.run {
                     self.recommendationResult = result
                     self.isLoading = false
+                    self.loadingProgress = 0
                     // Auto-expand primary recommendation
                     self.expandedOptionId = result.primaryRecommendationId
                 }
@@ -698,6 +780,7 @@ struct DecisionSupportView: View {
                 await MainActor.run {
                     self.errorMessage = error.localizedDescription
                     self.isLoading = false
+                    self.loadingProgress = 0
                 }
             }
         }
@@ -706,6 +789,8 @@ struct DecisionSupportView: View {
 
 // MARK: - Preview
 #Preview {
+    @Previewable @State var autoRun = false
+    
     DecisionSupportView(
         conflictCase: ConflictCase(
             id: UUID(),
@@ -720,6 +805,7 @@ struct DecisionSupportView: View {
         ),
         analysisResult: nil,
         policyMatches: nil,
+        autoRun: $autoRun,
         onSelectRecommendation: { _ in },
         onSkip: {}
     )

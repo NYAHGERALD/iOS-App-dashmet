@@ -34,6 +34,9 @@ struct CaseDetailView: View {
     @State private var analysisError: String? = nil
     @State private var showAnalysisErrorAlert = false
     @State private var showFullAnalysisView = false
+    @State private var reanalysisVersion: Int = 0           // Triggers child view resets
+    @State private var shouldAutoRunPolicyMatch = false     // Auto-run policy after re-analysis
+    @State private var shouldAutoRunDecisionSupport = false // Auto-run decision support after policy
     
     // Phase 5: Evidence Expansion State
     @State private var selectedWitnessForStatement: InvolvedEmployee? = nil
@@ -943,6 +946,12 @@ struct CaseDetailView: View {
                         conflictCase: caseItem,
                         policy: manager.activePolicy,
                         analysisResult: comparison,
+                        autoRun: $shouldAutoRunPolicyMatch,
+                        onPolicyMatched: { results in
+                            policyMatchResults = results
+                            // Auto-trigger decision support after policy matching completes
+                            shouldAutoRunDecisionSupport = true
+                        },
                         onRunPolicyMatch: {
                             // Policy matching is handled internally by the view
                         },
@@ -950,12 +959,14 @@ struct CaseDetailView: View {
                             // Continue to decision support
                         }
                     )
+                    .id("policy-\(reanalysisVersion)")
                     
                     // Phase 7: Decision Support
                     DecisionSupportView(
                         conflictCase: caseItem,
                         analysisResult: comparison,
                         policyMatches: policyMatchResults.isEmpty ? nil : policyMatchResults,
+                        autoRun: $shouldAutoRunDecisionSupport,
                         onSelectRecommendation: { recommendation in
                             selectedRecommendation = recommendation
                             // Update status to awaiting action when recommendation is selected
@@ -969,6 +980,7 @@ struct CaseDetailView: View {
                             selectedTab = 3 // Timeline tab
                         }
                     )
+                    .id("decision-\(reanalysisVersion)")
                     
                     // Phase 8: Action Generation (shown after recommendation selected)
                     if let recommendation = selectedRecommendation {
@@ -984,23 +996,7 @@ struct CaseDetailView: View {
             
             // Re-Analysis Loading Overlay
             if isAnalyzing && caseItem.comparisonResult != nil {
-                VStack(spacing: 16) {
-                    ProgressView()
-                        .scaleEffect(1.5)
-                        .tint(AppColors.primary)
-                    
-                    Text("Re-Analyzing with New Evidence...")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(textPrimary)
-                    
-                    Text("This may take a moment")
-                        .font(.system(size: 13))
-                        .foregroundColor(textSecondary)
-                }
-                .padding(32)
-                .background(cardBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .shadow(color: Color.black.opacity(0.2), radius: 20)
+                ReanalysisLoadingOverlay()
             }
         }
     }
@@ -1619,6 +1615,10 @@ struct CaseDetailView: View {
         )
         
         isAnalyzing = true
+        // Reset downstream views for re-analysis
+        policyMatchResults = []
+        selectedRecommendation = nil
+        reanalysisVersion += 1
         
         Task {
             do {
@@ -1636,8 +1636,14 @@ struct CaseDetailView: View {
                     var updatedCase = caseItem
                     updatedCase.comparisonResult = result
                     updatedCase.status = .pendingReview
+                    // Clear old policy matches from case too
+                    updatedCase.policyMatches = []
                     manager.updateCaseSync(updatedCase)
                     isAnalyzing = false
+                    
+                    // Set flags to auto-run downstream analyses
+                    shouldAutoRunPolicyMatch = true
+                    shouldAutoRunDecisionSupport = true
                     
                     // After analysis completes, automatically show the results
                     showFullAnalysisView = true
@@ -3570,6 +3576,115 @@ struct DocumentUploadSheet: View {
             )
         }
         dismiss()
+    }
+}
+
+// MARK: - Reanalysis Loading Overlay
+struct ReanalysisLoadingOverlay: View {
+    @State private var rotationAngle: Double = 0
+    @State private var pulseScale: CGFloat = 1.0
+    @State private var currentStage: Int = 0
+    
+    private let stages = [
+        ("doc.text.magnifyingglass", "Scanning new evidence..."),
+        ("brain.head.profile", "Analyzing prior history..."),
+        ("arrow.triangle.2.circlepath", "Cross-referencing statements..."),
+        ("chart.bar.doc.horizontal", "Updating analysis results..."),
+        ("sparkles", "Finalizing insights...")
+    ]
+    
+    @Environment(\.colorScheme) private var colorScheme
+    
+    private var textPrimary: Color {
+        colorScheme == .dark ? .white : .black
+    }
+    
+    private var textSecondary: Color {
+        colorScheme == .dark ? .white.opacity(0.7) : .black.opacity(0.6)
+    }
+    
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color(white: 0.12) : Color.white
+    }
+    
+    var body: some View {
+        VStack(spacing: 24) {
+            // Animated icon
+            ZStack {
+                // Outer rotating ring
+                Circle()
+                    .stroke(
+                        AngularGradient(
+                            gradient: Gradient(colors: [AppColors.primary, AppColors.primary.opacity(0.2)]),
+                            center: .center
+                        ),
+                        lineWidth: 3
+                    )
+                    .frame(width: 90, height: 90)
+                    .rotationEffect(.degrees(rotationAngle))
+                
+                // Pulsing background
+                Circle()
+                    .fill(AppColors.primary.opacity(0.1))
+                    .frame(width: 70, height: 70)
+                    .scaleEffect(pulseScale)
+                
+                // Center icon
+                Image(systemName: stages[currentStage].0)
+                    .font(.system(size: 28))
+                    .foregroundColor(AppColors.primary)
+                    .transition(.scale.combined(with: .opacity))
+                    .id(currentStage)
+            }
+            
+            VStack(spacing: 8) {
+                Text("Re-Analyzing with New Evidence")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(textPrimary)
+                
+                Text(stages[currentStage].1)
+                    .font(.system(size: 14))
+                    .foregroundColor(textSecondary)
+                    .animation(.easeInOut(duration: 0.3), value: currentStage)
+            }
+            
+            // Progress dots
+            HStack(spacing: 8) {
+                ForEach(0..<stages.count, id: \.self) { index in
+                    Circle()
+                        .fill(index <= currentStage ? AppColors.primary : AppColors.primary.opacity(0.3))
+                        .frame(width: 8, height: 8)
+                        .scaleEffect(index == currentStage ? 1.2 : 1.0)
+                        .animation(.spring(response: 0.3), value: currentStage)
+                }
+            }
+        }
+        .padding(40)
+        .background(cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .shadow(color: Color.black.opacity(0.25), radius: 30, x: 0, y: 10)
+        .onAppear {
+            startAnimations()
+        }
+    }
+    
+    private func startAnimations() {
+        // Rotation animation
+        withAnimation(.linear(duration: 2).repeatForever(autoreverses: false)) {
+            rotationAngle = 360
+        }
+        
+        // Pulse animation
+        withAnimation(.easeInOut(duration: 1).repeatForever(autoreverses: true)) {
+            pulseScale = 1.15
+        }
+        
+        // Stage progression
+        Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { timer in
+            withAnimation(.easeInOut(duration: 0.3)) {
+                currentStage = (currentStage + 1) % stages.count
+            }
+        }
     }
 }
 
