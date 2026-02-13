@@ -1342,12 +1342,10 @@ struct DocumentProcessingView: View {
         processingState = .processing
         currentStep = "Uploading images to storage..."
         
-        Task {
+        Task { @MainActor in
             // Get current user ID
-            guard let userId = await MainActor.run({ ConflictResolutionManager.shared.currentUserId }) else {
-                await MainActor.run {
-                    processingState = .error("User not authenticated", hint: "Please sign in and try again")
-                }
+            guard let userId = ConflictResolutionManager.shared.currentUserId else {
+                processingState = .error("User not authenticated", hint: "Please sign in and try again")
                 return
             }
             
@@ -1357,8 +1355,7 @@ struct DocumentProcessingView: View {
             
             // Upload images to Firebase Storage
             do {
-                await MainActor.run {
-                    currentStep = "Uploading \(scannedImages.count) image(s) to cloud storage..."
+                currentStep = "Uploading \(scannedImages.count) image(s) to cloud storage..."
                 }
                 
                 originalImageURLs = try await FirebaseStorageService.shared.uploadDocumentImages(
@@ -1394,16 +1391,12 @@ struct DocumentProcessingView: View {
                 submittedBy: submittedBy?.name
             )
             
-            await MainActor.run {
-                currentStep = "Saving document..."
-            }
+            currentStep = "Saving document..."
             
             // Add document to case and sync to database
             await ConflictResolutionManager.shared.addDocument(to: caseId, document: document)
             
-            await MainActor.run {
-                onComplete()
-            }
+            onComplete()
         }
     }
     
@@ -1413,12 +1406,10 @@ struct DocumentProcessingView: View {
         processingState = .processing
         currentStep = "Uploading images to storage..."
         
-        Task {
+        Task { @MainActor in
             // Get current user ID
-            guard let userId = await MainActor.run({ ConflictResolutionManager.shared.currentUserId }) else {
-                await MainActor.run {
-                    processingState = .error("User not authenticated", hint: "Please sign in and try again")
-                }
+            guard let userId = ConflictResolutionManager.shared.currentUserId else {
+                processingState = .error("User not authenticated", hint: "Please sign in and try again")
                 return
             }
             
@@ -1428,9 +1419,7 @@ struct DocumentProcessingView: View {
             
             // Upload images to Firebase Storage
             do {
-                await MainActor.run {
-                    currentStep = "Uploading \(scannedImages.count) image(s) to cloud storage..."
-                }
+                currentStep = "Uploading \(scannedImages.count) image(s) to cloud storage..."
                 
                 originalImageURLs = try await FirebaseStorageService.shared.uploadDocumentImages(
                     scannedImages,
@@ -1443,9 +1432,7 @@ struct DocumentProcessingView: View {
                 // Upload signature if available
                 if let signatureBase64 = auditLog.signatureImageBase64,
                    let signatureData = Data(base64Encoded: signatureBase64) {
-                    await MainActor.run {
-                        currentStep = "Uploading signature..."
-                    }
+                    currentStep = "Uploading signature..."
                     signatureURL = try await FirebaseStorageService.shared.uploadSignatureImage(
                         signatureData,
                         caseNumber: caseNumber,
@@ -1490,9 +1477,7 @@ struct DocumentProcessingView: View {
                 versionHash: auditLog.versionHash
             )
             
-            await MainActor.run {
-                currentStep = "Saving document..."
-            }
+            currentStep = "Saving document..."
             
             // Add document to case and sync to database
             await ConflictResolutionManager.shared.addDocument(to: caseId, document: document)
@@ -1500,9 +1485,7 @@ struct DocumentProcessingView: View {
             // Submit audit log to backend (fire-and-forget)
             await submitAuditLogToBackend(auditLog)
             
-            await MainActor.run {
-                onComplete()
-            }
+            onComplete()
         }
     }
     
