@@ -182,6 +182,7 @@ struct DocumentScannerEntryView: View {
             .fullScreenCover(isPresented: $showProcessingView) {
                 DocumentProcessingView(
                     caseId: conflictCase.id,
+                    caseNumber: conflictCase.caseNumber,
                     documentType: documentType,
                     submittedBy: selectedEmployee,
                     scannedImages: scannedImages,
@@ -819,6 +820,7 @@ struct DocumentFilePicker: UIViewControllerRepresentable {
 // MARK: - Document Processing View
 struct DocumentProcessingView: View {
     let caseId: UUID
+    let caseNumber: String
     let documentType: CaseDocumentType
     let submittedBy: InvolvedEmployee?
     let scannedImages: [UIImage]
@@ -1336,77 +1338,172 @@ struct DocumentProcessingView: View {
     }
     
     private func saveDocument() {
-        // Convert images to base64 for local storage
-        // In production, these would be uploaded to Firebase Storage
-        let imageDataArray = scannedImages.compactMap { image -> String? in
-            guard let data = image.jpegData(compressionQuality: 0.7) else { return nil }
-            return data.base64EncodedString()
-        }
-        
-        let document = CaseDocument(
-            type: documentType,
-            originalText: extractedText,
-            translatedText: translatedText,
-            cleanedText: cleanedText,
-            originalImageBase64: imageDataArray.first,
-            processedImageBase64: imageDataArray.first,
-            detectedLanguage: detectedLanguage,
-            isHandwritten: nil,
-            employeeId: submittedBy?.id,
-            submittedBy: submittedBy?.name
-        )
+        // Show processing indicator
+        processingState = .processing
+        currentStep = "Uploading images to storage..."
         
         Task {
+            // Get current user ID
+            guard let userId = await ConflictResolutionManager.shared.currentUserId else {
+                await MainActor.run {
+                    processingState = .error("User not authenticated", hint: "Please sign in and try again")
+                }
+                return
+            }
+            
+            let documentId = UUID()
+            var originalImageURLs: [String] = []
+            var localImageBase64: String? = nil
+            
+            // Upload images to Firebase Storage
+            do {
+                await MainActor.run {
+                    currentStep = "Uploading \(scannedImages.count) image(s) to cloud storage..."
+                }
+                
+                originalImageURLs = try await FirebaseStorageService.shared.uploadDocumentImages(
+                    scannedImages,
+                    caseNumber: caseNumber,
+                    documentId: documentId.uuidString,
+                    userId: userId,
+                    isProcessed: false
+                )
+                
+                print("✅ Document images uploaded to Firebase: \(originalImageURLs.count) URLs")
+            } catch {
+                print("⚠️ Failed to upload to Firebase, keeping local copy: \(error)")
+                // Fallback to base64 for local storage
+                if let firstImage = scannedImages.first,
+                   let data = firstImage.jpegData(compressionQuality: 0.7) {
+                    localImageBase64 = data.base64EncodedString()
+                }
+            }
+            
+            // Create document with Firebase URLs
+            let document = CaseDocument(
+                id: documentId,
+                type: documentType,
+                originalImageURLs: originalImageURLs,
+                originalText: extractedText,
+                translatedText: translatedText,
+                cleanedText: cleanedText,
+                originalImageBase64: localImageBase64,
+                detectedLanguage: detectedLanguage,
+                isHandwritten: nil,
+                employeeId: submittedBy?.id,
+                submittedBy: submittedBy?.name
+            )
+            
+            await MainActor.run {
+                currentStep = "Saving document..."
+            }
+            
+            // Add document to case and sync to database
             await ConflictResolutionManager.shared.addDocument(to: caseId, document: document)
+            
+            await MainActor.run {
+                onComplete()
+            }
         }
-        onComplete()
     }
     
     /// Save document with comprehensive audit log from review workflow
     private func saveDocumentWithAuditLog(_ auditLog: DocumentAuditLog) {
-        // Convert images to base64 for local storage
-        let imageDataArray = scannedImages.compactMap { image -> String? in
-            guard let data = image.jpegData(compressionQuality: 0.7) else { return nil }
-            return data.base64EncodedString()
-        }
+        // Show processing indicator
+        processingState = .processing
+        currentStep = "Uploading images to storage..."
         
-        // Create document with full audit trail
-        let document = CaseDocument(
-            id: auditLog.documentId,
-            type: documentType,
-            originalText: extractedText,
-            translatedText: translatedText,
-            cleanedText: cleanedText,
-            originalImageBase64: imageDataArray.first,
-            processedImageBase64: imageDataArray.first,
-            detectedLanguage: detectedLanguage,
-            isHandwritten: nil,
-            employeeId: submittedBy?.id,
-            submittedBy: submittedBy?.name,
-            // Audit log fields
-            signatureImageBase64: auditLog.signatureImageBase64,
-            employeeReviewTimestamp: auditLog.employeeReviewTimestamp,
-            employeeSignatureTimestamp: auditLog.employeeSignatureTimestamp,
-            supervisorCertificationTimestamp: auditLog.supervisorCertificationTimestamp,
-            supervisorId: auditLog.supervisorId,
-            supervisorName: auditLog.supervisorName,
-            submittedById: auditLog.submittedById,
-            deviceId: auditLog.deviceId,
-            appVersion: auditLog.appVersion,
-            versionHash: auditLog.versionHash
-        )
-        
-        // Add document to case
         Task {
+            // Get current user ID
+            guard let userId = await ConflictResolutionManager.shared.currentUserId else {
+                await MainActor.run {
+                    processingState = .error("User not authenticated", hint: "Please sign in and try again")
+                }
+                return
+            }
+            
+            var originalImageURLs: [String] = []
+            var localImageBase64: String? = nil
+            var signatureURL: String? = nil
+            
+            // Upload images to Firebase Storage
+            do {
+                await MainActor.run {
+                    currentStep = "Uploading \(scannedImages.count) image(s) to cloud storage..."
+                }
+                
+                originalImageURLs = try await FirebaseStorageService.shared.uploadDocumentImages(
+                    scannedImages,
+                    caseNumber: caseNumber,
+                    documentId: auditLog.documentId.uuidString,
+                    userId: userId,
+                    isProcessed: false
+                )
+                
+                // Upload signature if available
+                if let signatureBase64 = auditLog.signatureImageBase64,
+                   let signatureData = Data(base64Encoded: signatureBase64) {
+                    await MainActor.run {
+                        currentStep = "Uploading signature..."
+                    }
+                    signatureURL = try await FirebaseStorageService.shared.uploadSignatureImage(
+                        signatureData,
+                        caseNumber: caseNumber,
+                        documentId: auditLog.documentId.uuidString,
+                        userId: userId
+                    )
+                }
+                
+                print("✅ Document images uploaded to Firebase: \(originalImageURLs.count) URLs")
+            } catch {
+                print("⚠️ Failed to upload to Firebase, keeping local copy: \(error)")
+                // Fallback to base64 for local storage
+                if let firstImage = scannedImages.first,
+                   let data = firstImage.jpegData(compressionQuality: 0.7) {
+                    localImageBase64 = data.base64EncodedString()
+                }
+            }
+            
+            // Create document with Firebase URLs and full audit trail
+            let document = CaseDocument(
+                id: auditLog.documentId,
+                type: documentType,
+                originalImageURLs: originalImageURLs,
+                originalText: extractedText,
+                translatedText: translatedText,
+                cleanedText: cleanedText,
+                originalImageBase64: localImageBase64,
+                detectedLanguage: detectedLanguage,
+                isHandwritten: nil,
+                employeeId: submittedBy?.id,
+                submittedBy: submittedBy?.name,
+                // Audit log fields - use URL if uploaded, otherwise base64
+                signatureImageBase64: signatureURL ?? auditLog.signatureImageBase64,
+                employeeReviewTimestamp: auditLog.employeeReviewTimestamp,
+                employeeSignatureTimestamp: auditLog.employeeSignatureTimestamp,
+                supervisorCertificationTimestamp: auditLog.supervisorCertificationTimestamp,
+                supervisorId: auditLog.supervisorId,
+                supervisorName: auditLog.supervisorName,
+                submittedById: auditLog.submittedById,
+                deviceId: auditLog.deviceId,
+                appVersion: auditLog.appVersion,
+                versionHash: auditLog.versionHash
+            )
+            
+            await MainActor.run {
+                currentStep = "Saving document..."
+            }
+            
+            // Add document to case and sync to database
             await ConflictResolutionManager.shared.addDocument(to: caseId, document: document)
-        }
-        
-        // Submit audit log to backend (fire-and-forget)
-        Task {
+            
+            // Submit audit log to backend (fire-and-forget)
             await submitAuditLogToBackend(auditLog)
+            
+            await MainActor.run {
+                onComplete()
+            }
         }
-        
-        onComplete()
     }
     
     /// Submit audit log to backend for permanent storage

@@ -180,16 +180,67 @@ struct ConflictDocumentAPIData: Codable {
     let uploadedAt: String
     let content: String?
     let extractedText: String?
+    // Additional fields from backend
+    let originalImageUrls: String?  // JSON array as encrypted string
+    let processedImageUrls: String?
+    let originalText: String?
+    let translatedText: String?
+    let cleanedText: String?
+    let detectedLanguage: String?
+    let isHandwritten: Bool?
+    let employeeId: String?
+    let submittedBy: String?
+    let signatureImageData: String?
+    let employeeReviewTimestamp: String?
+    let employeeSignatureTimestamp: String?
+    let supervisorCertificationTimestamp: String?
+    let supervisorId: String?
+    let supervisorName: String?
+    let pageCount: Int?
     
     func toCaseDocument() -> CaseDocument {
         let dateFormatter = ISO8601DateFormatter()
         dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         
+        // Parse image URL arrays from JSON strings
+        var originalURLs: [String] = []
+        var processedURLs: [String] = []
+        
+        if let urlString = originalImageUrls,
+           let data = urlString.data(using: .utf8),
+           let urls = try? JSONSerialization.jsonObject(with: data) as? [String] {
+            originalURLs = urls
+        }
+        
+        if let urlString = processedImageUrls,
+           let data = urlString.data(using: .utf8),
+           let urls = try? JSONSerialization.jsonObject(with: data) as? [String] {
+            processedURLs = urls
+        }
+        
+        // Parse timestamps
+        let reviewTime = employeeReviewTimestamp.flatMap { dateFormatter.date(from: $0) }
+        let signTime = employeeSignatureTimestamp.flatMap { dateFormatter.date(from: $0) }
+        let certTime = supervisorCertificationTimestamp.flatMap { dateFormatter.date(from: $0) }
+        
         return CaseDocument(
             id: UUID(uuidString: id) ?? UUID(),
             type: CaseDocumentType(rawValue: type) ?? .other,
-            originalText: extractedText ?? "",
-            cleanedText: content ?? ""
+            originalImageURLs: originalURLs,
+            processedImageURLs: processedURLs,
+            originalText: originalText ?? extractedText ?? "",
+            translatedText: translatedText,
+            cleanedText: cleanedText ?? content ?? "",
+            detectedLanguage: detectedLanguage,
+            isHandwritten: isHandwritten,
+            employeeId: employeeId.flatMap { UUID(uuidString: $0) },
+            submittedBy: submittedBy,
+            signatureImageBase64: signatureImageData,
+            employeeReviewTimestamp: reviewTime,
+            employeeSignatureTimestamp: signTime,
+            supervisorCertificationTimestamp: certTime,
+            supervisorId: supervisorId,
+            supervisorName: supervisorName
         )
     }
 }

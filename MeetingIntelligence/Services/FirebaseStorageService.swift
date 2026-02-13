@@ -8,6 +8,7 @@
 import Foundation
 import FirebaseStorage
 import Combine
+import UIKit
 
 // MARK: - Upload State
 enum UploadState: Equatable {
@@ -499,5 +500,94 @@ class FirebaseStorageService: ObservableObject {
         // AI summary audio is the TTS-generated narration, not the original recording
         
         print("✅ [Compliance] All meeting audio deleted from Firebase Storage")
+    }
+    
+    // MARK: - Document Image Uploads
+    
+    /// Upload a document image to Firebase Storage for conflict resolution
+    /// Returns the download URL for the uploaded image
+    func uploadDocumentImage(_ image: UIImage, caseNumber: String, documentId: String, pageIndex: Int, userId: String, isProcessed: Bool = false) async throws -> String {
+        guard let imageData = image.jpegData(compressionQuality: 0.8) else {
+            throw UploadError.invalidFile
+        }
+        
+        let folder = isProcessed ? "processed" : "original"
+        let storagePath = "conflict-cases/\(userId)/\(caseNumber)/documents/\(documentId)/\(folder)/page_\(pageIndex).jpg"
+        
+        print("📤 Uploading document image to Firebase...")
+        print("   Path: \(storagePath)")
+        
+        let storageRef = storage.reference().child(storagePath)
+        let metadata = StorageMetadata()
+        metadata.contentType = "image/jpeg"
+        
+        _ = try await storageRef.putDataAsync(imageData, metadata: metadata)
+        let downloadURL = try await storageRef.downloadURL()
+        
+        print("✅ Document image uploaded: \(downloadURL.absoluteString)")
+        return downloadURL.absoluteString
+    }
+    
+    /// Upload multiple document images and return their URLs
+    func uploadDocumentImages(_ images: [UIImage], caseNumber: String, documentId: String, userId: String, isProcessed: Bool = false) async throws -> [String] {
+        var urls: [String] = []
+        
+        for (index, image) in images.enumerated() {
+            let url = try await uploadDocumentImage(
+                image,
+                caseNumber: caseNumber,
+                documentId: documentId,
+                pageIndex: index,
+                userId: userId,
+                isProcessed: isProcessed
+            )
+            urls.append(url)
+        }
+        
+        print("✅ Uploaded \(urls.count) document images")
+        return urls
+    }
+    
+    /// Upload signature image to Firebase Storage
+    func uploadSignatureImage(_ signatureData: Data, caseNumber: String, documentId: String, userId: String) async throws -> String {
+        let storagePath = "conflict-cases/\(userId)/\(caseNumber)/documents/\(documentId)/signature.png"
+        
+        print("📤 Uploading signature to Firebase...")
+        
+        let storageRef = storage.reference().child(storagePath)
+        let metadata = StorageMetadata()
+        metadata.contentType = "image/png"
+        
+        _ = try await storageRef.putDataAsync(signatureData, metadata: metadata)
+        let downloadURL = try await storageRef.downloadURL()
+        
+        print("✅ Signature uploaded: \(downloadURL.absoluteString)")
+        return downloadURL.absoluteString
+    }
+    
+    /// Delete all images for a document
+    func deleteDocumentImages(caseNumber: String, documentId: String, userId: String) async throws {
+        let basePath = "conflict-cases/\(userId)/\(caseNumber)/documents/\(documentId)"
+        
+        print("🗑️ Deleting document images from Firebase...")
+        
+        let storageRef = storage.reference().child(basePath)
+        
+        do {
+            let result = try await storageRef.listAll()
+            for item in result.items {
+                try await item.delete()
+            }
+            // Also check subdirectories
+            for prefix in result.prefixes {
+                let subResult = try await prefix.listAll()
+                for item in subResult.items {
+                    try await item.delete()
+                }
+            }
+            print("✅ Document images deleted")
+        } catch {
+            print("⚠️ Could not delete document images: \(error.localizedDescription)")
+        }
     }
 }
