@@ -174,29 +174,35 @@ struct ConflictEmployeeAPIData: Codable {
 
 struct ConflictDocumentAPIData: Codable {
     let id: String
-    let name: String?
     let type: String
-    let url: String?
-    let uploadedAt: String
-    let content: String?
-    let extractedText: String?
-    // Additional fields from backend
-    let originalImageUrls: String?  // JSON array as encrypted string
-    let processedImageUrls: String?
+    let createdAt: String  // Backend sends createdAt, not uploadedAt
+    let updatedAt: String?
+    // Text fields from backend
     let originalText: String?
     let translatedText: String?
     let cleanedText: String?
+    let extractedText: String?
+    // Image URLs (encrypted JSON arrays)
+    let originalImageUrls: String?
+    let processedImageUrls: String?
+    // Metadata
     let detectedLanguage: String?
     let isHandwritten: Bool?
+    let pageCount: Int?
+    // Employee info
     let employeeId: String?
     let submittedBy: String?
+    // Signature and audit fields
     let signatureImageData: String?
     let employeeReviewTimestamp: String?
     let employeeSignatureTimestamp: String?
     let supervisorCertificationTimestamp: String?
     let supervisorId: String?
     let supervisorName: String?
-    let pageCount: Int?
+    let submittedById: String?
+    let deviceId: String?
+    let appVersion: String?
+    let versionHash: String?
     
     func toCaseDocument() -> CaseDocument {
         let dateFormatter = ISO8601DateFormatter()
@@ -219,6 +225,7 @@ struct ConflictDocumentAPIData: Codable {
         }
         
         // Parse timestamps
+        let docCreatedAt = dateFormatter.date(from: createdAt) ?? Date()
         let reviewTime = employeeReviewTimestamp.flatMap { dateFormatter.date(from: $0) }
         let signTime = employeeSignatureTimestamp.flatMap { dateFormatter.date(from: $0) }
         let certTime = supervisorCertificationTimestamp.flatMap { dateFormatter.date(from: $0) }
@@ -230,11 +237,13 @@ struct ConflictDocumentAPIData: Codable {
             processedImageURLs: processedURLs,
             originalText: originalText ?? extractedText ?? "",
             translatedText: translatedText,
-            cleanedText: cleanedText ?? content ?? "",
+            cleanedText: cleanedText ?? "",
             detectedLanguage: detectedLanguage,
             isHandwritten: isHandwritten,
             employeeId: employeeId.flatMap { UUID(uuidString: $0) },
             submittedBy: submittedBy,
+            createdAt: docCreatedAt,
+            pageCount: pageCount ?? 1,
             signatureImageBase64: signatureImageData,
             employeeReviewTimestamp: reviewTime,
             employeeSignatureTimestamp: signTime,
