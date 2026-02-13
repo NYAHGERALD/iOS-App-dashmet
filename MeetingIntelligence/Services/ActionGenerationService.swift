@@ -423,6 +423,67 @@ struct GeneratedDocumentResult {
     let document: GeneratedDocument
     let generatedAt: Date
     let isEditable: Bool
+    
+    /// Convert to the Codable model for database storage
+    func toGeneratedActionDocument() -> GeneratedActionDocument {
+        let recommendedAction: RecommendedAction
+        switch actionType {
+        case .coaching: recommendedAction = .coaching
+        case .counseling: recommendedAction = .counseling
+        case .warning: recommendedAction = .writtenWarning
+        case .escalate: recommendedAction = .escalateToHR
+        }
+        
+        var title = ""
+        var content = ""
+        var talkingPoints: [String]? = nil
+        var questionsToAsk: [String]? = nil
+        var behavioralFocusAreas: [String]? = nil
+        var followUpTimeline: String? = nil
+        var policyReferences: [String]? = nil
+        
+        switch document {
+        case .coaching(let doc):
+            title = doc.title
+            content = doc.overview
+            talkingPoints = doc.talkingPoints
+            questionsToAsk = doc.questionsToAsk
+            behavioralFocusAreas = doc.behavioralFocusAreas.map { $0.area }
+            followUpTimeline = doc.followUpPlan.timeline
+            
+        case .counseling(let doc):
+            title = doc.title
+            content = doc.incidentSummary
+            talkingPoints = doc.discussionPoints
+            policyReferences = doc.policyReferences
+            followUpTimeline = doc.improvementPlan.timeline
+            
+        case .warning(let doc):
+            title = doc.title
+            content = doc.describeInDetail
+            policyReferences = doc.companyRulesViolated
+            followUpTimeline = doc.reviewDate
+            
+        case .escalation(let doc):
+            title = doc.title
+            content = doc.supervisorNotes
+            policyReferences = doc.policyReferences.map { $0.section }
+            followUpTimeline = doc.urgencyLevel
+        }
+        
+        return GeneratedActionDocument(
+            actionType: recommendedAction,
+            title: title,
+            content: content,
+            talkingPoints: talkingPoints,
+            questionsToAsk: questionsToAsk,
+            behavioralFocusAreas: behavioralFocusAreas,
+            followUpTimeline: followUpTimeline,
+            policyReferences: policyReferences,
+            isApproved: false,
+            createdAt: generatedAt
+        )
+    }
 }
 
 // MARK: - Generated Document Enum

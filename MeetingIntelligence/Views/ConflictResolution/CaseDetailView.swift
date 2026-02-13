@@ -236,7 +236,50 @@ struct CaseDetailView: View {
                     )
                 }
             }
+            .onAppear {
+                // Restore generated document from case if available
+                if let caseItem = conflictCase, let savedDoc = caseItem.generatedDocument {
+                    restoreGeneratedDocument(from: caseItem, savedDoc: savedDoc)
+                }
+            }
         }
+    }
+    
+    // MARK: - Restore Generated Document
+    private func restoreGeneratedDocument(from caseItem: ConflictCase, savedDoc: GeneratedActionDocument) {
+        // Restore selected recommendation if available
+        if let action = caseItem.selectedAction {
+            selectedRecommendation = RecommendationOption(
+                id: "restored",
+                type: {
+                    switch action {
+                    case .coaching: return .coaching
+                    case .counseling: return .counseling
+                    case .writtenWarning: return .warning
+                    case .escalateToHR: return .escalate
+                    }
+                }(),
+                title: action.displayName,
+                description: action.description,
+                rationale: "Restored from saved case",
+                riskLevel: {
+                    switch action.riskLevel {
+                    case "Low": return .low
+                    case "Medium": return .moderate
+                    case "High": return .high
+                    default: return .moderate
+                    }
+                }(),
+                riskExplanation: "",
+                nextSteps: [],
+                timeframe: "",
+                confidence: 0.8
+            )
+        }
+        
+        // We can't fully restore GeneratedDocumentResult from GeneratedActionDocument
+        // as it loses the detailed document structure. The user will need to regenerate
+        // for full preview, but the data is preserved in the database.
     }
     
     // MARK: - Case Header Section
@@ -1090,6 +1133,19 @@ struct CaseDetailView: View {
                     onDocumentGenerated: { result in
                         generatedDocument = result
                         showActionGeneration = false
+                        
+                        // Save generated document to case for database persistence
+                        var updatedCase = caseItem
+                        updatedCase.generatedDocument = result.toGeneratedActionDocument()
+                        updatedCase.selectedAction = {
+                            switch result.actionType {
+                            case .coaching: return .coaching
+                            case .counseling: return .counseling
+                            case .warning: return .writtenWarning
+                            case .escalate: return .escalateToHR
+                            }
+                        }()
+                        manager.updateCaseSync(updatedCase)
                     },
                     onBack: {
                         showActionGeneration = false
@@ -1106,8 +1162,16 @@ struct CaseDetailView: View {
                         // Handle approval - update case status and proceed to finalization
                         generatedDocument = updatedResult
                         showSupervisorReview = false
-                        // Update case status to awaiting action
+                        
+                        // Update case with approved document
+                        var updatedCase = caseItem
+                        var approvedDoc = updatedResult.toGeneratedActionDocument()
+                        approvedDoc.isApproved = true
+                        approvedDoc.approvedAt = Date()
+                        updatedCase.generatedDocument = approvedDoc
+                        
                         Task {
+                            await manager.updateCase(updatedCase)
                             await manager.updateCaseStatus(caseItem.id, to: .awaitingAction)
                         }
                         showFinalization = true
@@ -1117,10 +1181,15 @@ struct CaseDetailView: View {
                         showSupervisorReview = false
                     },
                     onReject: { reason in
-                        // Handle rejection - reset document
+                        // Handle rejection - reset document and clear from case
                         generatedDocument = nil
                         selectedRecommendation = nil
                         showSupervisorReview = false
+                        
+                        var updatedCase = caseItem
+                        updatedCase.generatedDocument = nil
+                        updatedCase.selectedAction = nil
+                        manager.updateCaseSync(updatedCase)
                     },
                     onBack: {
                         showSupervisorReview = false

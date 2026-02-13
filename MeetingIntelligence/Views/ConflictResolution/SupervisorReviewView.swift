@@ -895,8 +895,17 @@ struct ReviewDocumentPreviewSheet: View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 0) {
-                    // Official Warning Notice Template
-                    warningNoticeTemplate
+                    // Template based on document type
+                    switch document.actionType {
+                    case .coaching:
+                        coachingSessionTemplate
+                    case .counseling:
+                        documentedCounselingTemplate
+                    case .warning:
+                        warningNoticeTemplate
+                    case .escalate:
+                        hrEscalationTemplate
+                    }
                 }
                 .padding()
             }
@@ -1330,6 +1339,948 @@ struct ReviewDocumentPreviewSheet: View {
                 .font(.system(size: 8))
                 .italic()
                 .foregroundColor(.secondary)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .border(borderColor, width: 0.5)
+    }
+    
+    // MARK: - =====================================================
+    // MARK: COACHING SESSION TEMPLATE
+    // MARK: - =====================================================
+    
+    // Get coaching-specific content
+    private var coachingOverview: String {
+        sections.first(where: { $0.id == "overview" })?.content ?? ""
+    }
+    
+    private var coachingOutline: String {
+        sections.first(where: { $0.id == "outline" })?.content ?? ""
+    }
+    
+    private var coachingTalkingPoints: String {
+        sections.first(where: { $0.id == "talking_points" })?.content ?? ""
+    }
+    
+    private var coachingQuestions: String {
+        sections.first(where: { $0.id == "questions" })?.content ?? ""
+    }
+    
+    private var coachingFollowUp: String {
+        sections.first(where: { $0.id == "followup" })?.content ?? ""
+    }
+    
+    private var coachingSessionTemplate: some View {
+        VStack(spacing: 0) {
+            // Company Logo Section
+            companyLogoSection
+            
+            // Title Section
+            coachingTitleSection
+            
+            // Session Information
+            coachingInfoSection
+            
+            // Employee Info
+            coachingEmployeeInfo
+            
+            // Overview Section
+            coachingOverviewSection
+            
+            // Discussion Outline
+            coachingDiscussionOutlineSection
+            
+            // Talking Points
+            coachingTalkingPointsSection
+            
+            // Questions to Ask
+            coachingQuestionsSection
+            
+            // Follow-Up Plan
+            coachingFollowUpSection
+            
+            // Notes Section
+            coachingNotesSection
+            
+            // Signature Section
+            coachingSignatureSection
+        }
+        .background(backgroundColor)
+        .overlay(
+            RoundedRectangle(cornerRadius: 2)
+                .stroke(borderColor, lineWidth: 1)
+        )
+    }
+    
+    private var coachingTitleSection: some View {
+        VStack(spacing: 2) {
+            Text("COACHING SESSION GUIDE")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundColor(.primary)
+            Text("Guía de Sesión de Coaching")
+                .font(.system(size: 11))
+                .italic()
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .background(Color.green.opacity(0.1))
+        .border(borderColor, width: 0.5)
+    }
+    
+    private var coachingInfoSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("This coaching session is designed to address workplace behavior and set clear expectations. The goal is to support employee growth through constructive dialogue.")
+                .font(.system(size: 8))
+                .foregroundColor(.primary)
+            
+            Text("Esta sesión de coaching está diseñada para abordar el comportamiento laboral y establecer expectativas claras. El objetivo es apoyar el crecimiento del empleado a través de un diálogo constructivo.")
+                .font(.system(size: 8))
+                .italic()
+                .foregroundColor(.secondary)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .border(borderColor, width: 0.5)
+    }
+    
+    private var coachingEmployeeInfo: some View {
+        VStack(spacing: 0) {
+            // Row 1: Session Info
+            HStack {
+                Text("Session Date:")
+                    .font(.system(size: 9, weight: .medium))
+                Text(Date().formatted(date: .numeric, time: .omitted))
+                    .font(.system(size: 9))
+                    .underline()
+                
+                Spacer()
+                
+                Text("Case Reference:")
+                    .font(.system(size: 9, weight: .medium))
+                Text(conflictCase.caseNumber)
+                    .font(.system(size: 9))
+                    .underline()
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .border(borderColor, width: 0.5)
+            
+            // Row 2: Employee Details
+            HStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Employee Name:")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                    Text(employeeName)
+                        .font(.system(size: 10, weight: .medium))
+                }
+                .padding(6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .border(borderColor, width: 0.5)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Position:")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                    Text(employeeTitle)
+                        .font(.system(size: 10, weight: .medium))
+                }
+                .padding(6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .border(borderColor, width: 0.5)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Department:")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                    Text(conflictCase.department)
+                        .font(.system(size: 10, weight: .medium))
+                }
+                .padding(6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .border(borderColor, width: 0.5)
+            }
+        }
+    }
+    
+    private var coachingOverviewSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "doc.text")
+                    .font(.system(size: 10))
+                    .foregroundColor(.green)
+                Text("Session Overview")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            
+            Text(coachingOverview.isEmpty ? "Overview will be generated..." : coachingOverview)
+                .font(.system(size: 9))
+                .foregroundColor(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: 60)
+        .border(borderColor, width: 0.5)
+    }
+    
+    private var coachingDiscussionOutlineSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "list.bullet.clipboard")
+                    .font(.system(size: 10))
+                    .foregroundColor(.green)
+                Text("Discussion Outline")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            
+            Text(coachingOutline.isEmpty ? "Begin discussion by..." : coachingOutline)
+                .font(.system(size: 9))
+                .foregroundColor(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: 60)
+        .border(borderColor, width: 0.5)
+    }
+    
+    private var coachingTalkingPointsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "bubble.left.and.bubble.right")
+                    .font(.system(size: 10))
+                    .foregroundColor(.green)
+                Text("Talking Points")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            
+            if coachingTalkingPoints.isEmpty {
+                Text("• Key talking points will appear here")
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+            } else {
+                Text("• \(coachingTalkingPoints)")
+                    .font(.system(size: 9))
+                    .foregroundColor(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: 80)
+        .border(borderColor, width: 0.5)
+    }
+    
+    private var coachingQuestionsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "questionmark.circle")
+                    .font(.system(size: 10))
+                    .foregroundColor(.green)
+                Text("Questions to Ask")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            
+            if coachingQuestions.isEmpty {
+                Text("• Questions to ask the employee...")
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+            } else {
+                Text("• \(coachingQuestions)")
+                    .font(.system(size: 9))
+                    .foregroundColor(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: 60)
+        .border(borderColor, width: 0.5)
+    }
+    
+    private var coachingFollowUpSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "calendar.badge.clock")
+                    .font(.system(size: 10))
+                    .foregroundColor(.green)
+                Text("Follow-Up Plan")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            
+            Text(coachingFollowUp.isEmpty ? "Follow-up timeline: 30 days" : coachingFollowUp)
+                .font(.system(size: 9))
+                .foregroundColor(.primary)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: 40)
+        .border(borderColor, width: 0.5)
+    }
+    
+    private var coachingNotesSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Session Notes:")
+                .font(.system(size: 10, weight: .bold))
+            
+            Text("_________________________________________________________________")
+                .font(.system(size: 9))
+            Text("_________________________________________________________________")
+                .font(.system(size: 9))
+            Text("_________________________________________________________________")
+                .font(.system(size: 9))
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: 70)
+        .border(borderColor, width: 0.5)
+    }
+    
+    private var coachingSignatureSection: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                signatureCell(label: "Supervisor")
+                signatureCell(label: "Date")
+                signatureCell(label: "Employee")
+                signatureCell(label: "Date")
+            }
+        }
+    }
+    
+    // MARK: - =====================================================
+    // MARK: DOCUMENTED COUNSELING TEMPLATE
+    // MARK: - =====================================================
+    
+    // Get counseling-specific content
+    private var counselingSummary: String {
+        sections.first(where: { $0.id == "summary" })?.content ?? ""
+    }
+    
+    private var counselingExpectations: String {
+        sections.first(where: { $0.id == "expectations" })?.content ?? ""
+    }
+    
+    private var counselingConsequences: String {
+        sections.first(where: { $0.id == "consequences" })?.content ?? ""
+    }
+    
+    private var counselingAcknowledgment: String {
+        sections.first(where: { $0.id == "acknowledgment" })?.content ?? ""
+    }
+    
+    private var documentedCounselingTemplate: some View {
+        VStack(spacing: 0) {
+            // Company Logo Section
+            companyLogoSection
+            
+            // Title Section
+            counselingTitleSection
+            
+            // Info Statement
+            counselingInfoSection
+            
+            // Date and Case Info
+            counselingDateSection
+            
+            // Employee Info Table
+            counselingEmployeeInfo
+            
+            // Incident Summary
+            counselingIncidentSection
+            
+            // Expectations
+            counselingExpectationsSection
+            
+            // Policy References
+            counselingPolicySection
+            
+            // Consequences
+            counselingConsequencesSection
+            
+            // Acknowledgment
+            counselingAcknowledgmentSection
+            
+            // Signature Section
+            counselingSignatureSection
+        }
+        .background(backgroundColor)
+        .overlay(
+            RoundedRectangle(cornerRadius: 2)
+                .stroke(borderColor, lineWidth: 1)
+        )
+    }
+    
+    private var counselingTitleSection: some View {
+        VStack(spacing: 2) {
+            Text("DOCUMENTED COUNSELING")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundColor(.primary)
+            Text("Consejería Documentada")
+                .font(.system(size: 11))
+                .italic()
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .background(Color.blue.opacity(0.1))
+        .border(borderColor, width: 0.5)
+    }
+    
+    private var counselingInfoSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("This documented counseling serves as a formal record of a discussion regarding workplace conduct. It is intended to clarify expectations and provide the employee an opportunity for improvement before further disciplinary action.")
+                .font(.system(size: 8))
+                .foregroundColor(.primary)
+            
+            Text("Esta consejería documentada sirve como registro formal de una discusión sobre la conducta laboral. Tiene la intención de aclarar expectativas y dar al empleado la oportunidad de mejorar antes de tomar acciones disciplinarias adicionales.")
+                .font(.system(size: 8))
+                .italic()
+                .foregroundColor(.secondary)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .border(borderColor, width: 0.5)
+    }
+    
+    private var counselingDateSection: some View {
+        HStack(spacing: 4) {
+            Text("Date:")
+                .font(.system(size: 9, weight: .medium))
+            Text(Date().formatted(date: .numeric, time: .omitted))
+                .font(.system(size: 9))
+                .underline()
+            
+            Spacer()
+            
+            Text("Case Reference:")
+                .font(.system(size: 9, weight: .medium))
+            Text(conflictCase.caseNumber)
+                .font(.system(size: 9))
+                .underline()
+            
+            Spacer()
+            
+            Text("Incident Date:")
+                .font(.system(size: 9, weight: .medium))
+            Text(conflictCase.incidentDate.formatted(date: .numeric, time: .omitted))
+                .font(.system(size: 9))
+                .underline()
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .border(borderColor, width: 0.5)
+    }
+    
+    private var counselingEmployeeInfo: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Employee Name:")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                    Text(employeeName)
+                        .font(.system(size: 10, weight: .medium))
+                }
+                .padding(6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .border(borderColor, width: 0.5)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Employee ID:")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                    Text(employeeFileNo)
+                        .font(.system(size: 10, weight: .medium))
+                }
+                .padding(6)
+                .frame(width: 120, alignment: .leading)
+                .border(borderColor, width: 0.5)
+            }
+            
+            HStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Position:")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                    Text(employeeTitle)
+                        .font(.system(size: 10, weight: .medium))
+                }
+                .padding(6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .border(borderColor, width: 0.5)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Department:")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                    Text(conflictCase.department)
+                        .font(.system(size: 10, weight: .medium))
+                }
+                .padding(6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .border(borderColor, width: 0.5)
+            }
+        }
+    }
+    
+    private var counselingIncidentSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "doc.text.magnifyingglass")
+                    .font(.system(size: 10))
+                    .foregroundColor(.blue)
+                Text("Incident Summary")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            
+            Text(counselingSummary.isEmpty ? "Description of the incident..." : counselingSummary)
+                .font(.system(size: 9))
+                .foregroundColor(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: 80)
+        .border(borderColor, width: 0.5)
+    }
+    
+    private var counselingExpectationsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "checkmark.circle")
+                    .font(.system(size: 10))
+                    .foregroundColor(.blue)
+                Text("Expectations for Improvement")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            
+            if counselingExpectations.isEmpty {
+                Text("• Employee is expected to...")
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+            } else {
+                Text("• \(counselingExpectations)")
+                    .font(.system(size: 9))
+                    .foregroundColor(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: 60)
+        .border(borderColor, width: 0.5)
+    }
+    
+    private var counselingPolicySection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "doc.badge.gearshape")
+                    .font(.system(size: 10))
+                    .foregroundColor(.blue)
+                Text("Policy References")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            
+            Text(policyViolatedContent.isEmpty ? "Applicable company policies..." : policyViolatedContent)
+                .font(.system(size: 9))
+                .foregroundColor(.primary)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: 40)
+        .border(borderColor, width: 0.5)
+    }
+    
+    private var counselingConsequencesSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 10))
+                    .foregroundColor(.orange)
+                Text("Consequences of Continued Violations")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            
+            Text(counselingConsequences.isEmpty ? "Failure to improve may result in further disciplinary action up to and including termination." : counselingConsequences)
+                .font(.system(size: 9))
+                .foregroundColor(.primary)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: 50)
+        .border(borderColor, width: 0.5)
+    }
+    
+    private var counselingAcknowledgmentSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Employee Acknowledgment:")
+                .font(.system(size: 10, weight: .bold))
+            
+            Text(counselingAcknowledgment.isEmpty ? "I acknowledge that I have received and understand this documented counseling. My signature indicates that I have discussed this matter with my supervisor and understand the expectations outlined above." : counselingAcknowledgment)
+                .font(.system(size: 8))
+                .foregroundColor(.primary)
+            
+            Text("Reconozco que he recibido y entiendo esta consejería documentada. Mi firma indica que he discutido este asunto con mi supervisor y entiendo las expectativas descritas anteriormente.")
+                .font(.system(size: 8))
+                .italic()
+                .foregroundColor(.secondary)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .border(borderColor, width: 0.5)
+    }
+    
+    private var counselingSignatureSection: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                signatureCell(label: "Employee Signature")
+                signatureCell(label: "Date")
+            }
+            HStack(spacing: 0) {
+                signatureCell(label: "Supervisor")
+                signatureCell(label: "Date")
+            }
+            HStack(spacing: 0) {
+                signatureCell(label: "Manager (if required)")
+                signatureCell(label: "Date")
+            }
+        }
+    }
+    
+    // MARK: - =====================================================
+    // MARK: HR ESCALATION TEMPLATE
+    // MARK: - =====================================================
+    
+    // Get escalation-specific content
+    private var escalationSummary: String {
+        sections.first(where: { $0.id == "summary" })?.content ?? ""
+    }
+    
+    private var escalationUrgency: String {
+        sections.first(where: { $0.id == "urgency" })?.content ?? ""
+    }
+    
+    private var escalationNotes: String {
+        sections.first(where: { $0.id == "notes" })?.content ?? ""
+    }
+    
+    private var escalationRecommendations: String {
+        sections.first(where: { $0.id == "recommendations" })?.content ?? ""
+    }
+    
+    private var hrEscalationTemplate: some View {
+        VStack(spacing: 0) {
+            // Company Logo Section
+            companyLogoSection
+            
+            // Title Section
+            escalationTitleSection
+            
+            // CONFIDENTIAL Banner
+            escalationConfidentialBanner
+            
+            // Date and Routing Info
+            escalationRoutingSection
+            
+            // Case Summary
+            escalationCaseSummarySection
+            
+            // Involved Parties
+            escalationPartiesSection
+            
+            // Supervisor Notes
+            escalationNotesSection
+            
+            // Recommended HR Actions
+            escalationRecommendationsSection
+            
+            // Urgency Level
+            escalationUrgencySection
+            
+            // Approval Section
+            escalationApprovalSection
+            
+            // HR Response Section
+            escalationHRResponseSection
+        }
+        .background(backgroundColor)
+        .overlay(
+            RoundedRectangle(cornerRadius: 2)
+                .stroke(borderColor, lineWidth: 1)
+        )
+    }
+    
+    private var escalationTitleSection: some View {
+        VStack(spacing: 2) {
+            Text("HR ESCALATION REQUEST")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundColor(.primary)
+            Text("Solicitud de Escalación a Recursos Humanos")
+                .font(.system(size: 11))
+                .italic()
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .background(Color.red.opacity(0.1))
+        .border(borderColor, width: 0.5)
+    }
+    
+    private var escalationConfidentialBanner: some View {
+        HStack {
+            Image(systemName: "lock.shield")
+                .font(.system(size: 12))
+            Text("CONFIDENTIAL - FOR HR USE ONLY")
+                .font(.system(size: 10, weight: .bold))
+            Image(systemName: "lock.shield")
+                .font(.system(size: 12))
+        }
+        .foregroundColor(.red)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 6)
+        .background(Color.red.opacity(0.05))
+        .border(borderColor, width: 0.5)
+    }
+    
+    private var escalationRoutingSection: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 4) {
+                Text("Date Submitted:")
+                    .font(.system(size: 9, weight: .medium))
+                Text(Date().formatted(date: .numeric, time: .omitted))
+                    .font(.system(size: 9))
+                    .underline()
+                
+                Spacer()
+                
+                Text("Submitted By:")
+                    .font(.system(size: 9, weight: .medium))
+                Text("_______________")
+                    .font(.system(size: 9))
+                    .underline()
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .border(borderColor, width: 0.5)
+            
+            HStack(spacing: 4) {
+                Text("Department:")
+                    .font(.system(size: 9, weight: .medium))
+                Text(conflictCase.department)
+                    .font(.system(size: 9))
+                    .underline()
+                
+                Spacer()
+                
+                Text("Location:")
+                    .font(.system(size: 9, weight: .medium))
+                Text(conflictCase.location)
+                    .font(.system(size: 9))
+                    .underline()
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .border(borderColor, width: 0.5)
+        }
+    }
+    
+    private var escalationCaseSummarySection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "folder")
+                    .font(.system(size: 10))
+                    .foregroundColor(.red)
+                Text("Case Summary")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Case Number:")
+                        .font(.system(size: 9, weight: .medium))
+                    Text(conflictCase.caseNumber)
+                        .font(.system(size: 9))
+                }
+                HStack {
+                    Text("Case Type:")
+                        .font(.system(size: 9, weight: .medium))
+                    Text(conflictCase.type.displayName)
+                        .font(.system(size: 9))
+                }
+                HStack {
+                    Text("Incident Date:")
+                        .font(.system(size: 9, weight: .medium))
+                    Text(conflictCase.incidentDate.formatted(date: .abbreviated, time: .omitted))
+                        .font(.system(size: 9))
+                }
+            }
+            
+            if !escalationSummary.isEmpty {
+                Text(escalationSummary)
+                    .font(.system(size: 9))
+                    .foregroundColor(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: 80)
+        .border(borderColor, width: 0.5)
+    }
+    
+    private var escalationPartiesSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "person.2")
+                    .font(.system(size: 10))
+                    .foregroundColor(.red)
+                Text("Involved Parties")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            
+            ForEach(conflictCase.involvedEmployees.filter { $0.isComplainant }, id: \.id) { employee in
+                HStack {
+                    Text("•")
+                        .font(.system(size: 9))
+                    Text(employee.name)
+                        .font(.system(size: 9, weight: .medium))
+                    Text("(\(employee.role))")
+                        .font(.system(size: 8))
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: 50)
+        .border(borderColor, width: 0.5)
+    }
+    
+    private var escalationNotesSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "note.text")
+                    .font(.system(size: 10))
+                    .foregroundColor(.red)
+                Text("Supervisor Notes")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            
+            Text(escalationNotes.isEmpty ? "Notes from supervising manager..." : escalationNotes)
+                .font(.system(size: 9))
+                .foregroundColor(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: 80)
+        .border(borderColor, width: 0.5)
+    }
+    
+    private var escalationRecommendationsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "lightbulb")
+                    .font(.system(size: 10))
+                    .foregroundColor(.orange)
+                Text("Recommended HR Actions")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            
+            if escalationRecommendations.isEmpty {
+                Text("• Formal investigation required\n• Interview all involved parties\n• Review relevant documentation")
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+            } else {
+                Text("• \(escalationRecommendations)")
+                    .font(.system(size: 9))
+                    .foregroundColor(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: 60)
+        .border(borderColor, width: 0.5)
+    }
+    
+    private var escalationUrgencySection: some View {
+        HStack {
+            Text("Urgency Level:")
+                .font(.system(size: 10, weight: .bold))
+            
+            Spacer()
+            
+            ForEach(["Standard", "High", "Critical"], id: \.self) { level in
+                HStack(spacing: 4) {
+                    ZStack {
+                        Rectangle()
+                            .stroke(borderColor, lineWidth: 1)
+                            .frame(width: 12, height: 12)
+                        
+                        if escalationUrgency.lowercased().contains(level.lowercased()) {
+                            Text("X")
+                                .font(.system(size: 10, weight: .bold))
+                        }
+                    }
+                    
+                    Text(level)
+                        .font(.system(size: 9, weight: level == "Critical" ? .bold : .regular))
+                        .foregroundColor(level == "Critical" ? .red : .primary)
+                }
+            }
+        }
+        .padding(8)
+        .border(borderColor, width: 0.5)
+    }
+    
+    private var escalationApprovalSection: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Submitted by Supervisor:")
+                    .font(.system(size: 9, weight: .medium))
+                Spacer()
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .border(borderColor, width: 0.5)
+            
+            HStack(spacing: 0) {
+                signatureCell(label: "Supervisor Signature")
+                signatureCell(label: "Date")
+                signatureCell(label: "Manager Approval")
+                signatureCell(label: "Date")
+            }
+        }
+    }
+    
+    private var escalationHRResponseSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "building.2")
+                    .font(.system(size: 10))
+                    .foregroundColor(.purple)
+                Text("HR Response (For HR Use Only)")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            
+            Text("Date Received: _____________")
+                .font(.system(size: 9))
+            Text("Assigned To: _____________")
+                .font(.system(size: 9))
+            Text("Action Taken: _____________________________________________")
+                .font(.system(size: 9))
+            Text("_________________________________________________________")
+                .font(.system(size: 9))
+            
+            HStack(spacing: 0) {
+                signatureCell(label: "HR Representative")
+                signatureCell(label: "Date")
+            }
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
