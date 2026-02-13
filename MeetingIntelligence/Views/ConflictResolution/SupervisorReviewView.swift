@@ -139,9 +139,8 @@ struct SupervisorReviewView: View {
                         // Document Info Card
                         documentInfoCard
                         
-                        // Employee Selector (for warning documents with multiple employees)
-                        if case .warning = generatedResult.document,
-                           conflictCase.involvedEmployees.filter({ $0.isComplainant }).count > 1 {
+                        // Employee Selector (for all document types with multiple employees)
+                        if conflictCase.involvedEmployees.filter({ $0.isComplainant }).count > 1 {
                             employeeSelector
                         }
                         
@@ -426,16 +425,31 @@ struct SupervisorReviewView: View {
         }
     }
     
-    // MARK: - Employee Selector (for multiple warning documents)
+    // MARK: - Document Type Info
+    private var documentTypeInfo: (title: String, helperText: String, color: Color) {
+        switch generatedResult.document {
+        case .coaching:
+            return ("Generate Coaching Document For:", "Tap to switch between employees to generate individual coaching session notes", .green)
+        case .counseling:
+            return ("Generate Counseling Document For:", "Tap to switch between employees to generate individual counseling records", .blue)
+        case .warning:
+            return ("Generate Warning Document For:", "Tap to switch between employees to generate individual warning notices", .orange)
+        case .escalation:
+            return ("Generate Escalation Document For:", "Tap to switch between employees to generate individual escalation reports", .red)
+        }
+    }
+    
+    // MARK: - Employee Selector (for all document types with multiple employees)
     private var employeeSelector: some View {
         let complainants = conflictCase.involvedEmployees.filter { $0.isComplainant }
+        let docInfo = documentTypeInfo
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Image(systemName: "person.2.fill")
                     .font(.system(size: 14))
-                    .foregroundColor(.orange)
+                    .foregroundColor(docInfo.color)
                 
-                Text("Generate Warning Document For:")
+                Text(docInfo.title)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(textPrimary)
                 
@@ -464,14 +478,14 @@ struct SupervisorReviewView: View {
                             }
                             .padding(.horizontal, 14)
                             .padding(.vertical, 10)
-                            .background(selectedEmployeeIndex == index ? Color.orange : innerCardBackground)
+                            .background(selectedEmployeeIndex == index ? docInfo.color : innerCardBackground)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                         }
                     }
                 }
             }
             
-            Text("Tap to switch between employees to generate individual warning notices")
+            Text(docInfo.helperText)
                 .font(.system(size: 11))
                 .foregroundColor(textSecondary)
                 .italic()
@@ -1986,10 +2000,13 @@ struct ReviewDocumentPreviewSheet: View {
             // Date and Routing Info
             escalationRoutingSection
             
+            // Primary Subject - the selected employee
+            escalationPrimarySubjectSection
+            
             // Case Summary
             escalationCaseSummarySection
             
-            // Involved Parties
+            // All Involved Parties
             escalationPartiesSection
             
             // Supervisor Notes
@@ -2088,6 +2105,59 @@ struct ReviewDocumentPreviewSheet: View {
         }
     }
     
+    // MARK: - Escalation Primary Subject Section
+    private var escalationPrimarySubjectSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "person.fill.viewfinder")
+                    .font(.system(size: 10))
+                    .foregroundColor(.red)
+                Text("Primary Subject of Escalation")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Employee Name:")
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                        Text(employeeName)
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .padding(6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .border(borderColor, width: 0.5)
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("File Number:")
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                        Text(employeeFileNo)
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .padding(6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .border(borderColor, width: 0.5)
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Position:")
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                        Text(employeeTitle)
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .padding(6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .border(borderColor, width: 0.5)
+                }
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .border(borderColor, width: 0.5)
+    }
+    
     private var escalationCaseSummarySection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -2133,24 +2203,41 @@ struct ReviewDocumentPreviewSheet: View {
     }
     
     private var escalationPartiesSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let complainants = conflictCase.involvedEmployees.filter { $0.isComplainant }
+        return VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Image(systemName: "person.2")
                     .font(.system(size: 10))
                     .foregroundColor(.red)
-                Text("Involved Parties")
+                Text("All Involved Parties")
                     .font(.system(size: 10, weight: .bold))
             }
             
-            ForEach(conflictCase.involvedEmployees.filter { $0.isComplainant }, id: \.id) { employee in
+            ForEach(Array(complainants.enumerated()), id: \.element.id) { index, employee in
                 HStack {
-                    Text("•")
-                        .font(.system(size: 9))
+                    if index == employeeIndex {
+                        Image(systemName: "arrow.right.circle.fill")
+                            .font(.system(size: 8))
+                            .foregroundColor(.red)
+                    } else {
+                        Text("•")
+                            .font(.system(size: 9))
+                    }
                     Text(employee.name)
-                        .font(.system(size: 9, weight: .medium))
+                        .font(.system(size: 9, weight: index == employeeIndex ? .bold : .medium))
+                        .foregroundColor(index == employeeIndex ? .red : .primary)
                     Text("(\(employee.role))")
                         .font(.system(size: 8))
                         .foregroundColor(.secondary)
+                    if index == employeeIndex {
+                        Text("- Primary")
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(Color.red)
+                            .clipShape(Capsule())
+                    }
                 }
             }
         }
