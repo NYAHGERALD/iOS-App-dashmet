@@ -748,10 +748,23 @@ class ConflictCaseService: ObservableObject {
         
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         
-        let (_, response) = try await URLSession.shared.data(for: request)
+        print("📤 Adding document to case: \(caseId)")
+        print("📤 Document type: \(document.type.rawValue)")
+        print("📤 Image URLs count: \(document.originalImageURLs.count)")
         
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 201 || httpResponse.statusCode == 200 else {
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+        
+        if httpResponse.statusCode == 201 || httpResponse.statusCode == 200 {
+            print("✅ Document added to database successfully")
+        } else {
+            // Log the actual error response
+            let errorBody = String(data: data, encoding: .utf8) ?? "No error body"
+            print("❌ Error adding document - Status: \(httpResponse.statusCode)")
+            print("❌ Error body: \(errorBody)")
             throw URLError(.badServerResponse)
         }
     }

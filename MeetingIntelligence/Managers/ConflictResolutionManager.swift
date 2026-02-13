@@ -889,12 +889,23 @@ class ConflictResolutionManager: ObservableObject {
             saveCasesToCache()
             
             // Sync to database
-            if let backendId = updatedCase.backendId, let userId = currentUserId {
-                do {
-                    try await caseService.addDocument(caseId: backendId, document: document, userId: userId)
-                } catch {
-                    print("Error adding document to database: \(error)")
+            if let backendId = updatedCase.backendId {
+                print("📤 Adding document to database - backendId: \(backendId)")
+                if let userId = currentUserId {
+                    do {
+                        try await caseService.addDocument(caseId: backendId, document: document, userId: userId)
+                        print("✅ Document synced to database")
+                    } catch {
+                        print("❌ Error adding document to database: \(error)")
+                        // Case might not exist - try to create it first
+                        caseError = "Document saved locally but failed to sync to database"
+                    }
+                } else {
+                    print("⚠️ No userId available for document sync")
                 }
+            } else {
+                print("⚠️ No backendId - document only saved locally")
+                caseError = "Case not synced to database. Please sync case first."
             }
         }
     }
