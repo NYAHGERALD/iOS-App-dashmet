@@ -212,10 +212,15 @@ struct ConflictDocumentAPIData: Codable {
         var originalURLs: [String] = []
         var processedURLs: [String] = []
         
-        if let urlString = originalImageUrls,
-           let data = urlString.data(using: .utf8),
-           let urls = try? JSONSerialization.jsonObject(with: data) as? [String] {
-            originalURLs = urls
+        if let urlString = originalImageUrls {
+            print("📷 Parsing originalImageUrls: \(urlString.prefix(100))...")
+            if let data = urlString.data(using: .utf8),
+               let urls = try? JSONSerialization.jsonObject(with: data) as? [String] {
+                originalURLs = urls
+                print("✅ Parsed \(urls.count) image URLs")
+            } else {
+                print("⚠️ Failed to parse image URLs as JSON array")
+            }
         }
         
         if let urlString = processedImageUrls,

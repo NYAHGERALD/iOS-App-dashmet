@@ -2775,7 +2775,39 @@ struct DocumentReviewSheet: View {
                 .padding(.horizontal)
                 .padding(.top, 12)
                 
-                if let base64 = document.originalImageBase64,
+                // Check for Firebase URLs first (from database)
+                if !document.originalImageURLs.isEmpty {
+                    ForEach(document.originalImageURLs, id: \.self) { urlString in
+                        if let url = URL(string: urlString) {
+                            AsyncImage(url: url) { phase in
+                                switch phase {
+                                case .empty:
+                                    ProgressView()
+                                        .frame(height: 200)
+                                case .success(let image):
+                                    image
+                                        .resizable()
+                                        .scaledToFit()
+                                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                                case .failure:
+                                    VStack {
+                                        Image(systemName: "exclamationmark.triangle")
+                                            .foregroundColor(.orange)
+                                        Text("Failed to load image")
+                                            .font(.caption)
+                                            .foregroundColor(textSecondary)
+                                    }
+                                    .frame(height: 100)
+                                @unknown default:
+                                    EmptyView()
+                                }
+                            }
+                            .padding(.horizontal)
+                        }
+                    }
+                }
+                // Fallback to local base64 storage
+                else if let base64 = document.originalImageBase64,
                    let imageData = Data(base64Encoded: base64),
                    let uiImage = UIImage(data: imageData) {
                     Image(uiImage: uiImage)
