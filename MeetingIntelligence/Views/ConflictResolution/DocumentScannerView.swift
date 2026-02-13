@@ -1356,7 +1356,6 @@ struct DocumentProcessingView: View {
             // Upload images to Firebase Storage
             do {
                 currentStep = "Uploading \(scannedImages.count) image(s) to cloud storage..."
-                }
                 
                 originalImageURLs = try await FirebaseStorageService.shared.uploadDocumentImages(
                     scannedImages,
