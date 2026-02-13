@@ -276,7 +276,8 @@ struct CaseDetailView: View {
                 riskExplanation: "",
                 nextSteps: [],
                 timeframe: "",
-                confidence: 0.8
+                confidence: 0.8,
+                targetEmployeeIds: caseItem.involvedEmployees.filter { $0.isComplainant }.map { $0.id }
             )
         }
         
@@ -1154,6 +1155,7 @@ struct CaseDetailView: View {
                 SupervisorReviewView(
                     conflictCase: caseItem,
                     generatedResult: document,
+                    targetEmployeeIds: selectedRecommendation?.targetEmployeeIds ?? [],
                     onApprove: { updatedResult, edits in
                         // Handle approval - update case status and proceed to finalization
                         generatedDocument = updatedResult

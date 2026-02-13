@@ -963,7 +963,8 @@ struct EnhancedActionGenerationView: View {
             riskExplanation: "Low risk",
             nextSteps: [],
             timeframe: "48 hours",
-            confidence: 0.85
+            confidence: 0.85,
+            targetEmployeeIds: []
         ),
         analysisResult: nil,
         policyMatches: nil,

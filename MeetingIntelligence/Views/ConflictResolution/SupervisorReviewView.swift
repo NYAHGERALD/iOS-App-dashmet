@@ -87,6 +87,7 @@ struct DocumentSection: Identifiable {
 struct SupervisorReviewView: View {
     let conflictCase: ConflictCase
     let generatedResult: GeneratedDocumentResult
+    let targetEmployeeIds: [UUID]  // Which employees the AI recommended for this action
     let onApprove: (GeneratedDocumentResult, [DocumentEdit]) -> Void
     let onRequestChanges: ([ReviewComment]) -> Void
     let onReject: (String) -> Void
@@ -139,8 +140,8 @@ struct SupervisorReviewView: View {
                         // Document Info Card
                         documentInfoCard
                         
-                        // Employee Selector (for all document types with multiple employees)
-                        if conflictCase.involvedEmployees.filter({ $0.isComplainant }).count > 1 {
+                        // Employee Selector (only show if AI recommended multiple employees for this action)
+                        if targetedEmployees.count > 1 {
                             employeeSelector
                         }
                         
@@ -263,6 +264,7 @@ struct SupervisorReviewView: View {
                     document: generatedResult,
                     sections: documentSections,
                     conflictCase: conflictCase,
+                    targetEmployeeIds: targetEmployeeIds,
                     employeeIndex: selectedEmployeeIndex,
                     onDismiss: {
                         showPreview = false
@@ -439,9 +441,27 @@ struct SupervisorReviewView: View {
         }
     }
     
-    // MARK: - Employee Selector (for all document types with multiple employees)
+    // MARK: - Targeted Employees (filtered by AI recommendation)
+    /// Returns only the employees that the AI recommended for this action
+    /// If targetEmployeeIds is empty, falls back to all complainants
+    private var targetedEmployees: [InvolvedEmployee] {
+        let allComplainants = conflictCase.involvedEmployees.filter { $0.isComplainant }
+        
+        // If no specific targets, return all complainants
+        guard !targetEmployeeIds.isEmpty else {
+            return allComplainants
+        }
+        
+        // Filter to only the targeted employees
+        let filtered = allComplainants.filter { targetEmployeeIds.contains($0.id) }
+        
+        // If filtering resulted in empty (shouldn't happen), fall back to all
+        return filtered.isEmpty ? allComplainants : filtered
+    }
+    
+    // MARK: - Employee Selector (for document types with multiple targeted employees)
     private var employeeSelector: some View {
-        let complainants = conflictCase.involvedEmployees.filter { $0.isComplainant }
+        let employees = targetedEmployees
         let docInfo = documentTypeInfo
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -455,7 +475,7 @@ struct SupervisorReviewView: View {
                 
                 Spacer()
                 
-                Text("\(selectedEmployeeIndex + 1) of \(complainants.count)")
+                Text("\(selectedEmployeeIndex + 1) of \(employees.count)")
                     .font(.system(size: 12))
                     .foregroundColor(textSecondary)
             }
@@ -463,7 +483,7 @@ struct SupervisorReviewView: View {
             // Employee tabs
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
-                    ForEach(Array(complainants.enumerated()), id: \.element.id) { index, employee in
+                    ForEach(Array(employees.enumerated()), id: \.element.id) { index, employee in
                         Button {
                             selectedEmployeeIndex = index
                         } label: {
@@ -833,6 +853,7 @@ struct ReviewDocumentPreviewSheet: View {
     let document: GeneratedDocumentResult
     let sections: [DocumentSection]
     let conflictCase: ConflictCase
+    let targetEmployeeIds: [UUID]  // Which employees the AI recommended
     let employeeIndex: Int  // Which employee's document to show
     let onDismiss: () -> Void
     
@@ -850,11 +871,19 @@ struct ReviewDocumentPreviewSheet: View {
         colorScheme == .dark ? Color(UIColor.systemBackground) : .white
     }
     
+    // Get targeted employees (filtered by AI recommendation)
+    private var targetedEmployees: [InvolvedEmployee] {
+        let allComplainants = conflictCase.involvedEmployees.filter { $0.isComplainant }
+        guard !targetEmployeeIds.isEmpty else { return allComplainants }
+        let filtered = allComplainants.filter { targetEmployeeIds.contains($0.id) }
+        return filtered.isEmpty ? allComplainants : filtered
+    }
+    
     // Get current employee for this document
     private var currentEmployee: InvolvedEmployee? {
-        let complainants = conflictCase.involvedEmployees.filter { $0.isComplainant }
-        guard employeeIndex < complainants.count else { return complainants.first }
-        return complainants[employeeIndex]
+        let employees = targetedEmployees
+        guard employeeIndex < employees.count else { return employees.first }
+        return employees[employeeIndex]
     }
     
     // Get employee name from case

@@ -167,13 +167,14 @@ class RecommendationService {
             throw RecommendationError.parsingError
         }
         
-        // Parse result
-        return try parseRecommendationResult(resultData)
+        // Parse result with employee info for ID matching
+        let employees = [complaintAEmployee, complaintBEmployee]
+        return try parseRecommendationResult(resultData, employees: employees)
     }
     
     // MARK: - Parse Result
     
-    private func parseRecommendationResult(_ data: [String: Any]) throws -> RecommendationResult {
+    private func parseRecommendationResult(_ data: [String: Any], employees: [InvolvedEmployee]) throws -> RecommendationResult {
         let recommendationsData = data["recommendations"] as? [[String: Any]] ?? []
         let primaryRecommendation = data["primaryRecommendation"] as? String ?? ""
         let supervisorGuidance = data["supervisorGuidance"] as? String ?? ""
@@ -204,6 +205,10 @@ class RecommendationService {
                 return nil
             }
             
+            // Parse target employee names and match to IDs
+            let targetEmployeeNames = recData["targetEmployeeNames"] as? [String] ?? []
+            let targetEmployeeIds: [UUID] = matchEmployeeNamesToIds(names: targetEmployeeNames, employees: employees)
+            
             return RecommendationOption(
                 id: id,
                 type: type,
@@ -214,7 +219,8 @@ class RecommendationService {
                 riskExplanation: riskExplanation,
                 nextSteps: nextSteps,
                 timeframe: timeframe,
-                confidence: confidence
+                confidence: confidence,
+                targetEmployeeIds: targetEmployeeIds
             )
         }
         
@@ -224,6 +230,57 @@ class RecommendationService {
             supervisorGuidance: supervisorGuidance,
             generatedAt: ISO8601DateFormatter().date(from: generatedAt) ?? Date()
         )
+    }
+    
+    // MARK: - Match Employee Names to IDs
+    
+    /// Matches employee names from AI response to actual employee IDs
+    /// Uses fuzzy matching to handle slight variations in names
+    private func matchEmployeeNamesToIds(names: [String], employees: [InvolvedEmployee]) -> [UUID] {
+        var matchedIds: [UUID] = []
+        
+        for name in names {
+            let normalizedName = name.lowercased().trimmingCharacters(in: .whitespaces)
+            
+            // Try exact match first
+            if let employee = employees.first(where: { $0.name.lowercased() == normalizedName }) {
+                if !matchedIds.contains(employee.id) {
+                    matchedIds.append(employee.id)
+                }
+                continue
+            }
+            
+            // Try partial match (name contains or is contained)
+            if let employee = employees.first(where: { 
+                $0.name.lowercased().contains(normalizedName) || 
+                normalizedName.contains($0.name.lowercased())
+            }) {
+                if !matchedIds.contains(employee.id) {
+                    matchedIds.append(employee.id)
+                }
+                continue
+            }
+            
+            // Try matching individual name parts (first name or last name)
+            let nameParts = normalizedName.split(separator: " ").map { String($0) }
+            for part in nameParts where part.count >= 3 {
+                if let employee = employees.first(where: { 
+                    $0.name.lowercased().contains(part) 
+                }) {
+                    if !matchedIds.contains(employee.id) {
+                        matchedIds.append(employee.id)
+                    }
+                    break
+                }
+            }
+        }
+        
+        // If no matches found, return all employees (fallback)
+        if matchedIds.isEmpty {
+            matchedIds = employees.map { $0.id }
+        }
+        
+        return matchedIds
     }
 }
 
@@ -430,6 +487,7 @@ struct RecommendationOption: Identifiable {
     let nextSteps: [String]
     let timeframe: String
     let confidence: Double
+    let targetEmployeeIds: [UUID]  // Which employees this recommendation applies to
     
     /// User-friendly confidence label
     var confidenceLabel: String {

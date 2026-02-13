@@ -217,7 +217,8 @@ struct ActionConfirmationView: View {
             riskExplanation: "Low risk",
             nextSteps: [],
             timeframe: "48 hours",
-            confidence: 0.85
+            confidence: 0.85,
+            targetEmployeeIds: []
         ),
         conflictCase: ConflictCase(
             id: UUID(),
