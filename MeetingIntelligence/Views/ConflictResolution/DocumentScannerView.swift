@@ -1344,8 +1344,7 @@ struct DocumentProcessingView: View {
         
         Task {
             // Get current user ID
-            let userId = await MainActor.run { ConflictResolutionManager.shared.currentUserId }
-            guard let userId = userId else {
+            guard let userId = await MainActor.run({ ConflictResolutionManager.shared.currentUserId }) else {
                 await MainActor.run {
                     processingState = .error("User not authenticated", hint: "Please sign in and try again")
                 }
@@ -1416,8 +1415,7 @@ struct DocumentProcessingView: View {
         
         Task {
             // Get current user ID
-            let userId = await MainActor.run { ConflictResolutionManager.shared.currentUserId }
-            guard let userId = userId else {
+            guard let userId = await MainActor.run({ ConflictResolutionManager.shared.currentUserId }) else {
                 await MainActor.run {
                     processingState = .error("User not authenticated", hint: "Please sign in and try again")
                 }
