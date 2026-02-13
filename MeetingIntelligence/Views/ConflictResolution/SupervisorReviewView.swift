@@ -102,6 +102,7 @@ struct SupervisorReviewView: View {
     @State private var showRejectSheet = false
     @State private var showEditHistory = false
     @State private var showPreview = false
+    @State private var selectedEmployeeIndex: Int = 0  // For multi-employee document generation
     @State private var newComment = ""
     @State private var rejectReason = ""
     @State private var approvalNotes = ""
@@ -137,6 +138,12 @@ struct SupervisorReviewView: View {
                         
                         // Document Info Card
                         documentInfoCard
+                        
+                        // Employee Selector (for warning documents with multiple employees)
+                        if case .warning = generatedResult.document,
+                           conflictCase.involvedEmployees.filter({ $0.isComplainant }).count > 1 {
+                            employeeSelector
+                        }
                         
                         // Quick Actions
                         quickActionsBar
@@ -257,6 +264,7 @@ struct SupervisorReviewView: View {
                     document: generatedResult,
                     sections: documentSections,
                     conflictCase: conflictCase,
+                    employeeIndex: selectedEmployeeIndex,
                     onDismiss: {
                         showPreview = false
                     }
@@ -416,6 +424,61 @@ struct SupervisorReviewView: View {
             }
             .frame(maxWidth: .infinity)
         }
+    }
+    
+    // MARK: - Employee Selector (for multiple warning documents)
+    private var employeeSelector: some View {
+        let complainants = conflictCase.involvedEmployees.filter { $0.isComplainant }
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "person.2.fill")
+                    .font(.system(size: 14))
+                    .foregroundColor(.orange)
+                
+                Text("Generate Warning Document For:")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(textPrimary)
+                
+                Spacer()
+                
+                Text("\(selectedEmployeeIndex + 1) of \(complainants.count)")
+                    .font(.system(size: 12))
+                    .foregroundColor(textSecondary)
+            }
+            
+            // Employee tabs
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(Array(complainants.enumerated()), id: \.element.id) { index, employee in
+                        Button {
+                            selectedEmployeeIndex = index
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(employee.name)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundColor(selectedEmployeeIndex == index ? .white : textPrimary)
+                                
+                                Text(employee.employeeId ?? "No File #")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(selectedEmployeeIndex == index ? .white.opacity(0.8) : textSecondary)
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(selectedEmployeeIndex == index ? Color.orange : innerCardBackground)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                        }
+                    }
+                }
+            }
+            
+            Text("Tap to switch between employees to generate individual warning notices")
+                .font(.system(size: 11))
+                .foregroundColor(textSecondary)
+                .italic()
+        }
+        .padding()
+        .background(cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
     }
     
     // MARK: - Document Sections View
@@ -631,6 +694,7 @@ struct SupervisorReviewView: View {
                 DocumentSection(id: "level", title: "Warning Level", content: doc.warningLevel, isEditable: false),
                 DocumentSection(id: "description", title: "Description", content: doc.describeInDetail),
                 DocumentSection(id: "policy", title: "Policy Violated", content: doc.companyRulesViolated.joined(separator: "\n• ")),
+                DocumentSection(id: "deficiency", title: "Conduct Deficiency", content: doc.conductDeficiency),
                 DocumentSection(id: "corrective", title: "Corrective Action Required", content: doc.requiredCorrectiveAction.joined(separator: "\n• ")),
                 DocumentSection(id: "consequences", title: "Future Consequences", content: doc.consequencesOfNotPerforming)
             ]
@@ -755,6 +819,7 @@ struct ReviewDocumentPreviewSheet: View {
     let document: GeneratedDocumentResult
     let sections: [DocumentSection]
     let conflictCase: ConflictCase
+    let employeeIndex: Int  // Which employee's document to show
     let onDismiss: () -> Void
     
     @State private var companyLogo: UIImage? = nil
@@ -771,14 +836,26 @@ struct ReviewDocumentPreviewSheet: View {
         colorScheme == .dark ? Color(UIColor.systemBackground) : .white
     }
     
+    // Get current employee for this document
+    private var currentEmployee: InvolvedEmployee? {
+        let complainants = conflictCase.involvedEmployees.filter { $0.isComplainant }
+        guard employeeIndex < complainants.count else { return complainants.first }
+        return complainants[employeeIndex]
+    }
+    
     // Get employee name from case
     private var employeeName: String {
-        conflictCase.involvedEmployees.first?.name ?? "_______________"
+        currentEmployee?.name ?? "_______________"
     }
     
     // Get employee title/position
     private var employeeTitle: String {
-        conflictCase.involvedEmployees.first?.role ?? "_______________"
+        currentEmployee?.role ?? "_______________"
+    }
+    
+    // Get employee file number (NOT case number)
+    private var employeeFileNo: String {
+        currentEmployee?.employeeId ?? "_______________"
     }
     
     // Get warning level from document
@@ -807,6 +884,11 @@ struct ReviewDocumentPreviewSheet: View {
     // Get consequences content
     private var consequencesContent: String {
         sections.first(where: { $0.id == "consequences" })?.content ?? ""
+    }
+    
+    // Get conduct deficiency content
+    private var conductDeficiencyContent: String {
+        sections.first(where: { $0.id == "deficiency" })?.content ?? ""
     }
     
     var body: some View {
@@ -1105,12 +1187,12 @@ struct ReviewDocumentPreviewSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .border(borderColor, width: 0.5)
                 
-                // File No cell
+                // File No cell (Employee's file number, NOT case number)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("File No.")
                         .font(.system(size: 9))
                         .foregroundColor(.secondary)
-                    Text(conflictCase.caseNumber)
+                    Text(employeeFileNo)
                         .font(.system(size: 10, weight: .medium))
                 }
                 .padding(6)
@@ -1154,13 +1236,15 @@ struct ReviewDocumentPreviewSheet: View {
             .frame(minHeight: 80)
             .border(borderColor, width: 0.5)
             
-            // Conduct Deficiency (empty space for manual entry)
+            // Conduct Deficiency section populated from AI analysis
             VStack(alignment: .leading, spacing: 4) {
                 Text("Conduct Deficiency:")
                     .font(.system(size: 10, weight: .bold))
                 
-                Text(" ")
+                Text(conductDeficiencyContent.isEmpty ? "________________________________" : conductDeficiencyContent)
                     .font(.system(size: 9))
+                    .foregroundColor(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
