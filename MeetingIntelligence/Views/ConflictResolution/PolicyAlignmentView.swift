@@ -171,14 +171,14 @@ struct PolicyAlignmentView: View {
                         .fill(Color.purple)
                         .frame(width: 8, height: 8)
                         .offset(y: -40)
-                        .rotationEffect(.degrees(Double(index) * 120 + loadingProgress * 360))
+                        .rotationEffect(.degrees(Double(index) * 120 + Double(loadingProgress) * 360))
                 }
                 
                 // Center icon
                 Image(systemName: "doc.text.magnifyingglass")
                     .font(.system(size: 24))
                     .foregroundColor(.purple)
-                    .opacity(0.8 + 0.2 * sin(loadingProgress * .pi * 4))
+                    .opacity(0.8 + 0.2 * sin(Double(loadingProgress) * Double.pi * 4))
             }
             .onAppear {
                 withAnimation(.linear(duration: 2).repeatForever(autoreverses: false)) {
