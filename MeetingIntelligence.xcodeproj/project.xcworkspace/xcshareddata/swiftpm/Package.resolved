@@ -1,5 +1,5 @@
 {
-  "originHash" : "6764a754f3b4274c21c1be627ae2f81adb9c67ebfba7f6a136ec5a804c0a4854",
+  "originHash" : "1952bc113362039e2fabecc226f91442a9ba1d4fcd539ab3fd004f1ef20c2eee",
   "pins" : [
     {
       "identity" : "abseil-cpp-binary",
@@ -26,15 +26,6 @@
       "state" : {
         "revision" : "9b3aed4fa6226125305b82d4d86c715bef250785",
         "version" : "12.9.0"
-      }
-    },
-    {
-      "identity" : "gltfkit2",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/warrenm/GLTFKit2",
-      "state" : {
-        "revision" : "e69e354c4f31ea07b7816b8cbe2ddb28e897d073",
-        "version" : "0.5.15"
       }
     },
     {
