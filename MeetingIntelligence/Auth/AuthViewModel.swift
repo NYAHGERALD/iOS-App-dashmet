@@ -37,10 +37,13 @@ class AuthViewModel: ObservableObject {
     @Published var countryCode: String = "+1"
     
     // MARK: - Validation
+    var selectedCountry: CountryCode {
+        CountryCode.from(code: countryCode)
+    }
+    
     var isPhoneValid: Bool {
-        // Basic validation: at least 10 digits
         let digitsOnly = phoneNumber.filter { $0.isNumber }
-        return digitsOnly.count >= 10
+        return digitsOnly.count == selectedCountry.digitCount
     }
     
     var isOTPValid: Bool {
@@ -66,9 +69,11 @@ class AuthViewModel: ObservableObject {
         showErrorScreen = false
         isCheckingPhone = true
         
+        print("📱 Checking phone: \(formattedPhoneNumber), countryCode: \(countryCode)")
+        
         do {
             // First, check if phone exists in database
-            let response = try await APIService.shared.checkPhone(formattedPhoneNumber)
+            let response = try await APIService.shared.checkPhone(formattedPhoneNumber, countryCode: countryCode)
             
             if response.exists {
                 // Phone exists - proceed with OTP
@@ -272,10 +277,13 @@ class AuthViewModel: ObservableObject {
             return nil
         }
         
+        print("📱 Linking Firebase UID: \(firebaseUID) for phone: \(formattedPhoneNumber), countryCode: \(countryCode)")
+        
         do {
             let response = try await APIService.shared.linkFirebaseUID(
                 phone: formattedPhoneNumber,
-                firebaseUid: firebaseUID
+                firebaseUid: firebaseUID,
+                countryCode: countryCode
             )
             
             if response.success, let user = response.user {

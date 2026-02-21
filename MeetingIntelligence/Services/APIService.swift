@@ -90,6 +90,12 @@ struct LinkedUserInfo: Codable {
     let facilityId: String?
 }
 
+struct GenericResponse: Codable {
+    let success: Bool
+    let message: String?
+    let error: String?
+}
+
 struct APIError: Codable {
     let error: String
 }
@@ -104,12 +110,17 @@ class APIService {
     private init() {}
     
     // MARK: - Check Phone Number
-    func checkPhone(_ phone: String) async throws -> PhoneCheckResponse {
+    func checkPhone(_ phone: String, countryCode: String? = nil) async throws -> PhoneCheckResponse {
         let url = URL(string: "\(baseURL)/mobile/check-phone")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(["phone": phone])
+        
+        var body: [String: String] = ["phone": phone]
+        if let countryCode = countryCode {
+            body["countryCode"] = countryCode
+        }
+        request.httpBody = try JSONEncoder().encode(body)
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
@@ -196,12 +207,17 @@ class APIService {
     }
     
     // MARK: - Link Firebase UID
-    func linkFirebaseUID(phone: String, firebaseUid: String) async throws -> LinkFirebaseResponse {
+    func linkFirebaseUID(phone: String, firebaseUid: String, countryCode: String? = nil) async throws -> LinkFirebaseResponse {
         let url = URL(string: "\(baseURL)/mobile/link-firebase")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(["phone": phone, "firebaseUid": firebaseUid])
+        
+        var body: [String: String] = ["phone": phone, "firebaseUid": firebaseUid]
+        if let countryCode = countryCode {
+            body["countryCode"] = countryCode
+        }
+        request.httpBody = try JSONEncoder().encode(body)
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
@@ -214,6 +230,69 @@ class APIService {
         } else {
             let error = try? JSONDecoder().decode(APIError.self, from: data)
             throw APIServiceError.serverError(error?.error ?? "Unknown error")
+        }
+    }
+    
+    // MARK: - Push Notification Device Token
+    
+    /// Register a device token for push notifications
+    func registerDeviceToken(userId: String, token: String, platform: String = "IOS", deviceId: String? = nil, appVersion: String? = nil) async throws -> Bool {
+        let url = URL(string: "\(baseURL)/mobile/device-token")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        var body: [String: String] = [
+            "userId": userId,
+            "token": token,
+            "platform": platform
+        ]
+        if let deviceId = deviceId {
+            body["deviceId"] = deviceId
+        }
+        if let appVersion = appVersion {
+            body["appVersion"] = appVersion
+        }
+        request.httpBody = try JSONEncoder().encode(body)
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIServiceError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            let result = try JSONDecoder().decode(GenericResponse.self, from: data)
+            return result.success
+        } else {
+            let error = try? JSONDecoder().decode(APIError.self, from: data)
+            throw APIServiceError.serverError(error?.error ?? "Failed to register device token")
+        }
+    }
+    
+    /// Unregister a device token (e.g., on logout)
+    func unregisterDeviceToken(userId: String, token: String) async throws -> Bool {
+        let url = URL(string: "\(baseURL)/mobile/device-token")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode([
+            "userId": userId,
+            "token": token
+        ])
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIServiceError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            let result = try JSONDecoder().decode(GenericResponse.self, from: data)
+            return result.success
+        } else {
+            let error = try? JSONDecoder().decode(APIError.self, from: data)
+            throw APIServiceError.serverError(error?.error ?? "Failed to unregister device token")
         }
     }
     
@@ -262,6 +341,24 @@ class APIService {
         }
         
         if httpResponse.statusCode == 200 {
+            // Debug: Print raw JSON to check profilePicture
+            if let jsonString = String(data: data, encoding: .utf8) {
+                if jsonString.contains("profilePicture") {
+                    print("📦 API Response contains profilePicture field")
+                    // Extract and print the profilePicture value from assignees
+                    if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let task = json["task"] as? [String: Any],
+                       let assignees = task["assignees"] as? [[String: Any]] {
+                        for assignee in assignees {
+                            if let user = assignee["user"] as? [String: Any] {
+                                print("📦 Raw assignee user: \(user["firstName"] ?? "") - profilePicture: \(user["profilePicture"] ?? "missing")")
+                            }
+                        }
+                    }
+                } else {
+                    print("⚠️ API Response does NOT contain profilePicture field!")
+                }
+            }
             return try TaskItem.decoder.decode(TaskResponse.self, from: data)
         } else {
             let error = try? JSONDecoder().decode(APIError.self, from: data)
@@ -485,6 +582,29 @@ class APIService {
         } else {
             let error = try? JSONDecoder().decode(APIError.self, from: data)
             throw APIServiceError.serverError(error?.error ?? "Failed to delete evidence")
+        }
+    }
+    
+    // MARK: - Task Activity Logs API Methods
+    
+    /// Get activity logs for a task
+    func getTaskActivityLogs(taskId: String) async throws -> TaskActivityLogsResponse {
+        let url = URL(string: "\(baseURL)/mobile/tasks/\(taskId)/activity-logs")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIServiceError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            return try TaskItem.decoder.decode(TaskActivityLogsResponse.self, from: data)
+        } else {
+            let error = try? JSONDecoder().decode(APIError.self, from: data)
+            throw APIServiceError.serverError(error?.error ?? "Failed to fetch activity logs")
         }
     }
     
@@ -858,6 +978,11 @@ class APIService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        // Add auth token
+        if let token = try? await FirebaseAuthService.shared.getIDToken() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         
         let audioRequest = AudioReadyRequest(
             audioUrl: audioUrl,

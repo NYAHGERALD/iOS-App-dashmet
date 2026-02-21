@@ -3,89 +3,106 @@
 //  MeetingIntelligence
 //
 //  Enterprise Dashboard - Main Home Screen
+//  Professional design with real-time backend data
 //
 
 import SwiftUI
 import FirebaseAuth
+import Charts
 
 struct DashboardView: View {
     @EnvironmentObject var appState: AppState
+    @StateObject private var dashboardService = DashboardService.shared
     @StateObject private var meetingViewModel = MeetingViewModel()
-    @StateObject private var taskViewModel = TaskViewModel()
     
     @State private var showNewMeeting = false
     @State private var showQuickRecord = false
     @State private var selectedMeeting: Meeting?
+    @State private var selectedPeriod: DashboardPeriodOption = .week
     @State private var greeting: String = "Good morning"
     
     var onProfileTap: (() -> Void)?
+    var onMenuTap: (() -> Void)?
     
-    private let testUserId = "84f500d4-eb06-456f-8972-f706d89a5828"
-    private let testOrganizationId = "a0f1ca04-ee78-439b-94df-95c4803ffbf7"
+    enum DashboardPeriodOption: String, CaseIterable {
+        case today = "Today"
+        case week = "This Week"
+        case month = "This Month"
+        case all = "All Time"
+        
+        var apiValue: String {
+            switch self {
+            case .today: return "today"
+            case .week: return "week"
+            case .month: return "month"
+            case .all: return "all"
+            }
+        }
+    }
     
     var body: some View {
         NavigationStack {
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: AppSpacing.lg) {
-                    // Hero Header
-                    heroHeader
-                    
-                    // Quick Actions
-                    quickActionsSection
-                    
-                    // Stats Overview
-                    statsSection
-                    
-                    // Recent Meetings
-                    recentMeetingsSection
-                    
-                    // Pending Tasks
-                    pendingTasksSection
-                    
-                    // Insights Teaser
-                    insightsSection
+            Group {
+                if dashboardService.isLoading && dashboardService.dashboardData == nil {
+                    loadingView
+                } else if let error = dashboardService.errorMessage, dashboardService.dashboardData == nil {
+                    errorView(message: error)
+                } else {
+                    mainContent
                 }
-                .padding(.bottom, AppSpacing.xxl)
             }
             .background(AppColors.background.ignoresSafeArea())
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    HStack(spacing: AppSpacing.xs) {
-                        Image(systemName: "brain.head.profile")
+                    Button {
+                        onMenuTap?()
+                    } label: {
+                        Image(systemName: "line.3.horizontal")
                             .font(.title2)
                             .foregroundStyle(AppGradients.primary)
-                        Text("MeetingIQ")
-                            .font(.title3)
-                            .fontWeight(.bold)
-                            .foregroundColor(AppColors.textPrimary)
                     }
                 }
                 
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: AppSpacing.sm) {
-                        Button {
-                            // Notifications
-                        } label: {
-                            ZStack(alignment: .topTrailing) {
-                                Image(systemName: "bell")
-                                    .font(.title3)
-                                    .foregroundColor(AppColors.textPrimary)
-                                
-                                // Notification badge
-                                Circle()
-                                    .fill(AppColors.error)
-                                    .frame(width: 8, height: 8)
-                                    .offset(x: 2, y: -2)
+                        Menu {
+                            ForEach(DashboardPeriodOption.allCases, id: \.self) { period in
+                                Button {
+                                    selectedPeriod = period
+                                    Task { await loadDashboard() }
+                                } label: {
+                                    HStack {
+                                        Text(period.rawValue)
+                                        if period == selectedPeriod {
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
+                                }
                             }
+                        } label: {
+                            Image(systemName: "calendar")
+                                .font(.title3)
+                                .foregroundColor(AppColors.textPrimary)
                         }
                         
                         Button {
                             onProfileTap?()
                         } label: {
-                            Image(systemName: "person.circle.fill")
-                                .font(.title2)
-                                .foregroundStyle(AppGradients.primary)
+                            if let profileUrl = appState.profilePictureUrl,
+                               let url = URL(string: profileUrl) {
+                                AsyncImage(url: url) { image in
+                                    image.resizable().scaledToFill()
+                                } placeholder: {
+                                    Image(systemName: "person.circle.fill").font(.title2)
+                                }
+                                .frame(width: 32, height: 32)
+                                .clipShape(Circle())
+                            } else {
+                                Image(systemName: "person.circle.fill")
+                                    .font(.title2)
+                                    .foregroundStyle(AppGradients.primary)
+                            }
                         }
                     }
                 }
@@ -100,28 +117,49 @@ struct DashboardView: View {
                 MeetingDetailTabbedView(meeting: meeting, meetingViewModel: meetingViewModel)
             }
             .task {
-                updateGreeting()
-                meetingViewModel.configure(userId: testUserId, organizationId: testOrganizationId)
-                taskViewModel.configure(userId: testUserId, organizationId: testOrganizationId)
-                await meetingViewModel.fetchMeetings()
-                await taskViewModel.fetchTasks()
+                await initializeDashboard()
             }
             .refreshable {
-                await meetingViewModel.refreshMeetings()
-                await taskViewModel.refreshTasks()
+                await loadDashboard()
             }
+        }
+    }
+    
+    // MARK: - Main Content
+    private var mainContent: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(spacing: AppSpacing.lg) {
+                heroHeader
+                quickActionsSection
+                keyMetricsSection
+                
+                if let meetings = dashboardService.dashboardData?.meetings.recentMeetings, !meetings.isEmpty {
+                    recentMeetingsSection(meetings: meetings)
+                }
+                
+                if let pendingItems = dashboardService.dashboardData?.tasks.pendingItems, !pendingItems.isEmpty {
+                    pendingTasksSection(tasks: pendingItems)
+                }
+                
+                if let conflict = dashboardService.dashboardData?.conflictResolution, conflict.totalCases > 0 {
+                    conflictResolutionSection(stats: conflict)
+                }
+                
+                if let productivity = dashboardService.dashboardData?.productivity {
+                    productivitySection(stats: productivity)
+                }
+            }
+            .padding(.bottom, AppSpacing.xxl)
         }
     }
     
     // MARK: - Hero Header
     private var heroHeader: some View {
         ZStack(alignment: .bottomLeading) {
-            // Background gradient
             RoundedRectangle(cornerRadius: AppCornerRadius.xlarge)
                 .fill(AppGradients.heroBackground)
-                .frame(height: 180)
+                .frame(height: 160)
             
-            // Decorative elements
             GeometryReader { geometry in
                 Circle()
                     .fill(.white.opacity(0.1))
@@ -134,17 +172,22 @@ struct DashboardView: View {
                     .offset(x: geometry.size.width - 40, y: 80)
             }
             
-            // Content
             VStack(alignment: .leading, spacing: AppSpacing.xs) {
                 Text(greeting)
                     .font(AppTypography.subheadline)
                     .foregroundColor(.white.opacity(0.8))
                 
-                Text(getUserDisplayName())
-                    .font(AppTypography.title)
-                    .foregroundColor(.white)
+                if let firstName = appState.firstName {
+                    Text("Welcome, \(firstName)!")
+                        .font(AppTypography.title)
+                        .foregroundColor(.white)
+                } else {
+                    Text("Welcome back!")
+                        .font(AppTypography.title)
+                        .foregroundColor(.white)
+                }
                 
-                Text(getMotivationalMessage())
+                Text(selectedPeriod.rawValue + " • " + getMotivationalMessage())
                     .font(AppTypography.caption)
                     .foregroundColor(.white.opacity(0.7))
                     .padding(.top, AppSpacing.xxs)
@@ -161,186 +204,115 @@ struct DashboardView: View {
             SectionHeader(title: "Quick Actions")
             
             HStack(spacing: AppSpacing.lg) {
-                DashboardQuickAction(
-                    title: "Record",
-                    icon: "mic.fill",
-                    color: AppColors.error
-                ) {
+                DashboardQuickAction(title: "Record", icon: "mic.fill", color: AppColors.error) {
                     showQuickRecord = true
                 }
-                
-                DashboardQuickAction(
-                    title: "New Meeting",
-                    icon: "calendar.badge.plus",
-                    color: AppColors.primary
-                ) {
+                DashboardQuickAction(title: "New Meeting", icon: "calendar.badge.plus", color: AppColors.primary) {
                     showNewMeeting = true
                 }
-                
-                DashboardQuickAction(
-                    title: "Add Task",
-                    icon: "plus.circle.fill",
-                    color: AppColors.success
-                ) {
-                    // Add task
-                }
-                
-                DashboardQuickAction(
-                    title: "Upload",
-                    icon: "arrow.up.doc.fill",
-                    color: AppColors.warning
-                ) {
-                    // Upload recording
-                }
+                DashboardQuickAction(title: "Add Task", icon: "plus.circle.fill", color: AppColors.success) { }
+                DashboardQuickAction(title: "Upload", icon: "arrow.up.doc.fill", color: AppColors.warning) { }
             }
             .frame(maxWidth: .infinity)
         }
         .padding(.horizontal, AppSpacing.md)
     }
     
-    // MARK: - Stats Section
-    private var statsSection: some View {
+    // MARK: - Key Metrics Section
+    private var keyMetricsSection: some View {
         VStack(alignment: .leading, spacing: AppSpacing.md) {
-            SectionHeader(
-                title: "This Week",
-                subtitle: "Your productivity at a glance"
-            )
+            SectionHeader(title: selectedPeriod.rawValue, subtitle: "Your productivity at a glance")
             
-            LazyVGrid(columns: [
-                GridItem(.flexible(), spacing: AppSpacing.sm),
-                GridItem(.flexible(), spacing: AppSpacing.sm)
-            ], spacing: AppSpacing.sm) {
-                StatCard(
-                    title: "Meetings",
-                    value: "\(meetingViewModel.meetings.count)",
-                    icon: "video.fill",
-                    color: AppColors.primary,
-                    trend: "+12%",
-                    trendUp: true
-                )
-                
-                StatCard(
-                    title: "Hours Recorded",
-                    value: formatTotalHours(),
-                    icon: "clock.fill",
-                    color: AppColors.secondary,
-                    trend: "+8%",
-                    trendUp: true
-                )
-                
-                StatCard(
-                    title: "Action Items",
-                    value: "\(taskViewModel.tasks.filter { $0.status != .completed }.count)",
-                    icon: "checklist",
-                    color: AppColors.warning,
-                    trend: "-5%",
-                    trendUp: false
-                )
-                
-                StatCard(
-                    title: "Completed",
-                    value: "\(taskViewModel.tasks.filter { $0.status == .completed }.count)",
-                    icon: "checkmark.circle.fill",
-                    color: AppColors.success,
-                    trend: "+23%",
-                    trendUp: true
-                )
+            if let data = dashboardService.dashboardData {
+                LazyVGrid(columns: [
+                    GridItem(.flexible(), spacing: AppSpacing.sm),
+                    GridItem(.flexible(), spacing: AppSpacing.sm)
+                ], spacing: AppSpacing.sm) {
+                    StatCard(title: "Meetings", value: "\(data.meetings.total)", icon: "video.fill", color: AppColors.primary, trend: formatTrend(data.meetings.trend), trendUp: data.meetings.trendDirection == "up")
+                    StatCard(title: "Hours Recorded", value: data.meetings.totalDurationFormatted, icon: "clock.fill", color: AppColors.secondary, trend: formatTrend(data.meetings.durationTrend), trendUp: data.meetings.durationTrendDirection == "up")
+                    StatCard(title: "Action Items", value: "\(data.tasks.pending)", icon: "checklist", color: data.tasks.overdue > 0 ? AppColors.error : AppColors.warning, trend: formatTrend(data.tasks.pendingTrend), trendUp: data.tasks.pendingTrendDirection == "up")
+                    StatCard(title: "Completed", value: "\(data.tasks.completed)", icon: "checkmark.circle.fill", color: AppColors.success, trend: formatTrend(data.tasks.completedTrend), trendUp: data.tasks.completedTrendDirection == "up")
+                }
+            } else {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: AppSpacing.sm) {
+                    ForEach(0..<4, id: \.self) { _ in
+                        RoundedRectangle(cornerRadius: AppCornerRadius.medium)
+                            .fill(AppColors.surface)
+                            .frame(height: 100)
+                            .shimmer()
+                    }
+                }
             }
         }
         .padding(.horizontal, AppSpacing.md)
     }
     
-    // MARK: - Recent Meetings
-    private var recentMeetingsSection: some View {
+    // MARK: - Recent Meetings Section
+    private func recentMeetingsSection(meetings: [RecentMeeting]) -> some View {
         VStack(alignment: .leading, spacing: AppSpacing.md) {
-            SectionHeader(
-                title: "Recent Meetings",
-                subtitle: "Your latest recordings",
-                actionTitle: "See All"
-            ) {
-                // Navigate to meetings tab
-            }
+            SectionHeader(title: "Recent Meetings", subtitle: "\(meetings.count) meetings", actionTitle: "See All") { }
             
-            if meetingViewModel.meetings.isEmpty {
-                EmptyMeetingsCard()
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: AppSpacing.sm) {
-                        ForEach(meetingViewModel.meetings.prefix(5)) { meeting in
-                            MeetingCard(meeting: meeting) {
-                                selectedMeeting = meeting
-                            }
-                        }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: AppSpacing.sm) {
+                    ForEach(meetings.prefix(5)) { meeting in
+                        RecentMeetingCard(meeting: meeting) { }
                     }
-                    .padding(.horizontal, AppSpacing.md)
                 }
+                .padding(.horizontal, AppSpacing.md)
             }
         }
     }
     
-    // MARK: - Pending Tasks
-    private var pendingTasksSection: some View {
+    // MARK: - Pending Tasks Section
+    private func pendingTasksSection(tasks: [PendingTaskItem]) -> some View {
         VStack(alignment: .leading, spacing: AppSpacing.md) {
-            SectionHeader(
-                title: "Pending Action Items",
-                subtitle: "Tasks requiring your attention",
-                actionTitle: "See All"
-            ) {
-                // Navigate to tasks tab
-            }
+            let overdueCount = tasks.filter { $0.isOverdue }.count
+            SectionHeader(title: "Pending Action Items", subtitle: overdueCount > 0 ? "\(overdueCount) overdue" : "\(tasks.count) items", actionTitle: "See All") { }
             
             VStack(spacing: AppSpacing.xs) {
-                let pendingTasks = taskViewModel.tasks.filter { $0.status != .completed }.prefix(3)
-                
-                if pendingTasks.isEmpty {
-                    EmptyTasksCard()
-                } else {
-                    ForEach(pendingTasks) { task in
-                        TaskRowCard(task: task) {
-                            // Toggle task
-                        }
-                    }
+                ForEach(tasks.prefix(5)) { task in
+                    PendingTaskRow(task: task)
                 }
             }
             .padding(.horizontal, AppSpacing.md)
         }
     }
     
-    // MARK: - Insights Section
-    private var insightsSection: some View {
+    // MARK: - Conflict Resolution Section
+    private func conflictResolutionSection(stats: ConflictResolutionStats) -> some View {
         VStack(alignment: .leading, spacing: AppSpacing.md) {
-            SectionHeader(title: "System Insights")
+            SectionHeader(title: "HR & Conflict Resolution", subtitle: "\(stats.activeCases) active cases")
+            
+            HStack(spacing: AppSpacing.sm) {
+                ConflictStatMiniCard(title: "Total", value: "\(stats.totalCases)", color: .blue)
+                ConflictStatMiniCard(title: "Active", value: "\(stats.activeCases)", color: .orange)
+                ConflictStatMiniCard(title: "Closed", value: "\(stats.closedCases)", color: .green)
+                ConflictStatMiniCard(title: "Rate", value: "\(stats.resolutionRate)%", color: .purple)
+            }
+            .padding(.horizontal, AppSpacing.md)
+        }
+    }
+    
+    // MARK: - Productivity Section
+    private func productivitySection(stats: ProductivityStats) -> some View {
+        VStack(alignment: .leading, spacing: AppSpacing.md) {
+            SectionHeader(title: "Productivity Insights")
             
             VStack(alignment: .leading, spacing: AppSpacing.sm) {
                 HStack(spacing: AppSpacing.sm) {
                     Image(systemName: "sparkles")
                         .font(.title2)
                         .foregroundStyle(AppGradients.primary)
-                    
-                    Text("Weekly Summary")
+                    Text("Performance Summary")
                         .font(AppTypography.headline)
                         .foregroundColor(AppColors.textPrimary)
-                    
                     Spacer()
-                    
-                    Text("Coming Soon")
-                        .font(AppTypography.caption)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, AppSpacing.xs)
-                        .padding(.vertical, AppSpacing.xxs)
-                        .background(AppGradients.primary)
-                        .clipShape(Capsule())
                 }
                 
-                Text("Get System-powered insights about your meeting patterns, speaking time distribution, and action item completion rates.")
-                    .font(AppTypography.subheadline)
-                    .foregroundColor(AppColors.textSecondary)
-                
-                // Preview metrics
                 HStack(spacing: AppSpacing.lg) {
-                    InsightMetric(icon: "waveform", label: "Avg. Duration", value: "45 min")
-                    InsightMetric(icon: "person.2", label: "Participants", value: "4.2 avg")
-                    InsightMetric(icon: "checkmark", label: "Completion", value: "78%")
+                    InsightMetric(icon: "checkmark.seal.fill", label: "Completion", value: "\(stats.completionRate)%")
+                    InsightMetric(icon: "clock.fill", label: "Avg Duration", value: stats.avgMeetingDurationFormatted)
+                    InsightMetric(icon: "list.bullet.clipboard", label: "Items/Meeting", value: String(format: "%.1f", stats.actionItemsPerMeeting))
                 }
                 .padding(.top, AppSpacing.xs)
             }
@@ -350,91 +322,168 @@ struct DashboardView: View {
         .padding(.horizontal, AppSpacing.md)
     }
     
+    // MARK: - Loading View
+    private var loadingView: some View {
+        VStack(spacing: 20) {
+            ProgressView().scaleEffect(1.5)
+            Text("Loading Dashboard...")
+                .font(.system(size: 16))
+                .foregroundColor(AppColors.textSecondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+    // MARK: - Error View
+    private func errorView(message: String) -> some View {
+        VStack(spacing: 20) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 50))
+                .foregroundColor(.orange)
+            Text("Unable to Load Dashboard")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundColor(AppColors.textPrimary)
+            Text(message)
+                .font(.system(size: 14))
+                .foregroundColor(AppColors.textSecondary)
+                .multilineTextAlignment(.center)
+            Button {
+                Task { await loadDashboard() }
+            } label: {
+                HStack {
+                    Image(systemName: "arrow.clockwise")
+                    Text("Retry")
+                }
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.white)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 12)
+                .background(AppColors.primary)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
+    }
+    
     // MARK: - Helper Methods
-    private func updateGreeting() {
-        let hour = Calendar.current.component(.hour, from: Date())
-        if hour < 12 {
-            greeting = "Good morning"
-        } else if hour < 17 {
-            greeting = "Good afternoon"
-        } else {
-            greeting = "Good evening"
+    private func initializeDashboard() async {
+        updateGreeting()
+        if let userId = appState.currentUserID, let orgId = appState.organizationId {
+            meetingViewModel.configure(userId: userId, organizationId: orgId)
+        }
+        await loadDashboard()
+    }
+    
+    private func loadDashboard() async {
+        guard let userId = appState.currentUserID,
+              let organizationId = appState.organizationId else {
+            print("❌ Cannot load dashboard: Missing user context")
+            return
+        }
+        
+        do {
+            try await dashboardService.fetchDashboardStats(
+                userId: userId,
+                organizationId: organizationId,
+                facilityId: appState.facilityId,
+                period: selectedPeriod.apiValue
+            )
+            try await dashboardService.fetchActivityFeed(userId: userId, organizationId: organizationId)
+        } catch {
+            print("❌ Dashboard load error: \(error)")
         }
     }
     
-    private func getUserDisplayName() -> String {
-        // TODO: Get from user profile
-        return "Welcome back!"
+    private func updateGreeting() {
+        let hour = Calendar.current.component(.hour, from: Date())
+        if hour < 12 { greeting = "Good morning" }
+        else if hour < 17 { greeting = "Good afternoon" }
+        else { greeting = "Good evening" }
     }
     
     private func getMotivationalMessage() -> String {
-        let messages = [
-            "Ready to make today productive?",
-            "Let's capture great ideas today!",
-            "Your meetings, intelligently managed.",
-            "Transform conversations into action."
-        ]
-        return messages.randomElement() ?? messages[0]
+        ["Ready to make progress", "Let's capture great ideas", "Meetings, intelligently managed", "Transform conversations to action"].randomElement() ?? "Ready to make progress"
     }
     
-    private func formatTotalHours() -> String {
-        let totalMinutes = meetingViewModel.meetings.compactMap { $0.duration }.reduce(0, +)
-        let hours = totalMinutes / 60
-        let minutes = totalMinutes % 60
-        if hours > 0 {
-            return "\(hours)h \(minutes)m"
-        }
-        return "\(minutes)m"
+    private func formatTrend(_ value: Int) -> String {
+        value >= 0 ? "+\(value)%" : "\(value)%"
     }
 }
 
-// MARK: - Meeting Card
-struct MeetingCard: View {
-    let meeting: Meeting
+// MARK: - Recent Meeting Card
+struct RecentMeetingCard: View {
+    let meeting: RecentMeeting
     let onTap: () -> Void
+    
+    private var meetingTypeColor: Color {
+        switch meeting.meetingType {
+        case "GENERAL": return .blue
+        case "STANDUP": return .green
+        case "ONE_ON_ONE": return .purple
+        case "CLIENT": return .orange
+        case "INTERVIEW": return .pink
+        case "TRAINING": return .teal
+        case "BRAINSTORM": return .yellow
+        case "REVIEW": return .indigo
+        default: return .gray
+        }
+    }
+    
+    private var meetingTypeIcon: String {
+        switch meeting.meetingType {
+        case "GENERAL": return "video.fill"
+        case "STANDUP": return "person.3.fill"
+        case "ONE_ON_ONE": return "person.2.fill"
+        case "CLIENT": return "building.2.fill"
+        case "INTERVIEW": return "person.badge.key.fill"
+        case "TRAINING": return "graduationcap.fill"
+        case "BRAINSTORM": return "lightbulb.fill"
+        case "REVIEW": return "doc.text.magnifyingglass"
+        default: return "video.fill"
+        }
+    }
     
     var body: some View {
         Button(action: onTap) {
             VStack(alignment: .leading, spacing: AppSpacing.sm) {
-                // Header with icon and status
                 HStack {
-                    Image(systemName: meeting.meetingType.icon)
+                    Image(systemName: meetingTypeIcon)
                         .font(.title3)
                         .foregroundColor(.white)
                         .frame(width: 40, height: 40)
-                        .background(Color(hex: meeting.meetingType.color))
+                        .background(meetingTypeColor)
                         .clipShape(RoundedRectangle(cornerRadius: AppCornerRadius.small))
-                    
                     Spacer()
-                    
                     MeetingStatusBadge(status: meeting.status)
                 }
                 
-                // Title
                 Text(meeting.displayTitle)
                     .font(AppTypography.cardTitle)
                     .foregroundColor(AppColors.textPrimary)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                 
-                // Meta info
                 HStack(spacing: AppSpacing.xs) {
-                    Image(systemName: "calendar")
-                        .font(.caption2)
-                    Text(meeting.formattedCreatedDate)
-                        .font(AppTypography.caption)
+                    Image(systemName: "calendar").font(.caption2)
+                    Text(meeting.formattedDate).font(AppTypography.caption)
                 }
                 .foregroundColor(AppColors.textSecondary)
                 
-                // Duration or action items
-                if let duration = meeting.formattedDuration {
-                    HStack(spacing: AppSpacing.xs) {
-                        Image(systemName: "clock")
-                            .font(.caption2)
-                        Text(duration)
-                            .font(AppTypography.caption)
+                HStack(spacing: AppSpacing.sm) {
+                    if let duration = meeting.durationFormatted {
+                        HStack(spacing: 2) {
+                            Image(systemName: "clock").font(.caption2)
+                            Text(duration).font(AppTypography.caption)
+                        }
+                        .foregroundColor(AppColors.textTertiary)
                     }
-                    .foregroundColor(AppColors.textTertiary)
+                    if meeting.actionItemsCount > 0 {
+                        HStack(spacing: 2) {
+                            Image(systemName: "checklist").font(.caption2)
+                            Text("\(meeting.actionItemsCount)").font(AppTypography.caption)
+                        }
+                        .foregroundColor(AppColors.warning)
+                    }
                 }
             }
             .padding(AppSpacing.md)
@@ -447,38 +496,62 @@ struct MeetingCard: View {
 
 // MARK: - Meeting Status Badge
 struct MeetingStatusBadge: View {
-    let status: MeetingStatus
+    let status: String
+    
+    private var statusColor: Color {
+        switch status {
+        case "DRAFT": return .gray
+        case "RECORDING": return .red
+        case "PROCESSING": return .orange
+        case "COMPLETED": return .green
+        case "PUBLISHED": return .blue
+        default: return .gray
+        }
+    }
+    
+    private var statusText: String {
+        switch status {
+        case "DRAFT": return "Draft"
+        case "RECORDING": return "Recording"
+        case "PROCESSING": return "Processing"
+        case "COMPLETED": return "Complete"
+        case "PUBLISHED": return "Published"
+        default: return status
+        }
+    }
     
     var body: some View {
         HStack(spacing: 4) {
-            Circle()
-                .fill(Color(hex: status.color))
-                .frame(width: 6, height: 6)
-            
-            Text(status.displayName)
-                .font(AppTypography.caption2)
-                .fontWeight(.medium)
+            Circle().fill(statusColor).frame(width: 6, height: 6)
+            Text(statusText).font(AppTypography.caption2).fontWeight(.medium)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color(hex: status.color).opacity(0.12))
-        .foregroundColor(Color(hex: status.color))
+        .background(statusColor.opacity(0.12))
+        .foregroundColor(statusColor)
         .clipShape(Capsule())
     }
 }
 
-// MARK: - Task Row Card
-struct TaskRowCard: View {
-    let task: TaskItem
-    let onToggle: () -> Void
+// MARK: - Pending Task Row
+struct PendingTaskRow: View {
+    let task: PendingTaskItem
+    
+    private var priorityColor: Color {
+        switch task.priority {
+        case "URGENT": return .red
+        case "HIGH": return .orange
+        case "MEDIUM": return .yellow
+        case "LOW": return .gray
+        default: return .gray
+        }
+    }
     
     var body: some View {
         HStack(spacing: AppSpacing.sm) {
-            Button(action: onToggle) {
-                Image(systemName: task.status == .completed ? "checkmark.circle.fill" : "circle")
-                    .font(.title3)
-                    .foregroundColor(task.status == .completed ? AppColors.success : AppColors.textTertiary)
-            }
+            Image(systemName: task.isOverdue ? "exclamationmark.circle.fill" : "circle")
+                .font(.title3)
+                .foregroundColor(task.isOverdue ? AppColors.error : AppColors.textTertiary)
             
             VStack(alignment: .leading, spacing: 2) {
                 Text(task.title)
@@ -486,45 +559,46 @@ struct TaskRowCard: View {
                     .foregroundColor(AppColors.textPrimary)
                     .lineLimit(1)
                 
-                if let dueDate = task.dueDate {
-                    HStack(spacing: 4) {
-                        Image(systemName: "calendar")
-                            .font(.caption2)
-                        Text(formatDueDate(dueDate))
-                            .font(AppTypography.caption)
+                HStack(spacing: AppSpacing.xs) {
+                    if let dueDate = task.dueDateFormatted {
+                        HStack(spacing: 2) {
+                            Image(systemName: "calendar").font(.caption2)
+                            Text(dueDate).font(AppTypography.caption)
+                        }
+                        .foregroundColor(task.isOverdue ? AppColors.error : AppColors.textSecondary)
                     }
-                    .foregroundColor(isOverdue(dueDate) ? AppColors.error : AppColors.textSecondary)
+                    if task.isAiExtracted {
+                        HStack(spacing: 2) {
+                            Image(systemName: "sparkles").font(.caption2)
+                            Text("AI").font(AppTypography.caption)
+                        }
+                        .foregroundColor(AppColors.primary)
+                    }
                 }
             }
-            
             Spacer()
-            
-            // Priority indicator
-            Circle()
-                .fill(priorityColor(task.priority))
-                .frame(width: 8, height: 8)
+            Circle().fill(priorityColor).frame(width: 8, height: 8)
         }
         .padding(AppSpacing.md)
         .cardStyle()
     }
+}
+
+// MARK: - Conflict Stat Mini Card
+struct ConflictStatMiniCard: View {
+    let title: String
+    let value: String
+    let color: Color
     
-    private func formatDueDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .short
-        return formatter.string(from: date)
-    }
-    
-    private func isOverdue(_ date: Date) -> Bool {
-        return date < Date()
-    }
-    
-    private func priorityColor(_ priority: TaskPriority) -> Color {
-        switch priority {
-        case .urgent: return AppColors.error
-        case .high: return AppColors.warning
-        case .medium: return AppColors.info
-        case .low: return AppColors.textTertiary
+    var body: some View {
+        VStack(spacing: 4) {
+            Text(value).font(.system(size: 20, weight: .bold)).foregroundColor(color)
+            Text(title).font(.system(size: 11)).foregroundColor(AppColors.textSecondary)
         }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, AppSpacing.sm)
+        .background(color.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: AppCornerRadius.small))
     }
 }
 
@@ -548,53 +622,6 @@ struct InsightMetric: View {
                 .font(AppTypography.caption2)
                 .foregroundColor(AppColors.textSecondary)
         }
-    }
-}
-
-// MARK: - Empty States
-struct EmptyMeetingsCard: View {
-    var body: some View {
-        VStack(spacing: AppSpacing.sm) {
-            Image(systemName: "mic.slash")
-                .font(.system(size: 32))
-                .foregroundStyle(AppGradients.primary)
-            
-            Text("No meetings yet")
-                .font(AppTypography.subheadline)
-                .foregroundColor(AppColors.textPrimary)
-            
-            Text("Start recording to see your meetings here")
-                .font(AppTypography.caption)
-                .foregroundColor(AppColors.textSecondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(AppSpacing.xl)
-        .cardStyle()
-        .padding(.horizontal, AppSpacing.md)
-    }
-}
-
-struct EmptyTasksCard: View {
-    var body: some View {
-        HStack(spacing: AppSpacing.sm) {
-            Image(systemName: "checkmark.circle")
-                .font(.title)
-                .foregroundColor(AppColors.success)
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text("All caught up!")
-                    .font(AppTypography.subheadline)
-                    .foregroundColor(AppColors.textPrimary)
-                
-                Text("No pending action items")
-                    .font(AppTypography.caption)
-                    .foregroundColor(AppColors.textSecondary)
-            }
-            
-            Spacer()
-        }
-        .padding(AppSpacing.md)
-        .cardStyle()
     }
 }
 

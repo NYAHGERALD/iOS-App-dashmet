@@ -26,6 +26,7 @@ class ActionGenerationService {
     ///   - complaintAEmployee: Employee who filed complaint A
     ///   - complaintB: Second complaint document
     ///   - complaintBEmployee: Employee who filed complaint B
+    ///   - targetEmployeeNames: Names of employees this action targets (from AI recommendation)
     ///   - analysisResult: Optional AI analysis result
     ///   - policyMatches: Optional policy matching results
     ///   - recommendationRationale: Optional rationale from recommendation
@@ -38,6 +39,7 @@ class ActionGenerationService {
         complaintAEmployee: InvolvedEmployee,
         complaintB: CaseDocument,
         complaintBEmployee: InvolvedEmployee,
+        targetEmployeeNames: [String] = [],
         analysisResult: AIComparisonResult? = nil,
         policyMatches: [PolicyMatchResult]? = nil,
         recommendationRationale: String? = nil,
@@ -98,6 +100,11 @@ class ActionGenerationService {
             "complaintA": complaintAData,
             "complaintB": complaintBData
         ]
+        
+        // Include target employee names from AI recommendation (determines who the action applies to)
+        if !targetEmployeeNames.isEmpty {
+            requestBody["targetEmployeeNames"] = targetEmployeeNames
+        }
         
         if let analysis = analysisData {
             requestBody["analysisResult"] = analysis
@@ -391,7 +398,7 @@ enum ActionGenerationError: Error, LocalizedError {
 
 // MARK: - Action Types
 
-enum ActionType: String, CaseIterable {
+enum ActionType: String, CaseIterable, Codable {
     case coaching = "coaching"
     case counseling = "counseling"
     case warning = "warning"
@@ -418,7 +425,7 @@ enum ActionType: String, CaseIterable {
 
 // MARK: - Generated Document Result
 
-struct GeneratedDocumentResult {
+struct GeneratedDocumentResult: Codable {
     let actionType: ActionType
     let document: GeneratedDocument
     let generatedAt: Date
@@ -488,7 +495,7 @@ struct GeneratedDocumentResult {
 
 // MARK: - Generated Document Enum
 
-enum GeneratedDocument {
+enum GeneratedDocument: Codable {
     case coaching(CoachingDocument)
     case counseling(CounselingDocument)
     case warning(WarningDocument)
@@ -502,11 +509,58 @@ enum GeneratedDocument {
         case .escalation(let doc): return doc.title
         }
     }
+    
+    // MARK: - Codable Implementation
+    
+    private enum CodingKeys: String, CodingKey {
+        case type, coaching, counseling, warning, escalation
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let type = try container.decode(String.self, forKey: .type)
+        
+        switch type {
+        case "coaching":
+            let doc = try container.decode(CoachingDocument.self, forKey: .coaching)
+            self = .coaching(doc)
+        case "counseling":
+            let doc = try container.decode(CounselingDocument.self, forKey: .counseling)
+            self = .counseling(doc)
+        case "warning":
+            let doc = try container.decode(WarningDocument.self, forKey: .warning)
+            self = .warning(doc)
+        case "escalation":
+            let doc = try container.decode(EscalationDocument.self, forKey: .escalation)
+            self = .escalation(doc)
+        default:
+            throw DecodingError.dataCorruptedError(forKey: .type, in: container, debugDescription: "Unknown document type: \(type)")
+        }
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        
+        switch self {
+        case .coaching(let doc):
+            try container.encode("coaching", forKey: .type)
+            try container.encode(doc, forKey: .coaching)
+        case .counseling(let doc):
+            try container.encode("counseling", forKey: .type)
+            try container.encode(doc, forKey: .counseling)
+        case .warning(let doc):
+            try container.encode("warning", forKey: .type)
+            try container.encode(doc, forKey: .warning)
+        case .escalation(let doc):
+            try container.encode("escalation", forKey: .type)
+            try container.encode(doc, forKey: .escalation)
+        }
+    }
 }
 
 // MARK: - Coaching Document
 
-struct CoachingDocument {
+struct CoachingDocument: Codable {
     let title: String
     let overview: String
     let discussionOutline: DiscussionOutline
@@ -516,19 +570,19 @@ struct CoachingDocument {
     let followUpPlan: FollowUpPlan
 }
 
-struct DiscussionOutline {
+struct DiscussionOutline: Codable {
     let opening: String
     let keyPoints: [String]
     let transitionStatements: [String]
 }
 
-struct BehavioralFocusArea {
+struct BehavioralFocusArea: Codable {
     let area: String
     let description: String
     let expectedChange: String
 }
 
-struct FollowUpPlan {
+struct FollowUpPlan: Codable {
     let timeline: String
     let checkInDates: [String]
     let successIndicators: [String]
@@ -536,7 +590,7 @@ struct FollowUpPlan {
 
 // MARK: - Counseling Document
 
-struct CounselingDocument {
+struct CounselingDocument: Codable {
     let title: String
     let documentDate: String
     let employeeNames: [String]
@@ -549,7 +603,7 @@ struct CounselingDocument {
     let acknowledgmentSection: String
 }
 
-struct ImprovementPlan {
+struct ImprovementPlan: Codable {
     let goals: [String]
     let timeline: String
     let supportProvided: [String]
@@ -557,7 +611,7 @@ struct ImprovementPlan {
 
 // MARK: - Warning Document
 
-struct WarningDocument {
+struct WarningDocument: Codable {
     let title: String
     let documentDate: String
     let employeeNames: [String]
@@ -572,7 +626,7 @@ struct WarningDocument {
     let signatureSection: SignatureSection
 }
 
-struct SignatureSection {
+struct SignatureSection: Codable {
     let employeeAcknowledgment: String
     let supervisorStatement: String
     let hrReviewStatement: String
@@ -580,7 +634,7 @@ struct SignatureSection {
 
 // MARK: - Escalation Document
 
-struct EscalationDocument {
+struct EscalationDocument: Codable {
     let title: String
     let documentDate: String
     let preparedBy: String
@@ -596,7 +650,7 @@ struct EscalationDocument {
     let requestedHRActions: [String]
 }
 
-struct CaseSummary {
+struct CaseSummary: Codable {
     let caseNumber: String
     let caseType: String
     let incidentDate: String
@@ -604,18 +658,18 @@ struct CaseSummary {
     let department: String
 }
 
-struct InvolvedParty {
+struct InvolvedParty: Codable {
     let name: String
     let role: String
     let summary: String
 }
 
-struct TimelineEvent {
+struct TimelineEvent: Codable {
     let date: String
     let event: String
 }
 
-struct PolicyReference {
+struct PolicyReference: Codable {
     let section: String
     let relevance: String
 }

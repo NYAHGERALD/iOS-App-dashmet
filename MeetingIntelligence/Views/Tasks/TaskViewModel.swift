@@ -84,7 +84,7 @@ class TaskViewModel: ObservableObject {
     
     // MARK: - API Methods
     
-    /// Fetch tasks from the API
+    /// Fetch tasks from the API (owned tasks only for main view)
     func fetchTasks() async {
         guard let userId = userId else {
             errorMessage = "User not configured"
@@ -95,11 +95,12 @@ class TaskViewModel: ObservableObject {
         errorMessage = nil
         
         do {
-            let response = try await APIService.shared.getTasks(userId: userId)
+            // Default to "owned" - only show tasks the user owns
+            let response = try await APIService.shared.getTasks(userId: userId, filter: "owned")
             
             if response.success {
                 tasks = response.tasks ?? []
-                print("✅ Fetched \(tasks.count) tasks")
+                print("✅ Fetched \(tasks.count) owned tasks")
             } else {
                 errorMessage = response.error ?? "Failed to fetch tasks"
             }
@@ -196,9 +197,14 @@ class TaskViewModel: ObservableObject {
     }
     
     /// Update task status
+    /// Note: Backend automatically syncs progress based on status:
+    /// - PENDING: progress = 0%
+    /// - IN_PROGRESS: progress = 50% (if was 0 or 100)
+    /// - COMPLETED: progress = 100%
     func updateTaskStatus(taskId: String, status: TaskStatus) async -> Bool {
         errorMessage = nil
         
+        // Only send status - backend handles progress sync automatically
         let update = UpdateTaskRequest(
             title: nil,
             description: nil,
@@ -206,7 +212,7 @@ class TaskViewModel: ObservableObject {
             priority: nil,
             dueDate: nil,
             assigneeId: nil,
-            progress: status == .completed ? 100 : nil
+            progress: nil
         )
         
         do {
@@ -216,10 +222,9 @@ class TaskViewModel: ObservableObject {
                 if let index = tasks.firstIndex(where: { $0.id == taskId }) {
                     tasks[index] = updatedTask
                 }
-                if selectedTask?.id == taskId {
-                    selectedTask = updatedTask
-                }
-                print("✅ Updated task status to: \(status.displayName)")
+                // Always update selectedTask to ensure UI reflects changes
+                selectedTask = updatedTask
+                print("✅ Updated task status to: \(status.displayName), progress: \(updatedTask.progressValue)%")
                 return true
             } else {
                 errorMessage = response.error ?? "Failed to update task"
@@ -261,10 +266,10 @@ class TaskViewModel: ObservableObject {
                 if let index = tasks.firstIndex(where: { $0.id == taskId }) {
                     tasks[index] = updatedTask
                 }
-                if selectedTask?.id == taskId {
-                    selectedTask = updatedTask
-                }
+                // Always update selectedTask when updating a task to ensure UI reflects changes
+                selectedTask = updatedTask
                 print("✅ Updated task: \(updatedTask.title)")
+                print("📊 Backend returned - Progress: \(updatedTask.progressValue)%, Status: \(updatedTask.status.displayName)")
                 return true
             } else {
                 errorMessage = response.error ?? "Failed to update task"
@@ -277,6 +282,10 @@ class TaskViewModel: ObservableObject {
     }
     
     /// Update task progress
+    /// Note: Backend automatically syncs status based on progress:
+    /// - 0%: status = PENDING
+    /// - 1-99%: status = IN_PROGRESS
+    /// - 100%: status = COMPLETED
     func updateTaskProgress(taskId: String, progress: Int) async -> Bool {
         return await updateTask(taskId: taskId, progress: min(100, max(0, progress)))
     }
@@ -475,7 +484,7 @@ class TaskViewModel: ObservableObject {
                 if let index = tasks.firstIndex(where: { $0.id == taskId }) {
                     tasks[index] = task
                 }
-                print("✅ Fetched task details")
+                print("✅ Fetched task details - Progress: \(task.progressValue)%, Status: \(task.status.displayName)")
             } else {
                 errorMessage = response.error ?? "Failed to fetch task details"
             }

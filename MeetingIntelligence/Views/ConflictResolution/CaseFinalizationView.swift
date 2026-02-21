@@ -2,23 +2,27 @@
 //  CaseFinalizationView.swift
 //  MeetingIntelligence
 //
-//  Phase 10: Case Finalization
-//  Allows supervisor to finalize case, export documents, and optionally send to HR
+//  Enterprise-Grade Case Finalization
+//  Professional case closure, HR escalation, and document export
 //
 
 import SwiftUI
 import PDFKit
+import Combine
+import QuickLook
+import UniformTypeIdentifiers
+import FirebaseAuth
 
 // MARK: - Finalization Option
-enum FinalizationOption: String, CaseIterable {
+enum FinalizationOption: String, CaseIterable, Identifiable {
     case closeCase = "Close Case"
-    case sendToHR = "Send to HR"
     case exportPackage = "Export Package"
+    
+    var id: String { rawValue }
     
     var icon: String {
         switch self {
         case .closeCase: return "checkmark.circle.fill"
-        case .sendToHR: return "person.2.fill"
         case .exportPackage: return "square.and.arrow.up.fill"
         }
     }
@@ -26,7 +30,6 @@ enum FinalizationOption: String, CaseIterable {
     var description: String {
         switch self {
         case .closeCase: return "Finalize and lock the case record"
-        case .sendToHR: return "Send complete package to HR for review"
         case .exportPackage: return "Download PDF package with all documents"
         }
     }
@@ -34,8 +37,53 @@ enum FinalizationOption: String, CaseIterable {
     var color: Color {
         switch self {
         case .closeCase: return .green
-        case .sendToHR: return .blue
         case .exportPackage: return .orange
+        }
+    }
+}
+
+// MARK: - Active Sheet Type
+enum ExportSheetType: Identifiable {
+    case exportSuccess
+    case quickLook
+    case documentPicker
+    
+    var id: String {
+        switch self {
+        case .exportSuccess: return "exportSuccess"
+        case .quickLook: return "quickLook"
+        case .documentPicker: return "documentPicker"
+        }
+    }
+}
+
+// MARK: - Package Export Format
+enum PackageExportFormat: String, CaseIterable, Identifiable {
+    case pdf = "pdf"
+    case docx = "docx"
+    
+    var id: String { rawValue }
+    
+    var displayName: String {
+        switch self {
+        case .pdf: return "PDF Document"
+        case .docx: return "Word Document"
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .pdf: return "doc.fill"
+        case .docx: return "doc.richtext"
+        }
+    }
+    
+    var fileExtension: String { rawValue }
+    
+    var description: String {
+        switch self {
+        case .pdf: return "Standard PDF format"
+        case .docx: return "Editable Word format"
         }
     }
 }
@@ -45,20 +93,42 @@ struct CaseFinalizationView: View {
     let conflictCase: ConflictCase
     let generatedDocument: GeneratedDocumentResult?
     let onFinalize: () -> Void
-    let onSendToHR: () -> Void
     let onExport: () -> Void
     let onBack: () -> Void
     
+    @StateObject private var finalizationService = CaseFinalizationService.shared
+    @StateObject private var wordReportService = CaseWordReportService.shared
+    
     @State private var selectedOption: FinalizationOption? = nil
+    @State private var isGeneratingWord = false
     @State private var showConfirmation = false
     @State private var supervisorNotes = ""
-    @State private var hrRecipient = ""
-    @State private var urgencyLevel: UrgencyLevel = .standard
+    
+    // Close Case Options
+    @State private var selectedClosureReason: CaseClosureReason = .resolved
+    @State private var customClosureReason = ""
+    @State private var closureSummary = ""
+    @State private var acknowledgeCaseLock = false
+    
+    // Export Options
+    @State private var exportOptions = ExportOptions.full
     @State private var includeAllDocuments = true
     @State private var includeAuditTrail = true
-    @State private var isProcessing = false
-    @State private var showShareSheet = false
+    @State private var includeStatements = true
+    @State private var includeAIAnalysis = true
+    @State private var includePolicyMatches = true
+    @State private var selectedExportFormat: PackageExportFormat = .pdf
+    @State private var docxData: Data?
+    
+    // UI State
+    @State private var activeSheet: ExportSheetType?
     @State private var pdfData: Data?
+    @State private var pdfURL: URL?
+    @State private var showSuccessAlert = false
+    @State private var showErrorAlert = false
+    @State private var showSaveSuccessAlert = false
+    @State private var savedFilePath: String = ""
+    @State private var finalizationResult: FinalizationResult?
     
     @Environment(\.colorScheme) private var colorScheme
     
@@ -88,34 +158,12 @@ struct CaseFinalizationView: View {
                 Color(UIColor.systemGroupedBackground)
                     .ignoresSafeArea()
                 
-                ScrollView {
-                    VStack(spacing: 20) {
-                        // Header
-                        headerSection
-                        
-                        // Case Summary
-                        caseSummaryCard
-                        
-                        // Document Status
-                        if generatedDocument != nil {
-                            documentStatusCard
-                        }
-                        
-                        // Finalization Options
-                        finalizationOptionsSection
-                        
-                        // Selected Option Details
-                        if let option = selectedOption {
-                            optionDetailsSection(option)
-                        }
-                        
-                        // Supervisor Notes
-                        supervisorNotesSection
-                        
-                        // Action Button
-                        actionButton
-                    }
-                    .padding()
+                if finalizationService.isProcessing {
+                    processingOverlay
+                } else if isGeneratingWord {
+                    wordGenerationOverlay
+                } else {
+                    mainContent
                 }
             }
             .navigationTitle("Finalize Case")
@@ -125,22 +173,166 @@ struct CaseFinalizationView: View {
                     Button("Back") {
                         onBack()
                     }
+                    .disabled(finalizationService.isProcessing || isGeneratingWord)
                 }
             }
-            .alert("Confirm Finalization", isPresented: $showConfirmation) {
+            .alert("Confirm Action", isPresented: $showConfirmation) {
                 Button("Cancel", role: .cancel) {}
-                Button("Finalize", role: .destructive) {
+                Button(confirmActionText, role: selectedOption == .closeCase ? .destructive : .none) {
                     executeFinalization()
                 }
             } message: {
                 Text(confirmationMessage)
             }
-            .sheet(isPresented: $showShareSheet) {
-                if let data = pdfData {
-                    ShareSheet(items: [data])
+            .alert("Success", isPresented: $showSuccessAlert) {
+                Button("OK") {
+                    if selectedOption == .closeCase {
+                        onFinalize()
+                    }
+                }
+            } message: {
+                Text(successMessage)
+            }
+            .alert("Error", isPresented: $showErrorAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(finalizationResult?.errorMessage ?? "An unexpected error occurred")
+            }
+            .sheet(item: $activeSheet) { sheetType in
+                switch sheetType {
+                case .exportSuccess:
+                    exportSuccessSheet
+                case .quickLook:
+                    if let url = pdfURL {
+                        QuickLookPreview(url: url)
+                    }
+                case .documentPicker:
+                    if let url = pdfURL {
+                        DocumentExporter(fileURL: url) { success in
+                            if success {
+                                showSaveSuccessAlert = true
+                                savedFilePath = "Exported successfully"
+                            }
+                        }
+                    }
                 }
             }
+            .alert("PDF Saved", isPresented: $showSaveSuccessAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("PDF saved to: \(savedFilePath)")
+            }
         }
+    }
+    
+    // MARK: - Main Content
+    private var mainContent: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                // Header
+                headerSection
+                
+                // Case Summary
+                caseSummaryCard
+                
+                // Document Status
+                if generatedDocument != nil {
+                    documentStatusCard
+                }
+                
+                // Finalization Options
+                finalizationOptionsSection
+                
+                // Selected Option Details
+                if let option = selectedOption {
+                    optionDetailsSection(option)
+                }
+                
+                // Supervisor Notes (for all options)
+                supervisorNotesSection
+                
+                // Action Button
+                actionButton
+            }
+            .padding()
+        }
+    }
+    
+    // MARK: - Processing Overlay
+    private var processingOverlay: some View {
+        VStack(spacing: 24) {
+            ZStack {
+                Circle()
+                    .stroke(Color.gray.opacity(0.3), lineWidth: 6)
+                    .frame(width: 80, height: 80)
+                
+                Circle()
+                    .trim(from: 0, to: finalizationService.progress)
+                    .stroke(selectedOption?.color ?? .blue, style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                    .frame(width: 80, height: 80)
+                    .rotationEffect(.degrees(-90))
+                    .animation(.easeInOut(duration: 0.3), value: finalizationService.progress)
+                
+                Text("\(Int(finalizationService.progress * 100))%")
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .foregroundColor(textPrimary)
+            }
+            
+            VStack(spacing: 8) {
+                Text("Processing")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundColor(textPrimary)
+                
+                Text(finalizationService.currentStep)
+                    .font(.system(size: 14))
+                    .foregroundColor(textSecondary)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .padding(40)
+        .background(cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 24))
+        .shadow(color: Color.black.opacity(0.1), radius: 20, y: 10)
+    }
+    
+    // MARK: - Word Generation Overlay
+    private var wordGenerationOverlay: some View {
+        VStack(spacing: 24) {
+            ZStack {
+                Circle()
+                    .stroke(Color.gray.opacity(0.3), lineWidth: 6)
+                    .frame(width: 80, height: 80)
+                
+                Circle()
+                    .trim(from: 0, to: wordReportService.generationProgress)
+                    .stroke(
+                        LinearGradient(colors: [.purple, .pink], startPoint: .leading, endPoint: .trailing),
+                        style: StrokeStyle(lineWidth: 6, lineCap: .round)
+                    )
+                    .frame(width: 80, height: 80)
+                    .rotationEffect(.degrees(-90))
+                    .animation(.easeInOut(duration: 0.3), value: wordReportService.generationProgress)
+                
+                Text("\(Int(wordReportService.generationProgress * 100))%")
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .foregroundColor(textPrimary)
+            }
+            
+            VStack(spacing: 8) {
+                Text("Generating Word Document")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundColor(textPrimary)
+                
+                Text(wordReportService.currentStep)
+                    .font(.system(size: 14))
+                    .foregroundColor(textSecondary)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .padding(40)
+        .background(cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 24))
+        .shadow(color: Color.black.opacity(0.1), radius: 20, y: 10)
     }
     
     // MARK: - Header Section
@@ -156,7 +348,7 @@ struct CaseFinalizationView: View {
                     .foregroundColor(.green)
             }
             
-            Text("Phase 10: Case Finalization")
+            Text("Case Finalization")
                 .font(.system(size: 20, weight: .bold))
                 .foregroundColor(textPrimary)
             
@@ -235,7 +427,7 @@ struct CaseFinalizationView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(textTertiary)
             
-            ForEach(FinalizationOption.allCases, id: \.self) { option in
+            ForEach(FinalizationOption.allCases) { option in
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         selectedOption = option
@@ -295,141 +487,263 @@ struct CaseFinalizationView: View {
             switch option {
             case .closeCase:
                 closeCaseOptions
-            case .sendToHR:
-                sendToHROptions
             case .exportPackage:
-                exportOptions
+                exportOptionsSection
             }
         }
     }
     
     // MARK: - Close Case Options
     private var closeCaseOptions: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill")
+        VStack(alignment: .leading, spacing: 16) {
+            // Warning Banner
+            HStack(spacing: 10) {
+                Image(systemName: "lock.fill")
                     .foregroundColor(.orange)
-                Text("This action will lock the case record")
-                    .font(.system(size: 13))
-                    .foregroundColor(textSecondary)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Case Record Lock")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(textPrimary)
+                    Text("This action will permanently lock the case record")
+                        .font(.system(size: 11))
+                        .foregroundColor(textSecondary)
+                }
+                Spacer()
             }
             .padding()
-            .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.orange.opacity(0.1))
             .clipShape(RoundedRectangle(cornerRadius: 10))
             
-            VStack(alignment: .leading, spacing: 8) {
-                toggleOption(
-                    title: "Include audit trail",
-                    isOn: $includeAuditTrail,
-                    description: "Preserve complete history of all actions"
-                )
-                
-                toggleOption(
-                    title: "Include all documents",
-                    isOn: $includeAllDocuments,
-                    description: "Archive all case documents"
-                )
-            }
-        }
-        .padding()
-        .background(cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-    }
-    
-    // MARK: - Send to HR Options
-    private var sendToHROptions: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            // Recipient
-            VStack(alignment: .leading, spacing: 8) {
-                Text("HR Recipient")
+            // Closure Reason
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Closure Reason")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(textSecondary)
                 
-                TextField("Enter email or name", text: $hrRecipient)
-                    .textFieldStyle(.plain)
-                    .padding(12)
-                    .background(innerCardBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-            }
-            
-            // Urgency Level
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Urgency Level")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(textSecondary)
-                
-                HStack(spacing: 8) {
-                    ForEach(UrgencyLevel.allCases, id: \.self) { level in
-                        Button {
-                            urgencyLevel = level
-                        } label: {
-                            Text(level.rawValue)
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(urgencyLevel == level ? .white : level.color)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(urgencyLevel == level ? level.color : level.color.opacity(0.15))
-                                .clipShape(Capsule())
+                ForEach(CaseClosureReason.allCases) { reason in
+                    Button {
+                        selectedClosureReason = reason
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: selectedClosureReason == reason ? "largecircle.fill.circle" : "circle")
+                                .foregroundColor(selectedClosureReason == reason ? .green : textTertiary)
+                            
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(reason.displayName)
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(textPrimary)
+                                Text(reason.description)
+                                    .font(.system(size: 11))
+                                    .foregroundColor(textTertiary)
+                            }
+                            
+                            Spacer()
                         }
+                        .padding(.vertical, 8)
                     }
                 }
-            }
-            
-            // Include Options
-            VStack(alignment: .leading, spacing: 8) {
-                toggleOption(
-                    title: "Include all documents",
-                    isOn: $includeAllDocuments,
-                    description: "Attach all case documents"
-                )
                 
-                toggleOption(
-                    title: "Include audit trail",
-                    isOn: $includeAuditTrail,
-                    description: "Include action history"
-                )
-            }
-        }
-        .padding()
-        .background(cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-    }
-    
-    // MARK: - Export Options
-    private var exportOptions: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Export will include:")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(textSecondary)
-            
-            VStack(spacing: 8) {
-                exportIncludeItem("Case summary", icon: "doc.text")
-                exportIncludeItem("Generated document", icon: "doc.fill")
-                
-                if includeAllDocuments {
-                    exportIncludeItem("All attached documents", icon: "doc.on.doc")
-                }
-                
-                if includeAuditTrail {
-                    exportIncludeItem("Complete audit trail", icon: "clock.arrow.circlepath")
+                if selectedClosureReason == .other {
+                    TextField("Specify reason...", text: $customClosureReason)
+                        .textFieldStyle(.plain)
+                        .padding(12)
+                        .background(innerCardBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
             }
             
             Divider()
             
+            // Closure Summary
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Closure Summary (Optional)")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(textSecondary)
+                
+                TextEditor(text: $closureSummary)
+                    .frame(height: 80)
+                    .padding(8)
+                    .background(innerCardBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                
+                Text("Provide final notes summarizing the case outcome")
+                    .font(.system(size: 11))
+                    .foregroundColor(textTertiary)
+            }
+            
+            Divider()
+            
+            // Archive Options
             VStack(alignment: .leading, spacing: 8) {
                 toggleOption(
-                    title: "Include all documents",
-                    isOn: $includeAllDocuments,
-                    description: "Add scanned complaints and evidence"
+                    title: "Include complete audit trail",
+                    isOn: $includeAuditTrail,
+                    description: "Preserve timestamped history of all actions"
                 )
                 
                 toggleOption(
-                    title: "Include audit trail",
-                    isOn: $includeAuditTrail,
-                    description: "Add timestamped action log"
+                    title: "Archive all documents",
+                    isOn: $includeAllDocuments,
+                    description: "Store all case documents in archive"
                 )
+            }
+            
+            Divider()
+            
+            // Acknowledgment
+            Button {
+                acknowledgeCaseLock.toggle()
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: acknowledgeCaseLock ? "checkmark.square.fill" : "square")
+                        .foregroundColor(acknowledgeCaseLock ? .green : textTertiary)
+                    
+                    Text("I understand this action is permanent and cannot be undone")
+                        .font(.system(size: 12))
+                        .foregroundColor(textPrimary)
+                        .multilineTextAlignment(.leading)
+                    
+                    Spacer()
+                }
+            }
+        }
+        .padding()
+        .background(cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+    
+    // MARK: - Export Options Section
+    private var exportOptionsSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Export Preview
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Package Contents")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(textSecondary)
+                
+                VStack(spacing: 8) {
+                    exportIncludeItem("Executive Summary", icon: "doc.text", included: true)
+                    exportIncludeItem("Case Details & Timeline", icon: "clock", included: true)
+                    exportIncludeItem("Involved Parties", icon: "person.2", included: true)
+                    exportIncludeItem("Generated Document", icon: "doc.fill", included: generatedDocument != nil)
+                    exportIncludeItem("Scanned Documents", icon: "doc.on.doc", included: includeAllDocuments)
+                    exportIncludeItem("AI Analysis Report", icon: "brain", included: includeAIAnalysis)
+                    exportIncludeItem("Policy Matches", icon: "book.closed", included: includePolicyMatches)
+                    exportIncludeItem("Complete Audit Trail", icon: "clock.arrow.circlepath", included: includeAuditTrail)
+                    exportIncludeItem("Signature Blocks", icon: "signature", included: true)
+                }
+            }
+            
+            Divider()
+            
+            // Export Format Selector
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Export Format")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(textSecondary)
+                
+                HStack(spacing: 12) {
+                    ForEach(PackageExportFormat.allCases) { format in
+                        Button {
+                            selectedExportFormat = format
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: format.icon)
+                                    .font(.system(size: 14))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(format.displayName)
+                                        .font(.system(size: 13, weight: .medium))
+                                    Text(format.description)
+                                        .font(.system(size: 10))
+                                        .foregroundColor(selectedExportFormat == format ? .white.opacity(0.8) : textTertiary)
+                                }
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .frame(maxWidth: .infinity)
+                            .background(selectedExportFormat == format ? Color.orange : Color.gray.opacity(0.1))
+                            .foregroundColor(selectedExportFormat == format ? .white : textPrimary)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
+                    }
+                }
+            }
+            
+            Divider()
+            
+            // Configuration
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Include in Export")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(textSecondary)
+                
+                toggleOption(
+                    title: "All scanned documents",
+                    isOn: $includeAllDocuments,
+                    description: "Complaints, statements, and evidence"
+                )
+                
+                toggleOption(
+                    title: "AI analysis results",
+                    isOn: $includeAIAnalysis,
+                    description: "Comparison and recommendation reports"
+                )
+                
+                toggleOption(
+                    title: "Policy match details",
+                    isOn: $includePolicyMatches,
+                    description: "Matched workplace policies"
+                )
+                
+                toggleOption(
+                    title: "Complete audit trail",
+                    isOn: $includeAuditTrail,
+                    description: "Timestamped history of all actions"
+                )
+            }
+            
+            // Estimated Size
+            HStack {
+                Image(systemName: "doc.zipper")
+                    .foregroundColor(.orange)
+                Text("Estimated package size: ~\(estimatedPackagePages) pages")
+                    .font(.system(size: 12))
+                    .foregroundColor(textSecondary)
+                Spacer()
+            }
+            .padding()
+            .background(Color.orange.opacity(0.1))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            
+            // Save to Files fallback (shown after export)
+            if pdfData != nil || docxData != nil {
+                Divider()
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Alternative Save Option")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(textSecondary)
+                    
+                    Button {
+                        savePDFToDocuments()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "folder.badge.plus")
+                            Text("Save to App Documents")
+                        }
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Color.blue)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                    
+                    Text("Use this if the share sheet doesn't work properly")
+                        .font(.system(size: 11))
+                        .foregroundColor(textTertiary)
+                }
             }
         }
         .padding()
@@ -462,22 +776,17 @@ struct CaseFinalizationView: View {
             showConfirmation = true
         } label: {
             HStack(spacing: 8) {
-                if isProcessing {
-                    ProgressView()
-                        .tint(.white)
-                } else {
-                    Image(systemName: selectedOption?.icon ?? "checkmark.circle.fill")
-                    Text(actionButtonTitle)
-                }
+                Image(systemName: selectedOption?.icon ?? "checkmark.circle.fill")
+                Text(actionButtonTitle)
             }
             .font(.system(size: 16, weight: .semibold))
             .foregroundColor(.white)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 16)
-            .background(selectedOption?.color ?? .gray)
+            .background(isActionEnabled ? (selectedOption?.color ?? .gray) : Color.gray.opacity(0.5))
             .clipShape(RoundedRectangle(cornerRadius: 14))
         }
-        .disabled(selectedOption == nil || isProcessing || (selectedOption == .sendToHR && hrRecipient.isEmpty))
+        .disabled(!isActionEnabled)
     }
     
     // MARK: - Helper Views
@@ -509,110 +818,485 @@ struct CaseFinalizationView: View {
         }
     }
     
-    private func exportIncludeItem(_ title: String, icon: String) -> some View {
-        HStack(spacing: 8) {
+    private func exportIncludeItem(_ title: String, icon: String, included: Bool) -> some View {
+        HStack(spacing: 10) {
             Image(systemName: icon)
-                .foregroundColor(.blue)
-                .frame(width: 20)
+                .foregroundColor(included ? .blue : .gray)
+                .frame(width: 22)
+            
             Text(title)
                 .font(.system(size: 13))
-                .foregroundColor(textPrimary)
+                .foregroundColor(included ? textPrimary : textTertiary)
+            
             Spacer()
-            Image(systemName: "checkmark")
-                .foregroundColor(.green)
+            
+            Image(systemName: included ? "checkmark.circle.fill" : "minus.circle")
+                .foregroundColor(included ? .green : .gray.opacity(0.5))
         }
         .padding(.vertical, 4)
     }
     
     // MARK: - Computed Properties
+    
+    private var isActionEnabled: Bool {
+        guard let option = selectedOption else { return false }
+        
+        switch option {
+        case .closeCase:
+            return acknowledgeCaseLock && (selectedClosureReason != .other || !customClosureReason.isEmpty)
+        case .exportPackage:
+            return true
+        }
+    }
+    
     private var actionButtonTitle: String {
         switch selectedOption {
         case .closeCase: return "Finalize & Close Case"
-        case .sendToHR: return "Send to HR"
-        case .exportPackage: return "Export PDF Package"
+        case .exportPackage: return "Generate & Export Package"
         case .none: return "Select an Option"
+        }
+    }
+    
+    private var confirmActionText: String {
+        switch selectedOption {
+        case .closeCase: return "Close Case"
+        case .exportPackage: return "Export"
+        case .none: return "Confirm"
         }
     }
     
     private var confirmationMessage: String {
         switch selectedOption {
         case .closeCase:
-            return "This will permanently close and lock the case record. This action cannot be undone."
-        case .sendToHR:
-            return "The complete case package will be sent to \(hrRecipient). Continue?"
+            return "This will permanently close and lock the case record with reason: \"\(selectedClosureReason.displayName)\". This action cannot be undone."
         case .exportPackage:
-            return "A PDF package containing all selected documents will be generated."
+            return "A comprehensive PDF package (~\(estimatedPackagePages) pages) will be generated with all selected content."
         case .none:
             return ""
         }
     }
     
+    private var successMessage: String {
+        switch selectedOption {
+        case .closeCase:
+            return "Case \(conflictCase.caseNumber) has been successfully closed and locked."
+        case .exportPackage:
+            return "PDF package generated successfully."
+        case .none:
+            return ""
+        }
+    }
+    
+    private var estimatedPackagePages: Int {
+        var pages = 5 // Base: cover, TOC, summary, details
+        if includeAllDocuments { pages += conflictCase.documents.count * 2 }
+        if includeAuditTrail { pages += 2 }
+        if includeAIAnalysis { pages += 3 }
+        if includePolicyMatches { pages += 2 }
+        if generatedDocument != nil { pages += 3 }
+        return pages
+    }
+    
     // MARK: - Actions
+    
     private func executeFinalization() {
-        isProcessing = true
+        guard let option = selectedOption else { return }
         
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            isProcessing = false
-            
-            switch selectedOption {
+        Task {
+            switch option {
             case .closeCase:
-                onFinalize()
-            case .sendToHR:
-                onSendToHR()
+                await executeCloseCase()
             case .exportPackage:
-                generateAndSharePDF()
-            case .none:
-                break
+                await executeExportPackage()
             }
         }
     }
     
-    private func generateAndSharePDF() {
-        // Generate PDF data
-        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+    private func executeCloseCase() async {
+        let closureReasonText = selectedClosureReason == .other ? customClosureReason : selectedClosureReason.rawValue
         
-        let data = renderer.pdfData { context in
-            context.beginPage()
-            
-            let titleAttributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.boldSystemFont(ofSize: 24),
-                .foregroundColor: UIColor.black
-            ]
-            
-            let textAttributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 12),
-                .foregroundColor: UIColor.darkGray
-            ]
-            
-            // Title
-            let title = "Case Finalization Package"
-            title.draw(at: CGPoint(x: 50, y: 50), withAttributes: titleAttributes)
-            
-            // Case Info
-            var yPosition: CGFloat = 100
-            let info = """
-            Case ID: \(conflictCase.caseNumber)
-            Type: \(conflictCase.type.displayName)
-            Status: \(conflictCase.status.displayName)
-            Created: \(formatDate(conflictCase.createdAt))
-            Finalized: \(formatDate(Date()))
-            
-            Documents: \(conflictCase.documents.count)
-            Parties Involved: \(conflictCase.involvedEmployees.count)
-            
-            Supervisor Notes:
-            \(supervisorNotes.isEmpty ? "None" : supervisorNotes)
-            """
-            
-            info.draw(
-                in: CGRect(x: 50, y: yPosition, width: 512, height: 600),
-                withAttributes: textAttributes
-            )
+        // Get current user ID
+        guard let userId = FirebaseAuthService.shared.currentUser?.uid else {
+            await MainActor.run {
+                finalizationResult = .failure(
+                    action: .closeCase,
+                    caseId: conflictCase.backendId ?? conflictCase.id.uuidString,
+                    caseNumber: conflictCase.caseNumber,
+                    error: "Unable to identify current user. Please log in again."
+                )
+                showErrorAlert = true
+            }
+            return
         }
         
-        self.pdfData = data
-        showShareSheet = true
-        onExport()
+        let result = await finalizationService.closeCase(
+            conflictCase: conflictCase,
+            closureReason: closureReasonText,
+            closureSummary: closureSummary.isEmpty ? nil : closureSummary,
+            supervisorNotes: supervisorNotes.isEmpty ? nil : supervisorNotes,
+            closedBy: userId,
+            includeAuditTrail: includeAuditTrail,
+            includeAllDocuments: includeAllDocuments
+        )
+        
+        await MainActor.run {
+            finalizationResult = result
+            if result.success {
+                showSuccessAlert = true
+            } else {
+                showErrorAlert = true
+            }
+        }
+    }
+    
+    private func executeExportPackage() async {
+        var options = ExportOptions.full
+        options.includeAuditTrail = includeAuditTrail
+        options.includeAllDocuments = includeAllDocuments
+        options.includeStatements = includeStatements
+        options.includeAIAnalysis = includeAIAnalysis
+        options.includePolicyMatches = includePolicyMatches
+        
+        if selectedExportFormat == .docx {
+            // Generate Word Document
+            await MainActor.run {
+                isGeneratingWord = true
+            }
+            
+            var wordConfig = WordReportConfiguration.full
+            wordConfig.includeAuditTrail = includeAuditTrail
+            wordConfig.includeScannedDocuments = includeAllDocuments
+            wordConfig.includeFullStatements = includeStatements
+            wordConfig.includeAIAnalysis = includeAIAnalysis
+            wordConfig.includePolicyMatches = includePolicyMatches
+            
+            let wordResult = await CaseWordReportService.shared.generateReport(
+                for: conflictCase,
+                configuration: wordConfig
+            )
+            
+            await MainActor.run {
+                isGeneratingWord = false
+                
+                if wordResult.success, let data = wordResult.docxData {
+                    self.docxData = data
+                    
+                    if let documentsURL = saveDocumentToDocumentsAndGetURL(data, format: .docx) {
+                        self.pdfURL = documentsURL
+                        activeSheet = .exportSuccess
+                    } else if let tempURL = saveDocumentToTempFile(data, format: .docx) {
+                        self.pdfURL = tempURL
+                        activeSheet = .exportSuccess
+                    } else {
+                        showSaveSuccessAlert = true
+                        savedFilePath = "Word document generated (internal storage)"
+                        onExport()
+                    }
+                    
+                    finalizationResult = .success(
+                        action: .exportPackage,
+                        caseId: conflictCase.backendId ?? conflictCase.id.uuidString,
+                        caseNumber: conflictCase.caseNumber,
+                        details: FinalizationDetails(
+                            closureReason: nil,
+                            hrRecipients: nil,
+                            urgencyLevel: nil,
+                            exportedDocumentIds: nil,
+                            pdfPageCount: nil,
+                            pdfFileSize: Int64(data.count),
+                            supervisorNotes: supervisorNotes.isEmpty ? nil : supervisorNotes,
+                            includeAuditTrail: includeAuditTrail,
+                            includeAllDocuments: includeAllDocuments
+                        )
+                    )
+                } else {
+                    finalizationResult = .failure(
+                        action: .exportPackage,
+                        caseId: conflictCase.backendId ?? conflictCase.id.uuidString,
+                        caseNumber: conflictCase.caseNumber,
+                        error: wordResult.errorMessage ?? "Failed to generate Word document"
+                    )
+                    showErrorAlert = true
+                }
+            }
+        } else {
+            // Generate PDF (existing logic)
+            let (result, data) = await finalizationService.exportPackage(
+                conflictCase: conflictCase,
+                generatedDocument: generatedDocument,
+                exportOptions: options
+            )
+            
+            await MainActor.run {
+                finalizationResult = result
+                if result.success, let pdfData = data {
+                    self.pdfData = pdfData
+                    
+                    // Save to Documents folder (persistent location)
+                    if let documentsURL = saveDocumentToDocumentsAndGetURL(pdfData, format: .pdf) {
+                        self.pdfURL = documentsURL
+                        activeSheet = .exportSuccess
+                        // Don't call onExport() here - let user interact with sheet first
+                    } else {
+                        // Fallback to temp file
+                        if let tempURL = saveDocumentToTempFile(pdfData, format: .pdf) {
+                            self.pdfURL = tempURL
+                            activeSheet = .exportSuccess
+                            // Don't call onExport() here - let user interact with sheet first
+                        } else {
+                            showSaveSuccessAlert = true
+                            savedFilePath = "PDF generated (internal storage)"
+                            onExport()
+                        }
+                    }
+                } else {
+                    showErrorAlert = true
+                }
+            }
+        }
+    }
+    
+    private func saveDocumentToDocumentsAndGetURL(_ data: Data, format: PackageExportFormat) -> URL? {
+        let fileName = "CasePackage_\(conflictCase.caseNumber)_\(formatFileDate(Date())).\(format.fileExtension)"
+        
+        guard let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        
+        let fileURL = documentsDir.appendingPathComponent(fileName)
+        
+        do {
+            // Remove existing file if present
+            if FileManager.default.fileExists(atPath: fileURL.path) {
+                try FileManager.default.removeItem(at: fileURL)
+            }
+            try data.write(to: fileURL)
+            savedFilePath = fileName
+            print("Document saved to: \(fileURL.path)")
+            return fileURL
+        } catch {
+            print("Failed to save document to Documents: \(error)")
+            return nil
+        }
+    }
+    
+    private func saveDocumentToTempFile(_ data: Data, format: PackageExportFormat) -> URL? {
+        let fileName = "CasePackage_\(conflictCase.caseNumber)_\(formatFileDate(Date())).\(format.fileExtension)"
+        let tempDir = FileManager.default.temporaryDirectory
+        let fileURL = tempDir.appendingPathComponent(fileName)
+        
+        do {
+            try data.write(to: fileURL)
+            return fileURL
+        } catch {
+            print("Failed to save document to temp file: \(error)")
+            return nil
+        }
+    }
+    
+    private func savePDFToDocumentsInternal(_ data: Data) {
+        let fileName = "CasePackage_\(conflictCase.caseNumber)_\(formatFileDate(Date())).pdf"
+        
+        if let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            let fileURL = documentsDir.appendingPathComponent(fileName)
+            
+            do {
+                try data.write(to: fileURL)
+                savedFilePath = fileName
+            } catch {
+                print("Failed to save PDF to Documents: \(error)")
+            }
+        }
+    }
+    
+    private func savePDFToDocuments() {
+        let data: Data?
+        let format = selectedExportFormat
+        
+        if selectedExportFormat == .docx {
+            data = docxData
+        } else {
+            data = pdfData
+        }
+        
+        guard let exportData = data else { return }
+        
+        let fileName = "CasePackage_\(conflictCase.caseNumber)_\(formatFileDate(Date())).\(format.fileExtension)"
+        
+        if let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            let fileURL = documentsDir.appendingPathComponent(fileName)
+            
+            do {
+                try exportData.write(to: fileURL)
+                savedFilePath = fileURL.lastPathComponent
+                showSaveSuccessAlert = true
+            } catch {
+                finalizationResult = .failure(
+                    action: .exportPackage,
+                    caseId: conflictCase.backendId ?? conflictCase.id.uuidString,
+                    caseNumber: conflictCase.caseNumber,
+                    error: "Failed to save document: \(error.localizedDescription)"
+                )
+                showErrorAlert = true
+            }
+        }
+    }
+    
+    // MARK: - Export Success Sheet
+    private var exportSuccessSheet: some View {
+        NavigationView {
+            VStack(spacing: 24) {
+                // Success Icon
+                ZStack {
+                    Circle()
+                        .fill(Color.green.opacity(0.1))
+                        .frame(width: 80, height: 80)
+                    
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 50))
+                        .foregroundColor(.green)
+                }
+                .padding(.top, 20)
+                
+                // Title
+                VStack(spacing: 8) {
+                    Text("\(selectedExportFormat.displayName) Generated Successfully")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundColor(textPrimary)
+                    
+                    Text("Case Package: \(conflictCase.caseNumber)")
+                        .font(.system(size: 14))
+                        .foregroundColor(textSecondary)
+                }
+                
+                // File Info
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Image(systemName: selectedExportFormat.icon)
+                            .foregroundColor(.orange)
+                        Text(savedFilePath)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(textPrimary)
+                        Spacer()
+                    }
+                    
+                    if let data = selectedExportFormat == .docx ? docxData : pdfData {
+                        HStack {
+                            Image(systemName: "internaldrive")
+                                .foregroundColor(.blue)
+                            Text("Size: \(formatFileSize(Int64(data.count)))")
+                                .font(.system(size: 13))
+                                .foregroundColor(textSecondary)
+                            Spacer()
+                        }
+                    }
+                }
+                .padding()
+                .background(cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                
+                // Action Buttons
+                VStack(spacing: 12) {
+                    // Preview Button
+                    Button {
+                        if let url = pdfURL {
+                            PDFPresentationHelper.presentQuickLookFromRoot(for: url)
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "eye.fill")
+                            Text("Preview \(selectedExportFormat == .docx ? "Document" : "PDF")")
+                        }
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Color.blue)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                    
+                    // Share Button (most reliable)
+                    Button {
+                        if let url = pdfURL {
+                            PDFPresentationHelper.shareFileFromRoot(url: url)
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "square.and.arrow.up")
+                            Text("Share / Save to Files")
+                        }
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Color.green)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                    
+                    // Open Files App
+                    Button {
+                        if let filesURL = URL(string: "shareddocuments://") {
+                            UIApplication.shared.open(filesURL)
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "folder")
+                            Text("Open Files App")
+                        }
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.blue)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Color.blue.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                    
+                    // Done Button
+                    Button {
+                        activeSheet = nil
+                    } label: {
+                        Text("Done")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(textSecondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                    }
+                }
+                
+                // Note
+                VStack(spacing: 4) {
+                    Text("PDF saved to: Meeting Intelligence → Documents")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(textSecondary)
+                    Text("Use 'Share' to save to any location or send via email/AirDrop")
+                        .font(.system(size: 11))
+                        .foregroundColor(textTertiary)
+                }
+                
+                Spacer()
+            }
+            .padding()
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        activeSheet = nil
+                    }
+                }
+            }
+        }
+    }
+    
+    private func formatFileSize(_ bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: bytes)
+    }
+    
+    private func formatFileDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd_HHmmss"
+        return formatter.string(from: date)
     }
     
     private func formatDate(_ date: Date) -> String {
@@ -623,20 +1307,218 @@ struct CaseFinalizationView: View {
     }
 }
 
-// MARK: - Urgency Level
-enum UrgencyLevel: String, CaseIterable {
-    case low = "Low"
-    case standard = "Standard"
-    case high = "High"
-    case critical = "Critical"
+// MARK: - Quick Look Preview
+struct QuickLookPreview: UIViewControllerRepresentable {
+    let url: URL
     
-    var color: Color {
-        switch self {
-        case .low: return .gray
-        case .standard: return .blue
-        case .high: return .orange
-        case .critical: return .red
+    func makeUIViewController(context: Context) -> QLPreviewController {
+        let controller = QLPreviewController()
+        controller.dataSource = context.coordinator
+        return controller
+    }
+    
+    func updateUIViewController(_ uiViewController: QLPreviewController, context: Context) {}
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(url: url)
+    }
+    
+    class Coordinator: NSObject, QLPreviewControllerDataSource {
+        let url: URL
+        
+        init(url: URL) {
+            self.url = url
         }
+        
+        func numberOfPreviewItems(in controller: QLPreviewController) -> Int {
+            return 1
+        }
+        
+        func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
+            return url as QLPreviewItem
+        }
+    }
+}
+
+// MARK: - Document Exporter
+struct DocumentExporter: UIViewControllerRepresentable {
+    let fileURL: URL
+    let onCompletion: (Bool) -> Void
+    
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forExporting: [fileURL], asCopy: true)
+        picker.delegate = context.coordinator
+        return picker
+    }
+    
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onCompletion: onCompletion)
+    }
+    
+    class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onCompletion: (Bool) -> Void
+        
+        init(onCompletion: @escaping (Bool) -> Void) {
+            self.onCompletion = onCompletion
+        }
+        
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            onCompletion(true)
+        }
+        
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            onCompletion(false)
+        }
+    }
+}
+
+// MARK: - UIKit Presentation Helpers
+class PDFPresentationHelper {
+    static func presentQuickLook(for url: URL) {
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let rootVC = windowScene.windows.first?.rootViewController else {
+            return
+        }
+        
+        // Find the topmost presented view controller
+        var topVC = rootVC
+        while let presented = topVC.presentedViewController {
+            topVC = presented
+        }
+        
+        let previewController = QLPreviewController()
+        let dataSource = QuickLookDataSource(url: url)
+        previewController.dataSource = dataSource
+        
+        // Store reference to prevent deallocation
+        objc_setAssociatedObject(previewController, "dataSource", dataSource, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        
+        topVC.present(previewController, animated: true)
+    }
+    
+    static func shareFile(url: URL) {
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let rootVC = windowScene.windows.first?.rootViewController else {
+            return
+        }
+        
+        // Find the topmost presented view controller
+        var topVC = rootVC
+        while let presented = topVC.presentedViewController {
+            topVC = presented
+        }
+        
+        let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        
+        // For iPad: configure popover
+        if let popover = activityVC.popoverPresentationController {
+            popover.sourceView = topVC.view
+            popover.sourceRect = CGRect(x: topVC.view.bounds.midX, y: topVC.view.bounds.midY, width: 0, height: 0)
+            popover.permittedArrowDirections = []
+        }
+        
+        topVC.present(activityVC, animated: true)
+    }
+    
+    // MARK: - Present from Root (dismisses all sheets first)
+    
+    static func presentQuickLookFromRoot(for url: URL) {
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let rootVC = windowScene.windows.first?.rootViewController else {
+            return
+        }
+        
+        // Dismiss all presented view controllers first
+        rootVC.dismiss(animated: true) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                let previewController = QLPreviewController()
+                let dataSource = QuickLookDataSource(url: url)
+                previewController.dataSource = dataSource
+                
+                // Store reference to prevent deallocation
+                objc_setAssociatedObject(previewController, "dataSource", dataSource, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+                
+                rootVC.present(previewController, animated: true)
+            }
+        }
+    }
+    
+    static func shareFileFromRoot(url: URL) {
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let rootVC = windowScene.windows.first?.rootViewController else {
+            return
+        }
+        
+        // Dismiss all presented view controllers first
+        rootVC.dismiss(animated: true) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+                
+                // For iPad: configure popover
+                if let popover = activityVC.popoverPresentationController {
+                    popover.sourceView = rootVC.view
+                    popover.sourceRect = CGRect(x: rootVC.view.bounds.midX, y: rootVC.view.bounds.midY, width: 0, height: 0)
+                    popover.permittedArrowDirections = []
+                }
+                
+                rootVC.present(activityVC, animated: true)
+            }
+        }
+    }
+    
+    static func presentDocumentPicker(for url: URL, completion: @escaping (Bool) -> Void) {
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let rootVC = windowScene.windows.first?.rootViewController else {
+            completion(false)
+            return
+        }
+        
+        // Find the topmost presented view controller
+        var topVC = rootVC
+        while let presented = topVC.presentedViewController {
+            topVC = presented
+        }
+        
+        let picker = UIDocumentPickerViewController(forExporting: [url], asCopy: true)
+        let delegate = DocumentPickerDelegate(completion: completion)
+        picker.delegate = delegate
+        
+        // Store reference to prevent deallocation
+        objc_setAssociatedObject(picker, "delegate", delegate, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        
+        topVC.present(picker, animated: true)
+    }
+}
+
+class QuickLookDataSource: NSObject, QLPreviewControllerDataSource {
+    let url: URL
+    
+    init(url: URL) {
+        self.url = url
+    }
+    
+    func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+    
+    func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
+        url as QLPreviewItem
+    }
+}
+
+class DocumentPickerDelegate: NSObject, UIDocumentPickerDelegate {
+    let completion: (Bool) -> Void
+    
+    init(completion: @escaping (Bool) -> Void) {
+        self.completion = completion
+    }
+    
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        completion(true)
+    }
+    
+    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+        completion(false)
     }
 }
 
@@ -652,7 +1534,6 @@ enum UrgencyLevel: String, CaseIterable {
         ),
         generatedDocument: nil,
         onFinalize: {},
-        onSendToHR: {},
         onExport: {},
         onBack: {}
     )

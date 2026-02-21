@@ -280,10 +280,21 @@ struct RegistrationProfileView: View {
                 )
                 .id(Field.email)
                 
-                // Check Button
+                // Check / Change Button
                 Button {
-                    focusedField = nil
-                    Task { await viewModel.checkEmail() }
+                    if viewModel.isEmailValidated {
+                        // Reset so user can enter a different email
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                            viewModel.resetEmailValidation()
+                            viewModel.email = ""
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            focusedField = .email
+                        }
+                    } else {
+                        focusedField = nil
+                        Task { await viewModel.checkEmail() }
+                    }
                 } label: {
                     Group {
                         if viewModel.isCheckingEmail {
@@ -291,7 +302,7 @@ struct RegistrationProfileView: View {
                                 .tint(.white)
                                 .scaleEffect(0.9)
                         } else if viewModel.isEmailValidated {
-                            Image(systemName: "checkmark")
+                            Image(systemName: "arrow.triangle.2.circlepath")
                                 .font(.system(size: 16, weight: .bold))
                         } else {
                             Image(systemName: "arrow.right")
@@ -301,7 +312,7 @@ struct RegistrationProfileView: View {
                     .frame(width: 52, height: 52)
                     .background(
                         viewModel.isEmailValidated 
-                            ? Color(hex: "10B981")
+                            ? Color(hex: "F59E0B")
                             : (viewModel.canCheckEmail ? Color(hex: "6366F1") : Color.gray.opacity(0.3))
                     )
                     .foregroundColor(.white)
@@ -313,7 +324,7 @@ struct RegistrationProfileView: View {
                         radius: 8, x: 0, y: 4
                     )
                 }
-                .disabled(!viewModel.canCheckEmail || viewModel.isCheckingEmail)
+                .disabled(viewModel.isCheckingEmail || (!viewModel.isEmailValidated && !viewModel.canCheckEmail))
                 .scaleEffect(viewModel.isCheckingEmail ? 0.95 : 1)
                 .animation(.spring(response: 0.3), value: viewModel.isCheckingEmail)
             }
@@ -337,10 +348,49 @@ struct RegistrationProfileView: View {
                     .foregroundColor(subtleText)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else if viewModel.isEmailFromDatabase {
-                Text("Welcome back! Your profile info has been loaded")
-                    .font(.system(size: 12))
-                    .foregroundColor(Color(hex: "3B82F6"))
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Welcome back! Your profile info has been loaded")
+                        .font(.system(size: 12))
+                        .foregroundColor(Color(hex: "3B82F6"))
+                    
+                    Button {
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                            viewModel.resetEmailValidation()
+                            viewModel.email = ""
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            focusedField = .email
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.left.arrow.right")
+                                .font(.system(size: 10, weight: .semibold))
+                            Text("Use a different email")
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        .foregroundColor(Color(hex: "6366F1"))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else if viewModel.isEmailValidated {
+                Button {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                        viewModel.resetEmailValidation()
+                        viewModel.email = ""
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        focusedField = .email
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.left.arrow.right")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("Use a different email")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundColor(Color(hex: "6366F1"))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(16)

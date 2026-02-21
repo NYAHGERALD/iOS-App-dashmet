@@ -9,6 +9,37 @@
 import SwiftUI
 import AVFoundation
 
+// MARK: - Analysis Phase Enum
+enum AnalysisPhase: String, CaseIterable {
+    case evidence = "Evidence Analysis"
+    case policyAlignment = "Policy Alignment"
+    case decisionSupport = "Decision Support"
+    
+    var icon: String {
+        switch self {
+        case .evidence: return "doc.text.magnifyingglass"
+        case .policyAlignment: return "checkmark.shield"
+        case .decisionSupport: return "lightbulb.max"
+        }
+    }
+    
+    var description: String {
+        switch self {
+        case .evidence: return "Analyzing statements and evidence..."
+        case .policyAlignment: return "Matching with company policies..."
+        case .decisionSupport: return "Generating recommendations..."
+        }
+    }
+    
+    var completedDescription: String {
+        switch self {
+        case .evidence: return "Analysis complete"
+        case .policyAlignment: return "Policies matched"
+        case .decisionSupport: return "Recommendations ready"
+        }
+    }
+}
+
 struct CaseDetailView: View {
     @StateObject private var manager = ConflictResolutionManager.shared
     @Environment(\.dismiss) private var dismiss
@@ -28,6 +59,7 @@ struct CaseDetailView: View {
     @State private var selectedEmployeeForEdit: InvolvedEmployee? = nil
     @State private var showEditEmployeeSheet = false
     @State private var showAddEmployeeSheet = false
+    @State private var isAddingWitness = false  // Track if adding a witness (vs complainant)
     
     // AI Analysis State
     @State private var isAnalyzing = false
@@ -35,8 +67,11 @@ struct CaseDetailView: View {
     @State private var showAnalysisErrorAlert = false
     @State private var showFullAnalysisView = false
     @State private var reanalysisVersion: Int = 0           // Triggers child view resets
-    @State private var shouldAutoRunPolicyMatch = false     // Auto-run policy after re-analysis
-    @State private var shouldAutoRunDecisionSupport = false // Auto-run decision support after policy
+    
+    // Downstream Analysis Flow State (centralized orchestration)
+    @State private var isDownstreamAnalyzing = false        // Overall downstream in progress
+    @State private var currentAnalysisPhase: AnalysisPhase = .evidence
+    @State private var completedAnalysisPhases: Set<AnalysisPhase> = []
     
     // Phase 5: Evidence Expansion State
     @State private var selectedWitnessForStatement: InvolvedEmployee? = nil
@@ -52,6 +87,8 @@ struct CaseDetailView: View {
     // Phase 8: Action Generation State
     @State private var showActionGeneration = false
     @State private var generatedDocument: GeneratedDocumentResult? = nil
+    @State private var showRegenerateWarning = false
+    @State private var continueToReviewPulse = false
     
     // Phase 9: Supervisor Review State
     @State private var showSupervisorReview = false
@@ -90,9 +127,9 @@ struct CaseDetailView: View {
                 AppColors.background.ignoresSafeArea()
                 
                 if let caseItem = conflictCase {
-                    GeometryReader { geometry in
+                    ScrollViewReader { scrollProxy in
                         ScrollView(.vertical, showsIndicators: true) {
-                            VStack(spacing: 20) {
+                            LazyVStack(spacing: 20) {
                                 // Case Header
                                 caseHeaderSection(caseItem)
                                 
@@ -104,16 +141,39 @@ struct CaseDetailView: View {
                                 
                                 // Tab Content
                                 tabContent(caseItem)
+                                    .id("analysisContent")
                             }
-                            .padding(.horizontal, 8)
+                            .padding(.horizontal, 16)
                             .padding(.vertical, 16)
-                            .frame(width: geometry.size.width)
+                        }
+                        .scrollDismissesKeyboard(.interactively)
+                        .onChange(of: isDownstreamAnalyzing) { newValue in
+                            if newValue {
+                                // Auto-scroll to analysis content when downstream analysis starts
+                                withAnimation(.easeInOut(duration: 0.5)) {
+                                    scrollProxy.scrollTo("analysisContent", anchor: .top)
+                                }
+                            }
                         }
                     }
                 } else {
                     caseNotFoundView
                 }
+                
+                // Downstream Analysis Flow Overlay - positioned at top level to always be centered on screen
+                if isDownstreamAnalyzing {
+                    Color.black.opacity(0.4)
+                        .ignoresSafeArea()
+                        .transition(.opacity)
+                    
+                    DownstreamAnalysisOverlay(
+                        currentPhase: currentAnalysisPhase,
+                        completedPhases: completedAnalysisPhases
+                    )
+                    .transition(.scale.combined(with: .opacity))
+                }
             }
+            .animation(.easeInOut(duration: 0.3), value: isDownstreamAnalyzing)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -181,18 +241,25 @@ struct CaseDetailView: View {
                         employee: employee,
                         caseId: caseItem.id,
                         onSave: { updatedEmployee in
-                            updateEmployee(updatedEmployee, in: caseItem)
+                            Task {
+                                await updateEmployee(updatedEmployee, in: caseItem)
+                            }
                         }
                     )
                 }
             }
-            .sheet(isPresented: $showAddEmployeeSheet) {
+            .sheet(isPresented: $showAddEmployeeSheet, onDismiss: {
+                isAddingWitness = false  // Reset after dismissing
+            }) {
                 if let caseItem = conflictCase {
                     AddEmployeeSheet(
                         caseId: caseItem.id,
                         onAdd: { newEmployee in
-                            addEmployee(newEmployee, to: caseItem)
-                        }
+                            Task {
+                                await addEmployee(newEmployee, to: caseItem)
+                            }
+                        },
+                        defaultIsComplainant: !isAddingWitness  // If adding witness, default to Witness
                     )
                 }
             }
@@ -239,19 +306,33 @@ struct CaseDetailView: View {
                     )
                 }
             }
+            .fullScreenCover(isPresented: $showGenerateReport) {
+                if let caseItem = conflictCase {
+                    CaseReportGenerationView(conflictCase: caseItem)
+                }
+            }
             .onAppear {
                 // Restore generated document from case if available
-                if let caseItem = conflictCase, let savedDoc = caseItem.generatedDocument {
-                    restoreGeneratedDocument(from: caseItem, savedDoc: savedDoc)
+                if let caseItem = conflictCase {
+                    restoreGeneratedDocument(from: caseItem)
                 }
             }
         }
     }
     
     // MARK: - Restore Generated Document
-    private func restoreGeneratedDocument(from caseItem: ConflictCase, savedDoc: GeneratedActionDocument) {
+    private func restoreGeneratedDocument(from caseItem: ConflictCase) {
         // Restore selected recommendation if available
         if let action = caseItem.selectedAction {
+            // Debug: Log what IDs we have
+            print("🎯 Restoring document - selectedTargetEmployeeIds: \(caseItem.selectedTargetEmployeeIds)")
+            print("🎯 Restoring document - all complainants: \(caseItem.involvedEmployees.filter { $0.isComplainant }.map { "\($0.name): \($0.id)" })")
+            
+            let targetIds = caseItem.selectedTargetEmployeeIds.isEmpty 
+                ? caseItem.involvedEmployees.filter { $0.isComplainant }.map { $0.id }
+                : caseItem.selectedTargetEmployeeIds
+            print("🎯 Using targetIds: \(targetIds)")
+            
             selectedRecommendation = RecommendationOption(
                 id: "restored",
                 type: {
@@ -277,13 +358,15 @@ struct CaseDetailView: View {
                 nextSteps: [],
                 timeframe: "",
                 confidence: 0.8,
-                targetEmployeeIds: caseItem.involvedEmployees.filter { $0.isComplainant }.map { $0.id }
+                // Use saved target IDs if available, otherwise fall back to all complainants
+                targetEmployeeIds: targetIds
             )
         }
         
-        // We can't fully restore GeneratedDocumentResult from GeneratedActionDocument
-        // as it loses the detailed document structure. The user will need to regenerate
-        // for full preview, but the data is preserved in the database.
+        // Restore full generated document result for complete UI display
+        if let fullResult = caseItem.fullGeneratedDocumentResult {
+            generatedDocument = fullResult
+        }
     }
     
     // MARK: - Case Header Section
@@ -550,7 +633,9 @@ struct CaseDetailView: View {
                                         showEditEmployeeSheet = true
                                     },
                                     onDelete: {
-                                        deleteEmployee(employee, from: caseItem)
+                                        Task {
+                                            await deleteEmployee(employee, from: caseItem)
+                                        }
                                     }
                                 )
                             }
@@ -574,7 +659,9 @@ struct CaseDetailView: View {
                                         showEditEmployeeSheet = true
                                     },
                                     onDelete: {
-                                        deleteEmployee(employee, from: caseItem)
+                                        Task {
+                                            await deleteEmployee(employee, from: caseItem)
+                                        }
                                     }
                                 )
                             }
@@ -915,27 +1002,32 @@ struct CaseDetailView: View {
     
     // MARK: - Analysis Tab
     private func analysisTab(_ caseItem: ConflictCase) -> some View {
-        ZStack {
-            VStack(alignment: .leading, spacing: 16) {
-                if let comparison = caseItem.comparisonResult {
-                    // Show analysis summary with button to view full analysis
-                    analysisReadyView(comparison)
-                    
-                    // Phase 5: Evidence Expansion
-                    EvidenceExpansionView(
-                        conflictCase: caseItem,
-                        onAddWitness: {
-                            showAddEmployeeSheet = true
-                        },
-                        onScanWitnessStatement: { witness in
-                            selectedWitnessForStatement = witness
-                            showWitnessStatementScanner = true
-                        },
+        VStack(alignment: .leading, spacing: 16) {
+            if let comparison = caseItem.comparisonResult {
+                // Show analysis summary with button to view full analysis
+                analysisReadyView(comparison)
+                
+                // Phase 5: Evidence Expansion
+                EvidenceExpansionView(
+                    conflictCase: caseItem,
+                    onAddWitness: {
+                        isAddingWitness = true  // Default to Witness type
+                        showAddEmployeeSheet = true
+                    },
+                    onScanWitnessStatement: { witness in
+                        selectedWitnessForStatement = witness
+                        showWitnessStatementScanner = true
+                    },
                         onAddPriorHistory: {
                             showAddDocument = true
                         },
                         onReAnalyze: {
-                            runAIAnalysis(for: caseItem)
+                            // Fetch the LATEST case data from manager to include newly added documents
+                            if let freshCase = manager.cases.first(where: { $0.id == caseId }) {
+                                runAIAnalysis(for: freshCase)
+                            } else {
+                                runAIAnalysis(for: caseItem)
+                            }
                         },
                         onSkip: {
                             // Continue to policy alignment
@@ -947,14 +1039,23 @@ struct CaseDetailView: View {
                         conflictCase: caseItem,
                         policy: manager.activePolicy,
                         analysisResult: comparison,
-                        autoRun: $shouldAutoRunPolicyMatch,
                         onPolicyMatched: { results in
                             policyMatchResults = results
-                            // Auto-trigger decision support after policy matching completes
-                            shouldAutoRunDecisionSupport = true
                         },
-                        onRunPolicyMatch: {
-                            // Policy matching is handled internally by the view
+                        onSaveResult: { result in
+                            // Save policy matching result to database (for manual re-analyze)
+                            var updatedCase = caseItem
+                            updatedCase.policyMatchingResult = result
+                            updatedCase.policyMatches = result.matches.map { match in
+                                PolicyMatch(
+                                    policySectionId: match.sectionId,
+                                    sectionTitle: match.sectionTitle,
+                                    sectionNumber: match.sectionNumber,
+                                    relevanceExplanation: match.relevanceExplanation,
+                                    matchConfidence: match.matchConfidence
+                                )
+                            }
+                            manager.updateCaseSync(updatedCase)
                         },
                         onSkip: {
                             // Continue to decision support
@@ -967,7 +1068,28 @@ struct CaseDetailView: View {
                         conflictCase: caseItem,
                         analysisResult: comparison,
                         policyMatches: policyMatchResults.isEmpty ? nil : policyMatchResults,
-                        autoRun: $shouldAutoRunDecisionSupport,
+                        onSaveResult: { result in
+                            // Save recommendation result to database (for manual re-analyze)
+                            var updatedCase = caseItem
+                            updatedCase.recommendationResult = result
+                            updatedCase.recommendations = result.recommendations.map { rec in
+                                AIRecommendation(
+                                    action: {
+                                        switch rec.type {
+                                        case .coaching: return .coaching
+                                        case .counseling: return .counseling
+                                        case .warning: return .writtenWarning
+                                        case .escalate: return .escalateToHR
+                                        }
+                                    }(),
+                                    reasoning: rec.rationale,
+                                    riskAssessment: rec.riskLevel.displayName,
+                                    suggestedNextSteps: rec.nextSteps,
+                                    confidence: rec.confidence
+                                )
+                            }
+                            manager.updateCaseSync(updatedCase)
+                        },
                         onSelectRecommendation: { recommendation in
                             selectedRecommendation = recommendation
                             // Update status to awaiting action when recommendation is selected
@@ -992,14 +1114,8 @@ struct CaseDetailView: View {
                 }
             }
             .frame(maxWidth: .infinity)
-            .opacity(isAnalyzing && caseItem.comparisonResult != nil ? 0.5 : 1.0)
-            .disabled(isAnalyzing)
-            
-            // Re-Analysis Loading Overlay
-            if isAnalyzing && caseItem.comparisonResult != nil {
-                ReanalysisLoadingOverlay()
-            }
-        }
+            .opacity(isDownstreamAnalyzing ? 0.5 : 1.0)
+            .disabled(isDownstreamAnalyzing)
     }
     
     // MARK: - Phase 8: Action Generation Section
@@ -1073,11 +1189,16 @@ struct CaseDetailView: View {
                     }
                     
                     Button {
-                        showActionGeneration = true
+                        // Check if document already exists in database
+                        if caseItem.fullGeneratedDocumentResult != nil {
+                            showRegenerateWarning = true
+                        } else {
+                            showActionGeneration = true
+                        }
                     } label: {
                         HStack(spacing: 8) {
-                            Image(systemName: "doc.text.magnifyingglass")
-                            Text("View Full Document")
+                            Image(systemName: "arrow.clockwise")
+                            Text("Re-Generate Document")
                         }
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(.white)
@@ -1087,6 +1208,7 @@ struct CaseDetailView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
                     
+                    // Animated Continue to Review button
                     Button {
                         // Continue to Phase 9: Supervisor Review
                         showSupervisorReview = true
@@ -1095,9 +1217,38 @@ struct CaseDetailView: View {
                             Image(systemName: "arrow.right.circle.fill")
                             Text("Continue to Review")
                         }
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(recommendation.type.color)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(
+                            LinearGradient(
+                                colors: [Color.green, Color.green.opacity(0.7)],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .scaleEffect(continueToReviewPulse ? 1.02 : 0.98)
+                        .opacity(continueToReviewPulse ? 1.0 : 0.85)
+                        .shadow(color: Color.yellow.opacity(continueToReviewPulse ? 0.7 : 0.3), radius: continueToReviewPulse ? 12 : 6)
                     }
+                    .onAppear {
+                        withAnimation(
+                            Animation.easeInOut(duration: 1.2)
+                                .repeatForever(autoreverses: true)
+                        ) {
+                            continueToReviewPulse = true
+                        }
+                    }
+                }
+                .alert("Re-Generate Document?", isPresented: $showRegenerateWarning) {
+                    Button("Cancel", role: .cancel) { }
+                    Button("Continue", role: .destructive) {
+                        showActionGeneration = true
+                    }
+                } message: {
+                    Text("A document has already been generated and saved. If you re-generate and click 'Accept & Continue' after reviewing the new document, it will override the current saved data.")
                 }
             } else {
                 // No document yet - show generate button
@@ -1134,6 +1285,7 @@ struct CaseDetailView: View {
                         // Save generated document to case for database persistence
                         var updatedCase = caseItem
                         updatedCase.generatedDocument = result.toGeneratedActionDocument()
+                        updatedCase.fullGeneratedDocumentResult = result  // Save full result for UI restoration
                         updatedCase.selectedAction = {
                             switch result.actionType {
                             case .coaching: return .coaching
@@ -1142,6 +1294,10 @@ struct CaseDetailView: View {
                             case .escalate: return .escalateToHR
                             }
                         }()
+                        // Save target employee IDs for restoration
+                        updatedCase.selectedTargetEmployeeIds = recommendation.targetEmployeeIds
+                        print("🎯 Saving document - recommendation.targetEmployeeIds: \(recommendation.targetEmployeeIds)")
+                        print("🎯 Saving document - updatedCase.selectedTargetEmployeeIds: \(updatedCase.selectedTargetEmployeeIds)")
                         manager.updateCaseSync(updatedCase)
                     },
                     onBack: {
@@ -1150,7 +1306,7 @@ struct CaseDetailView: View {
                 )
             }
         }
-        .sheet(isPresented: $showSupervisorReview) {
+        .fullScreenCover(isPresented: $showSupervisorReview) {
             if let document = generatedDocument {
                 SupervisorReviewView(
                     conflictCase: caseItem,
@@ -1195,7 +1351,7 @@ struct CaseDetailView: View {
                 )
             }
         }
-        .sheet(isPresented: $showFinalization) {
+        .fullScreenCover(isPresented: $showFinalization) {
             CaseFinalizationView(
                 conflictCase: caseItem,
                 generatedDocument: generatedDocument,
@@ -1203,13 +1359,6 @@ struct CaseDetailView: View {
                     // Finalize and close the case
                     Task {
                         await manager.finalizeCase(caseItem)
-                    }
-                    showFinalization = false
-                },
-                onSendToHR: {
-                    // Update status to escalated and close
-                    Task {
-                        await manager.updateCaseStatus(caseItem.id, to: .escalated)
                     }
                     showFinalization = false
                 },
@@ -1502,15 +1651,15 @@ struct CaseDetailView: View {
     
     // MARK: - Helper Methods
     
-    private func updateEmployee(_ updatedEmployee: InvolvedEmployee, in caseItem: ConflictCase) {
+    private func updateEmployee(_ updatedEmployee: InvolvedEmployee, in caseItem: ConflictCase) async {
         var updatedCase = caseItem
         if let index = updatedCase.involvedEmployees.firstIndex(where: { $0.id == updatedEmployee.id }) {
             updatedCase.involvedEmployees[index] = updatedEmployee
-            manager.updateCaseSync(updatedCase)
+            await manager.updateCase(updatedCase)
         }
     }
     
-    private func deleteEmployee(_ employee: InvolvedEmployee, from caseItem: ConflictCase) {
+    private func deleteEmployee(_ employee: InvolvedEmployee, from caseItem: ConflictCase) async {
         var updatedCase = caseItem
         
         // Determine employee's role and delete associated documents
@@ -1531,17 +1680,24 @@ struct CaseDetailView: View {
         
         // Remove the employee
         updatedCase.involvedEmployees.removeAll { $0.id == employee.id }
-        manager.updateCaseSync(updatedCase)
+        await manager.updateCase(updatedCase)
     }
     
-    private func addEmployee(_ employee: InvolvedEmployee, to caseItem: ConflictCase) {
+    private func addEmployee(_ employee: InvolvedEmployee, to caseItem: ConflictCase) async {
         var updatedCase = caseItem
+        // Check for duplicate before adding
+        guard !updatedCase.involvedEmployees.contains(where: { $0.id == employee.id }) else {
+            print("⚠️ Employee \(employee.name) already exists, skipping duplicate")
+            return
+        }
         updatedCase.involvedEmployees.append(employee)
-        manager.updateCaseSync(updatedCase)
+        await manager.updateCase(updatedCase)  // Wait for sync to complete
     }
     
-    // MARK: - AI Analysis
+    // MARK: - AI Analysis (Centralized Orchestration)
     
+    /// Runs the complete downstream analysis flow: Evidence → Policy Alignment → Decision Support
+    /// All phases run sequentially within a single Task to avoid timing issues
     private func runAIAnalysis(for caseItem: ConflictCase) {
         // Get complaint documents
         guard let complaintADoc = caseItem.documents.first(where: { $0.type == .complaintA }),
@@ -1571,16 +1727,46 @@ struct CaseDetailView: View {
         let complainantB = complainants[1]
         
         // Get witness statements
+        // Debug: Print all witness statements found
+        let allWitnessStatementDocs = caseItem.documents.filter { $0.type == .witnessStatement }
+        print("📋 Found \(allWitnessStatementDocs.count) witness statement document(s)")
+        for doc in allWitnessStatementDocs {
+            print("  - Doc ID: \(doc.id)")
+            print("    employeeId: \(doc.employeeId?.uuidString ?? "nil")")
+            print("    cleanedText: \(doc.cleanedText.prefix(50))...")
+            print("    originalText: \(doc.originalText.prefix(50))...")
+        }
+        
+        print("👥 Involved employees (\(caseItem.involvedEmployees.count)):")
+        for emp in caseItem.involvedEmployees {
+            print("  - \(emp.name) (ID: \(emp.id), isComplainant: \(emp.isComplainant))")
+        }
+        
+        // Collect witness statements - include ALL witness documents, even if not matched to an employee
+        var witnessIndex = 1
         let witnessStatements: [WitnessStatementInput] = caseItem.documents
             .filter { $0.type == .witnessStatement && (!$0.cleanedText.isEmpty || !$0.originalText.isEmpty) }
-            .compactMap { doc in
+            .map { doc in
+                let text = doc.cleanedText.isEmpty ? doc.originalText : doc.cleanedText
+                
+                // Try to match to an involved employee first
                 if let employeeId = doc.employeeId,
                    let witness = caseItem.involvedEmployees.first(where: { $0.id == employeeId }) {
-                    let text = doc.cleanedText.isEmpty ? doc.originalText : doc.cleanedText
+                    print("✅ Matched witness statement for: \(witness.name)")
                     return WitnessStatementInput(witnessName: witness.name, text: text)
                 }
-                return nil
+                
+                // Fallback: use submittedBy name or generate a witness name
+                let fallbackName = doc.submittedBy ?? "Witness \(witnessIndex)"
+                witnessIndex += 1
+                print("📋 Including unmatched witness statement as: \(fallbackName)")
+                return WitnessStatementInput(witnessName: fallbackName, text: text)
             }
+        
+        print("📝 Witness statements to send to API: \(witnessStatements.count)")
+        for ws in witnessStatements {
+            print("  - \(ws.witnessName): \(ws.text.prefix(50))...")
+        }
         
         // Get prior history documents
         let priorHistoryDocs: [PriorHistoryInput] = caseItem.documents
@@ -1609,6 +1795,11 @@ struct CaseDetailView: View {
                 )
             }
         
+        print("📜 Prior history documents to send to API: \(priorHistoryDocs.count)")
+        for ph in priorHistoryDocs {
+            print("  - \(ph.type): \(ph.summary.prefix(50))...")
+        }
+        
         // Build case details
         let caseDetails = CaseComparisonDetails(
             incidentDate: caseItem.incidentDate.formatted(date: .abbreviated, time: .omitted),
@@ -1616,15 +1807,23 @@ struct CaseDetailView: View {
             department: caseItem.department
         )
         
+        // Start the centralized downstream analysis flow
         isAnalyzing = true
-        // Reset downstream views for re-analysis
+        isDownstreamAnalyzing = true
+        currentAnalysisPhase = .evidence
+        completedAnalysisPhases = []
+        
+        // Reset local state
         policyMatchResults = []
         selectedRecommendation = nil
-        reanalysisVersion += 1
         
+        // Run ALL analyses sequentially in a single Task
         Task {
             do {
-                let result = try await ConflictAnalysisService.shared.compareComplaints(
+                // ===== PHASE 1: Evidence Analysis =====
+                print("🔄 Phase 1: Starting Evidence Analysis...")
+                
+                let evidenceResult = try await ConflictAnalysisService.shared.compareComplaints(
                     complaintA: complaintADoc,
                     complaintAEmployee: complainantA,
                     complaintB: complaintBDoc,
@@ -1634,35 +1833,211 @@ struct CaseDetailView: View {
                     priorHistory: priorHistoryDocs
                 )
                 
+                // Update case with evidence result
                 await MainActor.run {
                     var updatedCase = caseItem
-                    updatedCase.comparisonResult = result
+                    updatedCase.comparisonResult = evidenceResult
                     updatedCase.status = .pendingReview
-                    // Clear old policy matches from case too
+                    // Clear old downstream data
                     updatedCase.policyMatches = []
+                    updatedCase.policyMatchingResult = nil
+                    updatedCase.recommendationResult = nil
+                    updatedCase.recommendations = []
                     manager.updateCaseSync(updatedCase)
+                    
+                    // Update UI state
+                    completedAnalysisPhases.insert(.evidence)
+                    currentAnalysisPhase = .policyAlignment
                     isAnalyzing = false
-                    
-                    // Set flags to auto-run downstream analyses
-                    shouldAutoRunPolicyMatch = true
-                    shouldAutoRunDecisionSupport = true
-                    
-                    // After analysis completes, automatically show the results
-                    showFullAnalysisView = true
+                    reanalysisVersion += 1
+                    print("✅ Phase 1: Evidence Analysis Complete")
                 }
-            } catch let error as ConflictAnalysisError {
+                
+                // ===== PHASE 2: Policy Alignment =====
+                guard let policy = manager.activePolicy else {
+                    await MainActor.run {
+                        print("⚠️ Phase 2: No active policy, skipping to Decision Support")
+                        completedAnalysisPhases.insert(.policyAlignment)
+                        currentAnalysisPhase = .decisionSupport
+                    }
+                    // Continue to Phase 3 without policy matches
+                    try await runDecisionSupportPhase(
+                        caseItem: caseItem,
+                        complaintADoc: complaintADoc,
+                        complaintBDoc: complaintBDoc,
+                        complainantA: complainantA,
+                        complainantB: complainantB,
+                        evidenceResult: evidenceResult,
+                        witnessStatements: witnessStatements,
+                        policyMatchResults: nil
+                    )
+                    return
+                }
+                
+                print("🔄 Phase 2: Starting Policy Alignment...")
                 await MainActor.run {
-                    isAnalyzing = false
-                    analysisError = error.localizedDescription
-                    showAnalysisErrorAlert = true
+                    currentAnalysisPhase = .policyAlignment
                 }
+                
+                // Build prior history context for policy matching
+                let priorHistoryContext = caseItem.documents
+                    .filter { $0.type == .priorRecord || $0.type == .counselingRecord || $0.type == .warningDocument }
+                    .map { doc in
+                        let text = doc.cleanedText.isEmpty ? (doc.translatedText ?? doc.originalText) : doc.cleanedText
+                        return "[\(doc.type.displayName)]: \(text.prefix(200))"
+                    }
+                    .joined(separator: "\n")
+                
+                let policyResult = try await PolicyMatchingService.shared.matchPolicies(
+                    conflictCase: caseItem,
+                    complaintA: complaintADoc,
+                    complaintAEmployee: complainantA,
+                    complaintB: complaintBDoc,
+                    complaintBEmployee: complainantB,
+                    analysisResult: evidenceResult,
+                    witnessStatements: witnessStatements,
+                    policySections: policy.sections,
+                    priorHistoryContext: priorHistoryContext.isEmpty ? nil : priorHistoryContext
+                )
+                
+                // Update case with policy result
+                await MainActor.run {
+                    // Get fresh case from manager
+                    if let freshCase = manager.cases.first(where: { $0.id == caseItem.id }) {
+                        var updatedCase = freshCase
+                        updatedCase.policyMatchingResult = policyResult
+                        updatedCase.policyMatches = policyResult.matches.map { match in
+                            PolicyMatch(
+                                policySectionId: match.sectionId,
+                                sectionTitle: match.sectionTitle,
+                                sectionNumber: match.sectionNumber,
+                                relevanceExplanation: match.relevanceExplanation,
+                                matchConfidence: match.matchConfidence
+                            )
+                        }
+                        manager.updateCaseSync(updatedCase)
+                    }
+                    
+                    // Update local state
+                    policyMatchResults = policyResult.matches
+                    completedAnalysisPhases.insert(.policyAlignment)
+                    currentAnalysisPhase = .decisionSupport
+                    reanalysisVersion += 1
+                    print("✅ Phase 2: Policy Alignment Complete (\(policyResult.matches.count) matches)")
+                }
+                
+                // ===== PHASE 3: Decision Support =====
+                try await runDecisionSupportPhase(
+                    caseItem: caseItem,
+                    complaintADoc: complaintADoc,
+                    complaintBDoc: complaintBDoc,
+                    complainantA: complainantA,
+                    complainantB: complainantB,
+                    evidenceResult: evidenceResult,
+                    witnessStatements: witnessStatements,
+                    policyMatchResults: policyResult.matches
+                )
+                
             } catch {
                 await MainActor.run {
                     isAnalyzing = false
+                    isDownstreamAnalyzing = false
                     analysisError = error.localizedDescription
                     showAnalysisErrorAlert = true
+                    print("❌ Analysis Error: \(error.localizedDescription)")
                 }
             }
+        }
+    }
+    
+    /// Phase 3: Decision Support - extracted to avoid code duplication
+    private func runDecisionSupportPhase(
+        caseItem: ConflictCase,
+        complaintADoc: CaseDocument,
+        complaintBDoc: CaseDocument,
+        complainantA: InvolvedEmployee,
+        complainantB: InvolvedEmployee,
+        evidenceResult: AIComparisonResult,
+        witnessStatements: [WitnessStatementInput],
+        policyMatchResults: [PolicyMatchResult]?
+    ) async throws {
+        print("🔄 Phase 3: Starting Decision Support...")
+        
+        await MainActor.run {
+            currentAnalysisPhase = .decisionSupport
+        }
+        
+        // Build prior history info
+        let hasPriorComplaints = caseItem.documents.contains { $0.type == .priorRecord }
+        let hasPriorCounseling = caseItem.documents.contains { $0.type == .counselingRecord }
+        let hasPriorWarnings = caseItem.documents.contains { $0.type == .warningDocument }
+        
+        var priorHistoryNotes: [String] = []
+        for doc in caseItem.documents.filter({ $0.type == .priorRecord }) {
+            let text = doc.cleanedText.isEmpty ? doc.originalText : doc.cleanedText
+            if !text.isEmpty { priorHistoryNotes.append("Prior complaint: \(text.prefix(200))...") }
+        }
+        for doc in caseItem.documents.filter({ $0.type == .counselingRecord }) {
+            let text = doc.cleanedText.isEmpty ? doc.originalText : doc.cleanedText
+            if !text.isEmpty { priorHistoryNotes.append("Counseling record: \(text.prefix(200))...") }
+        }
+        for doc in caseItem.documents.filter({ $0.type == .warningDocument }) {
+            let text = doc.cleanedText.isEmpty ? doc.originalText : doc.cleanedText
+            if !text.isEmpty { priorHistoryNotes.append("Warning: \(text.prefix(200))...") }
+        }
+        
+        let priorHistory: PriorHistoryInfo? = (hasPriorComplaints || hasPriorCounseling || hasPriorWarnings) ?
+            PriorHistoryInfo(
+                hasPriorComplaints: hasPriorComplaints,
+                hasPriorCounseling: hasPriorCounseling,
+                hasPriorWarnings: hasPriorWarnings,
+                notes: priorHistoryNotes.isEmpty ? nil : priorHistoryNotes.joined(separator: "\n")
+            ) : nil
+        
+        let decisionResult = try await RecommendationService.shared.getRecommendations(
+            conflictCase: caseItem,
+            complaintA: complaintADoc,
+            complaintAEmployee: complainantA,
+            complaintB: complaintBDoc,
+            complaintBEmployee: complainantB,
+            analysisResult: evidenceResult,
+            policyMatches: policyMatchResults,
+            witnessStatements: witnessStatements,
+            priorHistory: priorHistory
+        )
+        
+        // Update case with decision result
+        await MainActor.run {
+            // Get fresh case from manager
+            if let freshCase = manager.cases.first(where: { $0.id == caseItem.id }) {
+                var updatedCase = freshCase
+                updatedCase.recommendationResult = decisionResult
+                updatedCase.recommendations = decisionResult.recommendations.map { rec in
+                    AIRecommendation(
+                        action: {
+                            switch rec.type {
+                            case .coaching: return .coaching
+                            case .counseling: return .counseling
+                            case .warning: return .writtenWarning
+                            case .escalate: return .escalateToHR
+                            }
+                        }(),
+                        reasoning: rec.rationale,
+                        riskAssessment: rec.riskLevel.displayName,
+                        suggestedNextSteps: rec.nextSteps,
+                        confidence: rec.confidence
+                    )
+                }
+                manager.updateCaseSync(updatedCase)
+            }
+            
+            // Update UI state - ALL PHASES COMPLETE
+            completedAnalysisPhases.insert(.decisionSupport)
+            isDownstreamAnalyzing = false
+            reanalysisVersion += 1
+            showFullAnalysisView = true
+            print("✅ Phase 3: Decision Support Complete")
+            print("🎉 All phases complete!")
         }
     }
 }
@@ -1672,6 +2047,7 @@ struct CaseDetailView: View {
 struct AddEmployeeSheet: View {
     let caseId: UUID
     let onAdd: (InvolvedEmployee) -> Void
+    var defaultIsComplainant: Bool = true  // Default to complainant, but can be set to false for witnesses
     
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
@@ -1682,6 +2058,7 @@ struct AddEmployeeSheet: View {
     @State private var department = ""
     @State private var employeeId = ""
     @State private var isComplainant = true
+    @State private var hasInitialized = false
     
     private var textPrimary: Color {
         colorScheme == .dark ? .white : .black
@@ -1891,6 +2268,10 @@ struct AddEmployeeSheet: View {
                 }
             }
             .onAppear {
+                if !hasInitialized {
+                    isComplainant = defaultIsComplainant
+                    hasInitialized = true
+                }
                 Task {
                     await departmentService.fetchDepartments()
                 }
@@ -3567,10 +3948,17 @@ struct DocumentUploadSheet: View {
     private func addDocument() {
         let document = CaseDocument(
             type: selectedType,
+            originalText: documentContent,  // Also set originalText for manual entry
             cleanedText: documentContent,
             employeeId: selectedEmployee?.id,
             submittedBy: selectedEmployee?.name
         )
+        
+        print("📝 Adding manual document:")
+        print("  - Type: \(selectedType.displayName)")
+        print("  - Employee: \(selectedEmployee?.name ?? "none") (ID: \(selectedEmployee?.id.uuidString ?? "nil"))")
+        print("  - Text length: \(documentContent.count) chars")
+        
         Task {
             await ConflictResolutionManager.shared.addDocument(
                 to: conflictCase.id,
@@ -3581,111 +3969,396 @@ struct DocumentUploadSheet: View {
     }
 }
 
-// MARK: - Reanalysis Loading Overlay
-struct ReanalysisLoadingOverlay: View {
+// MARK: - Downstream Analysis Overlay
+struct DownstreamAnalysisOverlay: View {
+    let currentPhase: AnalysisPhase
+    let completedPhases: Set<AnalysisPhase>
+    
     @State private var rotationAngle: Double = 0
     @State private var pulseScale: CGFloat = 1.0
-    @State private var currentStage: Int = 0
-    
-    private let stages = [
-        ("doc.text.magnifyingglass", "Scanning new evidence..."),
-        ("brain.head.profile", "Analyzing prior history..."),
-        ("arrow.triangle.2.circlepath", "Cross-referencing statements..."),
-        ("chart.bar.doc.horizontal", "Updating analysis results..."),
-        ("sparkles", "Finalizing insights...")
-    ]
+    @State private var glowOpacity: Double = 0.3
+    @State private var checkmarkScales: [AnalysisPhase: CGFloat] = [:]
+    @State private var shimmerOffset: CGFloat = -1.0
     
     @Environment(\.colorScheme) private var colorScheme
     
+    // MARK: - Colors
+    private var completedColor: Color { Color(red: 0.2, green: 0.78, blue: 0.35) } // Vibrant green
+    private var activeColor: Color { Color(red: 0.35, green: 0.5, blue: 1.0) }     // Bright blue
+    private var pendingColor: Color { colorScheme == .dark ? Color.white.opacity(0.15) : Color.gray.opacity(0.2) }
+    
     private var textPrimary: Color {
-        colorScheme == .dark ? .white : .black
+        colorScheme == .dark ? .white : Color(white: 0.1)
     }
     
     private var textSecondary: Color {
-        colorScheme == .dark ? .white.opacity(0.7) : .black.opacity(0.6)
+        colorScheme == .dark ? .white.opacity(0.6) : Color(white: 0.4)
     }
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(white: 0.12) : Color.white
+        colorScheme == .dark ? Color(white: 0.1) : Color.white
     }
     
+    // MARK: - Computed Properties
+    private var completedCount: Int {
+        completedPhases.count
+    }
+    
+    private var totalPhases: Int {
+        AnalysisPhase.allCases.count
+    }
+    
+    private var progressPercentage: Int {
+        guard totalPhases > 0 else { return 0 }
+        return Int((Double(completedCount) / Double(totalPhases)) * 100)
+    }
+    
+    private var progressFraction: CGFloat {
+        guard totalPhases > 0 else { return 0 }
+        return CGFloat(completedCount) / CGFloat(totalPhases)
+    }
+    
+    // MARK: - Body
     var body: some View {
         VStack(spacing: 24) {
-            // Animated icon
+            // Header with animated icon
+            headerSection
+            
+            // Phase List
+            phaseListSection
+            
+            // Progress Bar
+            progressBarSection
+        }
+        .padding(24)
+        .frame(width: 300)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(cardBackground)
+                .shadow(color: activeColor.opacity(0.2), radius: 30, x: 0, y: 10)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20)
+                .stroke(activeColor.opacity(0.3), lineWidth: 1)
+        )
+        .onAppear {
+            startAnimations()
+            initializeCheckmarkScales()
+        }
+        .onChange(of: completedPhases) { newValue in
+            animatePhaseCompletion()
+        }
+    }
+    
+    // MARK: - Header Section
+    private var headerSection: some View {
+        VStack(spacing: 8) {
+            // Animated processing icon
             ZStack {
-                // Outer rotating ring
+                // Outer glow
+                Circle()
+                    .fill(activeColor.opacity(glowOpacity * 0.5))
+                    .frame(width: 70, height: 70)
+                    .blur(radius: 10)
+                
+                // Rotating ring
                 Circle()
                     .stroke(
                         AngularGradient(
-                            gradient: Gradient(colors: [AppColors.primary, AppColors.primary.opacity(0.2)]),
+                            colors: [activeColor, activeColor.opacity(0.1), activeColor],
                             center: .center
                         ),
                         lineWidth: 3
                     )
-                    .frame(width: 90, height: 90)
+                    .frame(width: 56, height: 56)
                     .rotationEffect(.degrees(rotationAngle))
                 
-                // Pulsing background
+                // Inner pulsing circle
                 Circle()
-                    .fill(AppColors.primary.opacity(0.1))
-                    .frame(width: 70, height: 70)
+                    .fill(activeColor.opacity(0.2))
+                    .frame(width: 44, height: 44)
                     .scaleEffect(pulseScale)
                 
                 // Center icon
-                Image(systemName: stages[currentStage].0)
-                    .font(.system(size: 28))
-                    .foregroundColor(AppColors.primary)
-                    .transition(.scale.combined(with: .opacity))
-                    .id(currentStage)
+                Image(systemName: "waveform.path.ecg")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundColor(activeColor)
             }
             
-            VStack(spacing: 8) {
-                Text("Re-Analyzing with New Evidence")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(textPrimary)
-                
-                Text(stages[currentStage].1)
-                    .font(.system(size: 14))
-                    .foregroundColor(textSecondary)
-                    .animation(.easeInOut(duration: 0.3), value: currentStage)
-            }
+            Text("Analyzing Case")
+                .font(.system(size: 18, weight: .bold))
+                .foregroundColor(textPrimary)
             
-            // Progress dots
-            HStack(spacing: 8) {
-                ForEach(0..<stages.count, id: \.self) { index in
-                    Circle()
-                        .fill(index <= currentStage ? AppColors.primary : AppColors.primary.opacity(0.3))
-                        .frame(width: 8, height: 8)
-                        .scaleEffect(index == currentStage ? 1.2 : 1.0)
-                        .animation(.spring(response: 0.3), value: currentStage)
-                }
-            }
-        }
-        .padding(40)
-        .background(cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 20))
-        .shadow(color: Color.black.opacity(0.25), radius: 30, x: 0, y: 10)
-        .onAppear {
-            startAnimations()
+            Text("Processing \(completedCount + 1) of \(totalPhases)...")
+                .font(.system(size: 13))
+                .foregroundColor(textSecondary)
         }
     }
     
+    // MARK: - Phase List Section
+    private var phaseListSection: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(AnalysisPhase.allCases.enumerated()), id: \.element) { index, phase in
+                phaseRow(phase: phase, index: index)
+            }
+        }
+        .padding(.horizontal, 4)
+    }
+    
+    private func phaseRow(phase: AnalysisPhase, index: Int) -> some View {
+        let isCompleted = completedPhases.contains(phase)
+        let isActive = currentPhase == phase && !isCompleted
+        let isLast = index == totalPhases - 1
+        
+        return VStack(spacing: 0) {
+            HStack(spacing: 14) {
+                // Phase indicator
+                ZStack {
+                    // Background
+                    Circle()
+                        .fill(phaseBackgroundColor(isCompleted: isCompleted, isActive: isActive))
+                        .frame(width: 40, height: 40)
+                    
+                    // Active ring animation
+                    if isActive {
+                        Circle()
+                            .stroke(activeColor.opacity(0.4), lineWidth: 2)
+                            .frame(width: 40, height: 40)
+                            .scaleEffect(pulseScale)
+                    }
+                    
+                    // Icon or checkmark
+                    if isCompleted {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundColor(.white)
+                            .scaleEffect(checkmarkScales[phase] ?? 1.0)
+                    } else {
+                        Image(systemName: phase.icon)
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(isActive ? activeColor : textSecondary.opacity(0.5))
+                    }
+                }
+                
+                // Phase info
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(phase.rawValue)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(phaseTextColor(isCompleted: isCompleted, isActive: isActive))
+                    
+                    Text(phaseStatusText(phase: phase, isCompleted: isCompleted, isActive: isActive))
+                        .font(.system(size: 12))
+                        .foregroundColor(textSecondary)
+                }
+                
+                Spacer()
+                
+                // Status indicator
+                if isCompleted {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(completedColor)
+                } else if isActive {
+                    // Animated loading indicator
+                    LoadingDotsView(color: activeColor)
+                }
+            }
+            .padding(.vertical, 10)
+            .padding(.horizontal, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(isActive ? activeColor.opacity(0.08) : Color.clear)
+            )
+            
+            // Connector line between phases
+            if !isLast {
+                HStack {
+                    Rectangle()
+                        .fill(isCompleted ? completedColor.opacity(0.5) : pendingColor)
+                        .frame(width: 2, height: 16)
+                        .padding(.leading, 27) // Center under the circle (40/2 + padding)
+                    Spacer()
+                }
+            }
+        }
+    }
+    
+    // MARK: - Progress Bar Section
+    private var progressBarSection: some View {
+        VStack(spacing: 10) {
+            // Progress bar
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    // Track
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(pendingColor)
+                        .frame(height: 8)
+                    
+                    // Fill with gradient
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(
+                            LinearGradient(
+                                colors: [completedColor, completedColor.opacity(0.8)],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: max(0, geometry.size.width * progressFraction), height: 8)
+                        .animation(.spring(response: 0.5, dampingFraction: 0.7), value: progressFraction)
+                    
+                    // Shimmer effect
+                    if progressFraction > 0 && progressFraction < 1 {
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(
+                                LinearGradient(
+                                    colors: [.clear, .white.opacity(0.4), .clear],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                            .frame(width: 40, height: 8)
+                            .offset(x: shimmerOffset * geometry.size.width * progressFraction)
+                            .mask(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .frame(width: geometry.size.width * progressFraction, height: 8)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            )
+                    }
+                }
+            }
+            .frame(height: 8)
+            
+            // Labels
+            HStack {
+                Text("\(progressPercentage)% Complete")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(completedColor)
+                
+                Spacer()
+                
+                Text("\(completedCount)/\(totalPhases) phases done")
+                    .font(.system(size: 12))
+                    .foregroundColor(textSecondary)
+            }
+        }
+        .padding(.top, 8)
+    }
+    
+    // MARK: - Helper Methods
+    private func phaseBackgroundColor(isCompleted: Bool, isActive: Bool) -> Color {
+        if isCompleted {
+            return completedColor
+        } else if isActive {
+            return activeColor.opacity(0.15)
+        } else {
+            return pendingColor
+        }
+    }
+    
+    private func phaseTextColor(isCompleted: Bool, isActive: Bool) -> Color {
+        if isCompleted {
+            return completedColor
+        } else if isActive {
+            return textPrimary
+        } else {
+            return textSecondary.opacity(0.7)
+        }
+    }
+    
+    private func phaseStatusText(phase: AnalysisPhase, isCompleted: Bool, isActive: Bool) -> String {
+        if isCompleted {
+            return phase.completedDescription
+        } else if isActive {
+            return phase.description
+        } else {
+            return "Waiting..."
+        }
+    }
+    
+    // MARK: - Animations
     private func startAnimations() {
-        // Rotation animation
+        // Rotation
         withAnimation(.linear(duration: 2).repeatForever(autoreverses: false)) {
             rotationAngle = 360
         }
         
-        // Pulse animation
+        // Pulse
         withAnimation(.easeInOut(duration: 1).repeatForever(autoreverses: true)) {
             pulseScale = 1.15
         }
         
-        // Stage progression
-        Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { timer in
-            withAnimation(.easeInOut(duration: 0.3)) {
-                currentStage = (currentStage + 1) % stages.count
+        // Glow
+        withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) {
+            glowOpacity = 0.6
+        }
+        
+        // Shimmer
+        withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false)) {
+            shimmerOffset = 1.0
+        }
+    }
+    
+    private func initializeCheckmarkScales() {
+        for phase in AnalysisPhase.allCases {
+            checkmarkScales[phase] = completedPhases.contains(phase) ? 1.0 : 0.0
+        }
+    }
+    
+    private func animatePhaseCompletion() {
+        for phase in completedPhases {
+            if checkmarkScales[phase] == 0 {
+                // Pop in animation
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.5)) {
+                    checkmarkScales[phase] = 1.3
+                }
+                
+                // Settle
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    withAnimation(.spring(response: 0.2, dampingFraction: 0.6)) {
+                        checkmarkScales[phase] = 1.0
+                    }
+                }
             }
+        }
+    }
+}
+
+// MARK: - Loading Dots View
+struct LoadingDotsView: View {
+    let color: Color
+    
+    @State private var dotScales: [CGFloat] = [1.0, 1.0, 1.0]
+    
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(0..<3, id: \.self) { index in
+                Circle()
+                    .fill(color)
+                    .frame(width: 5, height: 5)
+                    .scaleEffect(dotScales[index])
+            }
+        }
+        .onAppear {
+            animateDots()
+        }
+    }
+    
+    private func animateDots() {
+        // Staggered bounce animation for each dot
+        for i in 0..<3 {
+            let delay = Double(i) * 0.15
+            
+            // Initial animation
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                startDotAnimation(index: i)
+            }
+        }
+    }
+    
+    private func startDotAnimation(index: Int) {
+        // Create repeating animation with delay
+        withAnimation(.easeInOut(duration: 0.4).repeatForever(autoreverses: true).delay(Double(index) * 0.15)) {
+            dotScales[index] = 1.5
         }
     }
 }

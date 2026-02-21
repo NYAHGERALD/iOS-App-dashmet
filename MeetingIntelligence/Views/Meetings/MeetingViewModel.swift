@@ -132,7 +132,7 @@ class MeetingViewModel: ObservableObject {
             let response = try await APIService.shared.getMeetings(userId: userId)
             
             if response.success {
-                meetings = response.meetings
+                meetings = response.meetingsList
                 print("✅ Fetched \(meetings.count) meetings")
             } else {
                 errorMessage = response.error ?? "Failed to fetch meetings"

@@ -353,7 +353,7 @@ struct ActionItemsTab: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, AppSpacing.xl)
             
-            if viewModel.meeting.status == .processing {
+            if viewModel.meeting.safeStatus == .processing {
                 HStack(spacing: AppSpacing.sm) {
                     ProgressView()
                         .progressViewStyle(CircularProgressViewStyle(tint: AppColors.primary))
@@ -956,7 +956,7 @@ struct ActionItemCard: View {
                                     .frame(height: 6)
                                 
                                 RoundedRectangle(cornerRadius: 4)
-                                    .fill(AppColors.primary)
+                                    .fill(progressGradient(for: item.progressValue))
                                     .frame(width: geometry.size.width * CGFloat(item.progressValue) / 100, height: 6)
                             }
                         }
@@ -964,7 +964,7 @@ struct ActionItemCard: View {
                         
                         Text("\(item.progressValue)%")
                             .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(AppColors.textTertiary)
+                            .foregroundColor(progressColor(for: item.progressValue))
                     }
                 }
                 
@@ -1080,6 +1080,61 @@ struct ActionItemCard: View {
             return AppColors.warning
         }
         return AppColors.textSecondary
+    }
+    
+    private func progressColor(for progress: Int) -> Color {
+        // Color ranges: 0-20% Red, 20-50% Yellow/Orange, 50-80% Green, 80-100% Blue
+        if progress <= 20 { return .red }
+        if progress <= 50 { return .orange }
+        if progress <= 80 { return .green }
+        return .blue
+    }
+    
+    private func progressGradient(for progress: Int) -> LinearGradient {
+        let progressDouble = Double(progress)
+        
+        if progressDouble <= 20 {
+            return LinearGradient(colors: [.red], startPoint: .leading, endPoint: .trailing)
+        } else if progressDouble <= 50 {
+            let redEnd = 20.0 / progressDouble
+            return LinearGradient(
+                stops: [
+                    .init(color: .red, location: 0.0),
+                    .init(color: .red, location: redEnd),
+                    .init(color: .orange, location: 1.0)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+        } else if progressDouble <= 80 {
+            let redEnd = 20.0 / progressDouble
+            let orangeEnd = 50.0 / progressDouble
+            return LinearGradient(
+                stops: [
+                    .init(color: .red, location: 0.0),
+                    .init(color: .red, location: redEnd),
+                    .init(color: .orange, location: orangeEnd),
+                    .init(color: .green, location: 1.0)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+        } else {
+            let redEnd = 20.0 / progressDouble
+            let orangeEnd = 50.0 / progressDouble
+            let greenEnd = 80.0 / progressDouble
+            return LinearGradient(
+                stops: [
+                    .init(color: .red, location: 0.0),
+                    .init(color: .red, location: redEnd),
+                    .init(color: .orange, location: orangeEnd),
+                    .init(color: .green, location: greenEnd),
+                    .init(color: .blue, location: 1.0)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+        }
     }
 }
 

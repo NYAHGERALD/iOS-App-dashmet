@@ -83,6 +83,7 @@ struct TaskUser: Codable, Identifiable, Hashable {
     let firstName: String?
     let lastName: String?
     let email: String?
+    let profilePicture: String?
     
     var fullName: String {
         let first = firstName ?? ""
@@ -108,10 +109,11 @@ struct TaskComment: Codable, Identifiable, Hashable {
     let parentId: String?
     let author: TaskUser?
     let replies: [TaskComment]?
-    let createdAt: Date
-    let updatedAt: Date
+    let createdAt: Date?
+    let updatedAt: Date?
     
     var timeAgo: String {
+        guard let createdAt = createdAt else { return "" }
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
         return formatter.localizedString(for: createdAt, relativeTo: Date())
@@ -177,6 +179,39 @@ struct TaskAssignee: Codable, Identifiable, Hashable {
     }
 }
 
+// MARK: - Task Meeting (embedded meeting info)
+struct TaskMeeting: Codable, Identifiable, Hashable {
+    let id: String
+    let title: String?
+    let meetingType: String?
+    let scheduledAt: Date?
+    
+    var displayTitle: String {
+        if let title = title, !title.isEmpty {
+            return title
+        }
+        // If no title, include meeting date for differentiation
+        let typeName = meetingType?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Meeting"
+        if let date = scheduledAt {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "MMM d, yyyy"
+            return "\(typeName) - \(formatter.string(from: date))"
+        }
+        return typeName
+    }
+    
+    var formattedType: String {
+        meetingType?.replacingOccurrences(of: "_", with: " ").lowercased().capitalized ?? "Meeting"
+    }
+    
+    var formattedDate: String? {
+        guard let date = scheduledAt else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, yyyy"
+        return formatter.string(from: date)
+    }
+}
+
 // MARK: - Task Model
 struct TaskItem: Codable, Identifiable, Hashable {
     let id: String
@@ -195,7 +230,7 @@ struct TaskItem: Codable, Identifiable, Hashable {
     let isAiExtracted: Bool?
     
     // Ownership
-    let ownerId: String
+    let ownerId: String?
     let owner: TaskUser?
     
     // Assignment (legacy single assignee)
@@ -206,11 +241,12 @@ struct TaskItem: Codable, Identifiable, Hashable {
     let assignees: [TaskAssignee]?
     
     // Organization context
-    let organizationId: String
+    let organizationId: String?
     let facilityId: String?
     
     // Meeting reference
     let meetingId: String?
+    let meeting: TaskMeeting?
     
     // Comments and evidence
     let comments: [TaskComment]?
@@ -218,8 +254,8 @@ struct TaskItem: Codable, Identifiable, Hashable {
     let _count: TaskCounts?
     
     // Metadata
-    let createdAt: Date
-    let updatedAt: Date
+    let createdAt: Date?
+    let updatedAt: Date?
     
     // MARK: - Computed Properties
     var progressValue: Int {
@@ -446,6 +482,233 @@ struct BulkTaskItem: Codable {
 struct BulkUpdateStatusRequest: Codable {
     let taskIds: [String]
     let status: String
+}
+
+// MARK: - Task Activity Log Model
+enum TaskActivityAction: String, Codable {
+    case create = "CREATE"
+    case updateStatus = "UPDATE_STATUS"
+    case updatePriority = "UPDATE_PRIORITY"
+    case updateProgress = "UPDATE_PROGRESS"
+    case updateTitle = "UPDATE_TITLE"
+    case updateDescription = "UPDATE_DESCRIPTION"
+    case updateDueDate = "UPDATE_DUE_DATE"
+    case addAssignee = "ADD_ASSIGNEE"
+    case removeAssignee = "REMOVE_ASSIGNEE"
+    case addComment = "ADD_COMMENT"
+    case deleteComment = "DELETE_COMMENT"
+    case addEvidence = "ADD_EVIDENCE"
+    case deleteEvidence = "DELETE_EVIDENCE"
+    case unknown = "UNKNOWN"
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        self = TaskActivityAction(rawValue: rawValue) ?? .unknown
+    }
+    
+    var displayName: String {
+        switch self {
+        case .create: return "Created"
+        case .updateStatus: return "Status Changed"
+        case .updatePriority: return "Priority Changed"
+        case .updateProgress: return "Progress Updated"
+        case .updateTitle: return "Title Updated"
+        case .updateDescription: return "Description Updated"
+        case .updateDueDate: return "Due Date Changed"
+        case .addAssignee: return "Assignee Added"
+        case .removeAssignee: return "Assignee Removed"
+        case .addComment: return "Comment Added"
+        case .deleteComment: return "Comment Deleted"
+        case .addEvidence: return "Evidence Added"
+        case .deleteEvidence: return "Evidence Deleted"
+        case .unknown: return "Updated"
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .create: return "plus.circle.fill"
+        case .updateStatus: return "arrow.triangle.2.circlepath"
+        case .updatePriority: return "exclamationmark.triangle.fill"
+        case .updateProgress: return "chart.bar.fill"
+        case .updateTitle: return "pencil"
+        case .updateDescription: return "text.alignleft"
+        case .updateDueDate: return "calendar"
+        case .addAssignee: return "person.badge.plus"
+        case .removeAssignee: return "person.badge.minus"
+        case .addComment: return "bubble.left.fill"
+        case .deleteComment: return "bubble.left.and.exclamationmark.bubble.right"
+        case .addEvidence: return "paperclip"
+        case .deleteEvidence: return "trash"
+        case .unknown: return "pencil.circle"
+        }
+    }
+    
+    var color: String {
+        switch self {
+        case .create: return "10B981" // Green
+        case .updateStatus: return "3B82F6" // Blue
+        case .updatePriority: return "F59E0B" // Amber
+        case .updateProgress: return "8B5CF6" // Purple
+        case .updateTitle, .updateDescription: return "6B7280" // Gray
+        case .updateDueDate: return "EC4899" // Pink
+        case .addAssignee: return "10B981" // Green
+        case .removeAssignee: return "EF4444" // Red
+        case .addComment: return "06B6D4" // Cyan
+        case .deleteComment: return "EF4444" // Red
+        case .addEvidence: return "10B981" // Green
+        case .deleteEvidence: return "EF4444" // Red
+        case .unknown: return "6B7280" // Gray
+        }
+    }
+}
+
+struct TaskActivityLog: Codable, Identifiable {
+    let id: String
+    let taskId: String
+    let userId: String
+    let action: TaskActivityAction
+    let field: String?
+    let previousValue: String?
+    let newValue: String?
+    let metadata: ActivityLogMetadata?
+    let createdAt: Date
+    let user: TaskUser?
+    
+    var timeAgo: String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: createdAt, relativeTo: Date())
+    }
+    
+    var formattedDate: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, yyyy 'at' h:mm a"
+        return formatter.string(from: createdAt)
+    }
+    
+    var changeDescription: String {
+        switch action {
+        case .create:
+            return "Created this action item"
+        case .updateStatus:
+            if let prev = previousValue, let new = newValue {
+                return "Changed status from \(formatStatus(prev)) to \(formatStatus(new))"
+            }
+            return "Updated status"
+        case .updatePriority:
+            if let prev = previousValue, let new = newValue {
+                return "Changed priority from \(formatPriority(prev)) to \(formatPriority(new))"
+            }
+            return "Updated priority"
+        case .updateProgress:
+            if let prev = previousValue, let new = newValue {
+                return "Updated progress from \(prev)% to \(new)%"
+            }
+            return "Updated progress"
+        case .updateTitle:
+            return "Updated the title"
+        case .updateDescription:
+            return "Updated the description"
+        case .updateDueDate:
+            if let new = newValue {
+                return "Set due date to \(formatDate(new))"
+            } else if previousValue != nil {
+                return "Removed due date"
+            }
+            return "Updated due date"
+        case .addAssignee:
+            if let new = newValue {
+                return "Added assignee: \(new)"
+            }
+            return "Added an assignee"
+        case .removeAssignee:
+            if let prev = previousValue {
+                return "Removed assignee: \(prev)"
+            }
+            return "Removed an assignee"
+        case .addComment:
+            return "Added a comment"
+        case .deleteComment:
+            return "Deleted a comment"
+        case .addEvidence:
+            if let new = newValue {
+                return "Added evidence: \(new)"
+            }
+            return "Added evidence"
+        case .deleteEvidence:
+            if let prev = previousValue {
+                return "Deleted evidence: \(prev)"
+            }
+            return "Deleted evidence"
+        case .unknown:
+            return "Made changes"
+        }
+    }
+    
+    private func formatStatus(_ value: String) -> String {
+        switch value.uppercased() {
+        case "PENDING": return "Pending"
+        case "IN_PROGRESS": return "In Progress"
+        case "COMPLETED": return "Completed"
+        case "CANCELLED": return "Cancelled"
+        default: return value
+        }
+    }
+    
+    private func formatPriority(_ value: String) -> String {
+        switch value.uppercased() {
+        case "LOW": return "Low"
+        case "MEDIUM": return "Medium"
+        case "HIGH": return "High"
+        case "URGENT": return "Urgent"
+        default: return value
+        }
+    }
+    
+    private func formatDate(_ value: String) -> String {
+        // Try to parse ISO date and format nicely
+        let iso8601Formatter = ISO8601DateFormatter()
+        iso8601Formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        
+        if let date = iso8601Formatter.date(from: value) {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "MMM d, yyyy"
+            return formatter.string(from: date)
+        }
+        
+        iso8601Formatter.formatOptions = [.withInternetDateTime]
+        if let date = iso8601Formatter.date(from: value) {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "MMM d, yyyy"
+            return formatter.string(from: date)
+        }
+        
+        return value
+    }
+}
+
+struct ActivityLogMetadata: Codable {
+    // Can be extended based on the actual metadata structure
+    let additionalInfo: String?
+    
+    init(from decoder: Decoder) throws {
+        // Handle flexible JSON metadata
+        let container = try decoder.singleValueContainer()
+        if let dict = try? container.decode([String: String].self) {
+            additionalInfo = dict["additionalInfo"]
+        } else {
+            additionalInfo = nil
+        }
+    }
+}
+
+struct TaskActivityLogsResponse: Codable {
+    let success: Bool
+    let logs: [TaskActivityLog]?
+    let count: Int?
+    let error: String?
 }
 
 // MARK: - JSON Decoding Strategy

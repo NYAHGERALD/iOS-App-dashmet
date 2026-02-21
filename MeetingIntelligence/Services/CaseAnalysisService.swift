@@ -189,7 +189,13 @@ class CaseAnalysisService {
         urlRequest.httpBody = try JSONEncoder().encode(request)
         urlRequest.timeoutInterval = 120 // 2 minutes for AI analysis
         
+        let startTime = Date()
+        print("CaseAnalysisService: Starting analysis at \(startTime)")
+        
         let (data, response) = try await URLSession.shared.data(for: urlRequest)
+        
+        let elapsed = Date().timeIntervalSince(startTime)
+        print("CaseAnalysisService: Response received in \(String(format: "%.1f", elapsed))s")
         
         guard let httpResponse = response as? HTTPURLResponse else {
             throw CaseAnalysisError.invalidResponse

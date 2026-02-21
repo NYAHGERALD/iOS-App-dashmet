@@ -120,12 +120,12 @@ struct RecordingPreviewView: View {
             // Meeting type icon
             ZStack {
                 Circle()
-                    .fill(Color(hex: viewModel.meeting.meetingType.color).opacity(0.15))
+                    .fill(Color(hex: viewModel.meeting.safeMeetingType.color).opacity(0.15))
                     .frame(width: 80, height: 80)
                 
-                Image(systemName: viewModel.meeting.meetingType.icon)
+                Image(systemName: viewModel.meeting.safeMeetingType.icon)
                     .font(.system(size: 36))
-                    .foregroundColor(Color(hex: viewModel.meeting.meetingType.color))
+                    .foregroundColor(Color(hex: viewModel.meeting.safeMeetingType.color))
             }
             
             // Meeting title

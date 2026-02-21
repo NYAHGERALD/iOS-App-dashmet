@@ -367,6 +367,10 @@ struct AIComparisonResult: Codable {
     var partyBName: String
     var generatedAt: Date
     
+    // Dynamic fields based on evidence provided
+    var witnessAnalysis: [String]?
+    var priorHistoryAnalysis: [String]?
+    
     init(
         timelineDifferences: [String] = [],
         agreementPoints: [String] = [],
@@ -377,7 +381,9 @@ struct AIComparisonResult: Codable {
         sideBySideComparison: [SideBySideComparisonItem] = [],
         partyAName: String = "",
         partyBName: String = "",
-        generatedAt: Date = Date()
+        generatedAt: Date = Date(),
+        witnessAnalysis: [String]? = nil,
+        priorHistoryAnalysis: [String]? = nil
     ) {
         self.timelineDifferences = timelineDifferences
         self.agreementPoints = agreementPoints
@@ -389,6 +395,8 @@ struct AIComparisonResult: Codable {
         self.partyAName = partyAName
         self.partyBName = partyBName
         self.generatedAt = generatedAt
+        self.witnessAnalysis = witnessAnalysis
+        self.priorHistoryAnalysis = priorHistoryAnalysis
     }
 }
 
@@ -534,19 +542,34 @@ struct ConflictCase: Identifiable, Codable {
     var policyMatches: [PolicyMatch]
     var recommendations: [AIRecommendation]
     
+    // Full AI Results (for UI restoration)
+    var policyMatchingResult: PolicyMatchingResult?
+    var recommendationResult: RecommendationResult?
+    
     // Selected Action
     var selectedAction: RecommendedAction?
+    var selectedTargetEmployeeIds: [UUID]  // Target employees for the selected action
     var generatedDocument: GeneratedActionDocument?
+    var fullGeneratedDocumentResult: GeneratedDocumentResult?  // Full result for UI display
     
     // Supervisor Notes
     var supervisorNotes: String?
     var supervisorDecision: String?  // Final decision reason
+    
+    // Case Closure Details
+    var closureReason: String?       // Reason for closing the case
+    var closureSummary: String?      // Final closure summary
+    var closedBy: String?            // User ID who closed the case
+    var closedByName: String?        // Name of user who closed the case
+    var isLocked: Bool               // Whether the case is permanently locked
     
     // Audit Trail
     var auditLog: [CaseAuditEntry]
     
     // Metadata
     var createdBy: String
+    var creatorName: String?  // Full name of creator (from backend)
+    var facilityName: String?  // Facility name (from backend)
     var createdAt: Date
     var updatedAt: Date
     var closedAt: Date?
@@ -568,12 +591,23 @@ struct ConflictCase: Identifiable, Codable {
         comparisonResult: AIComparisonResult? = nil,
         policyMatches: [PolicyMatch] = [],
         recommendations: [AIRecommendation] = [],
+        policyMatchingResult: PolicyMatchingResult? = nil,
+        recommendationResult: RecommendationResult? = nil,
         selectedAction: RecommendedAction? = nil,
+        selectedTargetEmployeeIds: [UUID] = [],
         generatedDocument: GeneratedActionDocument? = nil,
+        fullGeneratedDocumentResult: GeneratedDocumentResult? = nil,
         supervisorNotes: String? = nil,
         supervisorDecision: String? = nil,
+        closureReason: String? = nil,
+        closureSummary: String? = nil,
+        closedBy: String? = nil,
+        closedByName: String? = nil,
+        isLocked: Bool = false,
         auditLog: [CaseAuditEntry] = [],
         createdBy: String = "",
+        creatorName: String? = nil,
+        facilityName: String? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         closedAt: Date? = nil,
@@ -594,12 +628,23 @@ struct ConflictCase: Identifiable, Codable {
         self.comparisonResult = comparisonResult
         self.policyMatches = policyMatches
         self.recommendations = recommendations
+        self.policyMatchingResult = policyMatchingResult
+        self.recommendationResult = recommendationResult
         self.selectedAction = selectedAction
+        self.selectedTargetEmployeeIds = selectedTargetEmployeeIds
         self.generatedDocument = generatedDocument
+        self.fullGeneratedDocumentResult = fullGeneratedDocumentResult
         self.supervisorNotes = supervisorNotes
         self.supervisorDecision = supervisorDecision
+        self.closureReason = closureReason
+        self.closureSummary = closureSummary
+        self.closedBy = closedBy
+        self.closedByName = closedByName
+        self.isLocked = isLocked
         self.auditLog = auditLog
         self.createdBy = createdBy
+        self.creatorName = creatorName
+        self.facilityName = facilityName
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.closedAt = closedAt

@@ -100,7 +100,7 @@ struct SummaryTab: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, AppSpacing.xl)
             
-            if viewModel.meeting.status == .processing {
+            if viewModel.meeting.safeStatus == .processing {
                 HStack(spacing: AppSpacing.sm) {
                     ProgressView()
                         .progressViewStyle(CircularProgressViewStyle(tint: AppColors.primary))

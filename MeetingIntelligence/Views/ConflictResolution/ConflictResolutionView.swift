@@ -10,12 +10,15 @@ import SwiftUI
 struct ConflictResolutionView: View {
     @StateObject private var manager = ConflictResolutionManager.shared
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     
     @State private var selectedTab: CRTab = .cases
     @State private var showCreateCase = false
     @State private var showUploadPolicy = false
     @State private var showPolicyDetail: WorkplacePolicy?
     @State private var showCaseDetail: ConflictCase?
+    
+    var onMenuTap: (() -> Void)?
     
     // Adaptive colors
     private var textPrimary: Color {
@@ -74,6 +77,15 @@ struct ConflictResolutionView: View {
             .navigationTitle("Conflict Resolution")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        onMenuTap?()
+                    } label: {
+                        Image(systemName: "line.3.horizontal")
+                            .font(.title2)
+                            .foregroundStyle(AppGradients.primary)
+                    }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
                         Button {
@@ -103,7 +115,7 @@ struct ConflictResolutionView: View {
             .sheet(item: $showPolicyDetail) { policy in
                 PolicyDetailView(policy: policy)
             }
-            .sheet(item: $showCaseDetail) { conflictCase in
+            .fullScreenCover(item: $showCaseDetail) { conflictCase in
                 CaseDetailView(caseId: conflictCase.id)
             }
         }
@@ -461,28 +473,7 @@ struct ConflictResolutionView: View {
     
     // MARK: - Analytics View
     private var analyticsView: some View {
-        ScrollView {
-            VStack(spacing: 20) {
-                // Coming soon placeholder
-                VStack(spacing: 16) {
-                    Image(systemName: "chart.bar.xaxis")
-                        .font(.system(size: 60))
-                        .foregroundColor(textSecondary.opacity(0.5))
-                    
-                    Text("Analytics Coming Soon")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundColor(textPrimary)
-                    
-                    Text("Track case patterns, resolution times, and policy alignment over time")
-                        .font(.system(size: 14))
-                        .foregroundColor(textSecondary)
-                        .multilineTextAlignment(.center)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 60)
-            }
-            .padding()
-        }
+        ConflictAnalyticsView()
     }
 }
 

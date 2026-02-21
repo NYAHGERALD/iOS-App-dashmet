@@ -13,6 +13,7 @@ import PDFKit
 // MARK: - Export Format
 enum ExportFormat: String, CaseIterable, Identifiable {
     case pdf = "pdf"
+    case docx = "docx"
     case plainText = "txt"
     case html = "html"
     case email = "email"
@@ -22,6 +23,7 @@ enum ExportFormat: String, CaseIterable, Identifiable {
     var displayName: String {
         switch self {
         case .pdf: return "PDF Document"
+        case .docx: return "Word Document"
         case .plainText: return "Plain Text"
         case .html: return "HTML"
         case .email: return "Email Ready"
@@ -31,6 +33,7 @@ enum ExportFormat: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .pdf: return "doc.fill"
+        case .docx: return "doc.richtext"
         case .plainText: return "doc.text"
         case .html: return "chevron.left.forwardslash.chevron.right"
         case .email: return "envelope.fill"
@@ -40,6 +43,7 @@ enum ExportFormat: String, CaseIterable, Identifiable {
     var fileExtension: String {
         switch self {
         case .pdf: return "pdf"
+        case .docx: return "docx"
         case .plainText: return "txt"
         case .html: return "html"
         case .email: return "eml"
@@ -49,6 +53,7 @@ enum ExportFormat: String, CaseIterable, Identifiable {
     var mimeType: String {
         switch self {
         case .pdf: return "application/pdf"
+        case .docx: return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         case .plainText: return "text/plain"
         case .html: return "text/html"
         case .email: return "message/rfc822"
@@ -114,6 +119,8 @@ class DocumentExportService {
         switch format {
         case .pdf:
             return try await generatePDF(document: document, caseNumber: caseNumber, includeSignatures: includeSignatures, signatures: signatures)
+        case .docx:
+            return try await generateDOCX(document: document, caseNumber: caseNumber)
         case .plainText:
             return try generatePlainText(document: document)
         case .html:
@@ -509,6 +516,382 @@ class DocumentExportService {
         label.draw(at: CGPoint(x: point.x, y: lineY + 5), withAttributes: labelAttrs)
         
         return lineY + 20
+    }
+    
+    // MARK: - Word Document (DOCX) Generation
+    
+    private func generateDOCX(document: GeneratedDocument, caseNumber: String) async throws -> Data {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        
+        defer {
+            try? FileManager.default.removeItem(at: tempDir)
+        }
+        
+        // Create DOCX structure
+        let wordDir = tempDir.appendingPathComponent("word")
+        let relsDir = tempDir.appendingPathComponent("_rels")
+        let wordRelsDir = wordDir.appendingPathComponent("_rels")
+        
+        try FileManager.default.createDirectory(at: wordDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: relsDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: wordRelsDir, withIntermediateDirectories: true)
+        
+        // Generate XML content
+        let contentTypes = generateDOCXContentTypes()
+        let rels = generateDOCXRels()
+        let documentRels = generateDOCXDocumentRels()
+        let styles = generateDOCXStyles()
+        let documentXML = generateDOCXContent(document: document, caseNumber: caseNumber)
+        
+        // Write files
+        try contentTypes.write(to: tempDir.appendingPathComponent("[Content_Types].xml"), atomically: true, encoding: .utf8)
+        try rels.write(to: relsDir.appendingPathComponent(".rels"), atomically: true, encoding: .utf8)
+        try documentRels.write(to: wordRelsDir.appendingPathComponent("document.xml.rels"), atomically: true, encoding: .utf8)
+        try documentXML.write(to: wordDir.appendingPathComponent("document.xml"), atomically: true, encoding: .utf8)
+        try styles.write(to: wordDir.appendingPathComponent("styles.xml"), atomically: true, encoding: .utf8)
+        
+        // Create ZIP archive (DOCX)
+        let docxPath = tempDir.appendingPathComponent("output.docx")
+        _ = try ZipUtility.createZipFile(from: tempDir, to: docxPath)
+        
+        return try Data(contentsOf: docxPath)
+    }
+    
+    private func generateDOCXContentTypes() -> String {
+        return """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+            <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+            <Default Extension="xml" ContentType="application/xml"/>
+            <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+            <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+        </Types>
+        """
+    }
+    
+    private func generateDOCXRels() -> String {
+        return """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+            <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+        </Relationships>
+        """
+    }
+    
+    private func generateDOCXDocumentRels() -> String {
+        return """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+            <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+        </Relationships>
+        """
+    }
+    
+    private func generateDOCXStyles() -> String {
+        return """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+            <w:docDefaults>
+                <w:rPrDefault>
+                    <w:rPr>
+                        <w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/>
+                        <w:sz w:val="22"/>
+                        <w:szCs w:val="22"/>
+                    </w:rPr>
+                </w:rPrDefault>
+            </w:docDefaults>
+            <w:style w:type="paragraph" w:styleId="Title">
+                <w:name w:val="Title"/>
+                <w:pPr><w:jc w:val="center"/></w:pPr>
+                <w:rPr><w:b/><w:sz w:val="32"/></w:rPr>
+            </w:style>
+            <w:style w:type="paragraph" w:styleId="Heading1">
+                <w:name w:val="Heading 1"/>
+                <w:pPr><w:spacing w:before="240" w:after="120"/></w:pPr>
+                <w:rPr><w:b/><w:sz w:val="28"/><w:color w:val="1A4F96"/></w:rPr>
+            </w:style>
+            <w:style w:type="paragraph" w:styleId="Heading2">
+                <w:name w:val="Heading 2"/>
+                <w:pPr><w:spacing w:before="200" w:after="80"/></w:pPr>
+                <w:rPr><w:b/><w:sz w:val="24"/><w:color w:val="3380CC"/></w:rPr>
+            </w:style>
+        </w:styles>
+        """
+    }
+    
+    private func generateDOCXContent(document: GeneratedDocument, caseNumber: String) -> String {
+        var content = ""
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateStyle = .medium
+        dateFormatter.timeStyle = .none
+        let timestamp = dateFormatter.string(from: Date())
+        
+        // Title
+        content += docxParagraph(document.title.uppercased(), style: "Title", bold: true, fontSize: 32)
+        content += docxParagraph("Case: \(caseNumber)  |  Date: \(timestamp)", style: nil, bold: false, fontSize: 18, colorHex: "666666", alignment: "center")
+        content += docxParagraph("", style: nil, bold: false, fontSize: 12) // spacer
+        
+        switch document {
+        case .coaching(let doc):
+            content += docxHeading1("OVERVIEW")
+            content += docxParagraph(doc.overview, style: nil, bold: false, fontSize: 22)
+            
+            content += docxHeading1("DISCUSSION OUTLINE")
+            content += docxHeading2("Opening")
+            content += docxParagraph(doc.discussionOutline.opening, style: nil, bold: false, fontSize: 22)
+            
+            content += docxHeading2("Key Points")
+            for point in doc.discussionOutline.keyPoints {
+                content += docxBullet(point)
+            }
+            
+            if !doc.discussionOutline.transitionStatements.isEmpty {
+                content += docxHeading2("Transition Statements")
+                for statement in doc.discussionOutline.transitionStatements {
+                    content += docxBullet(statement)
+                }
+            }
+            
+            content += docxHeading1("TALKING POINTS")
+            for point in doc.talkingPoints {
+                content += docxBullet(point)
+            }
+            
+            if !doc.questionsToAsk.isEmpty {
+                content += docxHeading1("QUESTIONS TO ASK")
+                for question in doc.questionsToAsk {
+                    content += docxBullet(question)
+                }
+            }
+            
+            if !doc.behavioralFocusAreas.isEmpty {
+                content += docxHeading1("BEHAVIORAL FOCUS AREAS")
+                for area in doc.behavioralFocusAreas {
+                    content += docxHeading2(area.area)
+                    content += docxParagraph(area.description, style: nil, bold: false, fontSize: 22)
+                    content += docxParagraph("Expected Change: \(area.expectedChange)", style: nil, bold: true, fontSize: 20, colorHex: "27AE60")
+                }
+            }
+            
+            content += docxHeading1("FOLLOW-UP PLAN")
+            content += docxParagraph("Timeline: \(doc.followUpPlan.timeline)", style: nil, bold: false, fontSize: 22)
+            if !doc.followUpPlan.checkInDates.isEmpty {
+                content += docxHeading2("Check-in Dates")
+                for date in doc.followUpPlan.checkInDates {
+                    content += docxBullet(date)
+                }
+            }
+            if !doc.followUpPlan.successIndicators.isEmpty {
+                content += docxHeading2("Success Indicators")
+                for indicator in doc.followUpPlan.successIndicators {
+                    content += docxBullet(indicator)
+                }
+            }
+            
+        case .counseling(let doc):
+            content += docxHeading1("INCIDENT SUMMARY")
+            content += docxParagraph(doc.incidentSummary, style: nil, bold: false, fontSize: 22)
+            
+            content += docxHeading1("DISCUSSION POINTS")
+            for point in doc.discussionPoints {
+                content += docxBullet(point)
+            }
+            
+            content += docxHeading1("POLICY REFERENCES")
+            for policy in doc.policyReferences {
+                content += docxBullet(policy)
+            }
+            
+            content += docxHeading1("EXPECTATIONS")
+            for expectation in doc.expectations {
+                content += docxBullet(expectation)
+            }
+            
+            content += docxHeading1("IMPROVEMENT PLAN")
+            content += docxParagraph("Timeline: \(doc.improvementPlan.timeline)", style: nil, bold: false, fontSize: 22)
+            content += docxHeading2("Goals")
+            for goal in doc.improvementPlan.goals {
+                content += docxBullet(goal)
+            }
+            if !doc.improvementPlan.supportProvided.isEmpty {
+                content += docxHeading2("Support Provided")
+                for support in doc.improvementPlan.supportProvided {
+                    content += docxBullet(support)
+                }
+            }
+            
+            content += docxHeading1("CONSEQUENCES")
+            content += docxParagraph(doc.consequences, style: nil, bold: false, fontSize: 22)
+            
+        case .warning(let doc):
+            content += docxHeading1("WARNING LEVEL")
+            content += docxParagraph(doc.warningLevel.uppercased(), style: nil, bold: true, fontSize: 24, colorHex: "C0392B")
+            
+            content += docxHeading1("COMPANY RULES VIOLATED")
+            for rule in doc.companyRulesViolated {
+                content += docxBullet(rule)
+            }
+            
+            content += docxHeading1("DETAILED DESCRIPTION")
+            content += docxParagraph(doc.describeInDetail, style: nil, bold: false, fontSize: 22)
+            
+            content += docxHeading1("CONDUCT DEFICIENCY")
+            content += docxParagraph(doc.conductDeficiency, style: nil, bold: false, fontSize: 22)
+            
+            content += docxHeading1("REQUIRED CORRECTIVE ACTION")
+            for action in doc.requiredCorrectiveAction {
+                content += docxBullet(action)
+            }
+            
+            content += docxHeading1("CONSEQUENCES OF NOT PERFORMING")
+            content += docxParagraph(doc.consequencesOfNotPerforming, style: nil, bold: false, fontSize: 22, colorHex: "C0392B")
+            
+            content += docxHeading1("REVIEW DATE")
+            content += docxParagraph(doc.reviewDate, style: nil, bold: false, fontSize: 22)
+            
+            if !doc.priorActions.isEmpty {
+                content += docxHeading1("PRIOR ACTIONS")
+                content += docxParagraph(doc.priorActions, style: nil, bold: false, fontSize: 22)
+            }
+            
+        case .escalation(let doc):
+            content += docxHeading1("CASE SUMMARY")
+            content += docxParagraph("Case Number: \(doc.caseSummary.caseNumber)", style: nil, bold: false, fontSize: 22)
+            content += docxParagraph("Case Type: \(doc.caseSummary.caseType)", style: nil, bold: false, fontSize: 22)
+            content += docxParagraph("Incident Date: \(doc.caseSummary.incidentDate)", style: nil, bold: false, fontSize: 22)
+            content += docxParagraph("Location: \(doc.caseSummary.location)", style: nil, bold: false, fontSize: 22)
+            content += docxParagraph("Department: \(doc.caseSummary.department)", style: nil, bold: false, fontSize: 22)
+            
+            content += docxHeading1("URGENCY LEVEL")
+            content += docxParagraph(doc.urgencyLevel.uppercased(), style: nil, bold: true, fontSize: 24, colorHex: "E74C3C")
+            
+            if !doc.involvedParties.isEmpty {
+                content += docxHeading1("INVOLVED PARTIES")
+                for party in doc.involvedParties {
+                    content += docxHeading2(party.name)
+                    content += docxParagraph("Role: \(party.role)", style: nil, bold: false, fontSize: 20, colorHex: "666666")
+                    content += docxParagraph(party.summary, style: nil, bold: false, fontSize: 22)
+                }
+            }
+            
+            if !doc.incidentTimeline.isEmpty {
+                content += docxHeading1("INCIDENT TIMELINE")
+                for event in doc.incidentTimeline {
+                    content += docxBullet("\(event.date): \(event.event)")
+                }
+            }
+            
+            if !doc.evidenceSummary.isEmpty {
+                content += docxHeading1("EVIDENCE SUMMARY")
+                for evidence in doc.evidenceSummary {
+                    content += docxBullet(evidence)
+                }
+            }
+            
+            if !doc.policyReferences.isEmpty {
+                content += docxHeading1("POLICY REFERENCES")
+                for policy in doc.policyReferences {
+                    content += docxBullet("\(policy.section): \(policy.relevance)")
+                }
+            }
+            
+            if !doc.analysisFindings.isEmpty {
+                content += docxHeading1("ANALYSIS FINDINGS")
+                for finding in doc.analysisFindings {
+                    content += docxBullet(finding)
+                }
+            }
+            
+            if !doc.supervisorNotes.isEmpty {
+                content += docxHeading1("SUPERVISOR NOTES")
+                content += docxParagraph(doc.supervisorNotes, style: nil, bold: false, fontSize: 22)
+            }
+            
+            content += docxHeading1("RECOMMENDED ACTIONS")
+            for action in doc.recommendedActions {
+                content += docxBullet(action)
+            }
+            
+            content += docxHeading1("REQUESTED HR ACTIONS")
+            for action in doc.requestedHRActions {
+                content += docxBullet(action)
+            }
+        }
+        
+        // Signature sections
+        content += docxParagraph("", style: nil, bold: false, fontSize: 22)
+        content += docxHeading1("ACKNOWLEDGMENT")
+        content += docxParagraph("I acknowledge receipt and understanding of this document.", style: nil, bold: false, fontSize: 22)
+        content += docxParagraph("", style: nil, bold: false, fontSize: 22)
+        content += docxParagraph("Employee Signature: _____________________________     Date: ____________", style: nil, bold: false, fontSize: 22)
+        content += docxParagraph("", style: nil, bold: false, fontSize: 22)
+        content += docxParagraph("Supervisor Signature: ____________________________     Date: ____________", style: nil, bold: false, fontSize: 22)
+        
+        return wrapDOCXDocument(content: content)
+    }
+    
+    private func docxParagraph(_ text: String, style: String?, bold: Bool, fontSize: Int, colorHex: String? = nil, alignment: String? = nil) -> String {
+        var pPr = ""
+        if style != nil || alignment != nil {
+            pPr = "<w:pPr>"
+            if let style = style {
+                pPr += "<w:pStyle w:val=\"\(style)\"/>"
+            }
+            if let alignment = alignment {
+                pPr += "<w:jc w:val=\"\(alignment)\"/>"
+            }
+            pPr += "</w:pPr>"
+        }
+        
+        var rPr = ""
+        if bold || colorHex != nil || fontSize != 22 {
+            rPr = "<w:rPr>"
+            if bold { rPr += "<w:b/>" }
+            if let color = colorHex { rPr += "<w:color w:val=\"\(color)\"/>" }
+            if fontSize != 22 { rPr += "<w:sz w:val=\"\(fontSize)\"/><w:szCs w:val=\"\(fontSize)\"/>" }
+            rPr += "</w:rPr>"
+        }
+        
+        let escapedText = escapeXMLCharacters(text)
+        return "<w:p>\(pPr)<w:r>\(rPr)<w:t>\(escapedText)</w:t></w:r></w:p>"
+    }
+    
+    private func docxHeading1(_ text: String) -> String {
+        return docxParagraph(text, style: "Heading1", bold: true, fontSize: 28, colorHex: "1A4F96")
+    }
+    
+    private func docxHeading2(_ text: String) -> String {
+        return docxParagraph(text, style: "Heading2", bold: true, fontSize: 24, colorHex: "3380CC")
+    }
+    
+    private func docxBullet(_ text: String) -> String {
+        let escapedText = escapeXMLCharacters(text)
+        return "<w:p><w:pPr><w:spacing w:after=\"60\"/></w:pPr><w:r><w:t>• \(escapedText)</w:t></w:r></w:p>"
+    }
+    
+    private func wrapDOCXDocument(content: String) -> String {
+        return """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+            <w:body>
+                \(content)
+                <w:sectPr>
+                    <w:pgSz w:w="12240" w:h="15840"/>
+                    <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>
+                </w:sectPr>
+            </w:body>
+        </w:document>
+        """
+    }
+    
+    private func escapeXMLCharacters(_ string: String) -> String {
+        return string
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&apos;")
     }
     
     // MARK: - Plain Text Generation

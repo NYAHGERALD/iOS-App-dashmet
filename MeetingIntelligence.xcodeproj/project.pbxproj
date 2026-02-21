@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		178D07CD2F41072D006E3669 /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = 178D07CC2F41072D006E3669 /* ZIPFoundation */; };
+		178D0B3D2F4A462B006E3669 /* GLTFKit2 in Frameworks */ = {isa = PBXBuildFile; productRef = 17FF00022F50A00000000002 /* GLTFKit2 */; };
 		17C551842F344C2C00EA0E2F /* FirebaseAI in Frameworks */ = {isa = PBXBuildFile; productRef = 17C551832F344C2C00EA0E2F /* FirebaseAI */; };
 		17C551862F344C2C00EA0E2F /* FirebaseAILogic in Frameworks */ = {isa = PBXBuildFile; productRef = 17C551852F344C2C00EA0E2F /* FirebaseAILogic */; };
 		17C551882F344C2C00EA0E2F /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = 17C551872F344C2C00EA0E2F /* FirebaseAnalytics */; };
@@ -15,6 +17,7 @@
 		17C5518E2F344C2C00EA0E2F /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 17C5518D2F344C2C00EA0E2F /* FirebaseCore */; };
 		17C551902F344C2C00EA0E2F /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 17C5518F2F344C2C00EA0E2F /* FirebaseFirestore */; };
 		17C551922F344C2C00EA0E2F /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = 17C551912F344C2C00EA0E2F /* FirebaseStorage */; };
+		17C551942F344C2C00EA0E2F /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = 17C551932F344C2C00EA0E2F /* FirebaseMessaging */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -76,14 +79,17 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				178D0B3D2F4A462B006E3669 /* GLTFKit2 in Frameworks */,
 				17C5518A2F344C2C00EA0E2F /* FirebaseAppCheck in Frameworks */,
 				17C5518C2F344C2C00EA0E2F /* FirebaseAuth in Frameworks */,
 				17C551862F344C2C00EA0E2F /* FirebaseAILogic in Frameworks */,
 				17C551842F344C2C00EA0E2F /* FirebaseAI in Frameworks */,
 				17C5518E2F344C2C00EA0E2F /* FirebaseCore in Frameworks */,
 				17C551922F344C2C00EA0E2F /* FirebaseStorage in Frameworks */,
+				17C551942F344C2C00EA0E2F /* FirebaseMessaging in Frameworks */,
 				17C551882F344C2C00EA0E2F /* FirebaseAnalytics in Frameworks */,
 				17C551902F344C2C00EA0E2F /* FirebaseFirestore in Frameworks */,
+				178D07CD2F41072D006E3669 /* ZIPFoundation in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -168,6 +174,8 @@
 				17C5518D2F344C2C00EA0E2F /* FirebaseCore */,
 				17C5518F2F344C2C00EA0E2F /* FirebaseFirestore */,
 				17C551912F344C2C00EA0E2F /* FirebaseStorage */,
+				178D07CC2F41072D006E3669 /* ZIPFoundation */,
+				17FF00022F50A00000000002 /* GLTFKit2 */,
 			);
 			productName = MeetingIntelligence;
 			productReference = 17C551372F34204E00EA0E2F /* MeetingIntelligence.app */;
@@ -253,6 +261,8 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				17C551822F344C2C00EA0E2F /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+				178D07CB2F41072D006E3669 /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
+				17FF00012F50A00000000001 /* XCRemoteSwiftPackageReference "GLTFKit2" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 17C551382F34204E00EA0E2F /* Products */;
@@ -641,6 +651,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		178D07CB2F41072D006E3669 /* XCRemoteSwiftPackageReference "ZIPFoundation" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/weichsel/ZIPFoundation";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.9.20;
+			};
+		};
 		17C551822F344C2C00EA0E2F /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
@@ -649,9 +667,22 @@
 				minimumVersion = 12.9.0;
 			};
 		};
+		17FF00012F50A00000000001 /* XCRemoteSwiftPackageReference "GLTFKit2" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/warrenm/GLTFKit2";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.5.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		178D07CC2F41072D006E3669 /* ZIPFoundation */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 178D07CB2F41072D006E3669 /* XCRemoteSwiftPackageReference "ZIPFoundation" */;
+			productName = ZIPFoundation;
+		};
 		17C551832F344C2C00EA0E2F /* FirebaseAI */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 17C551822F344C2C00EA0E2F /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
@@ -691,6 +722,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 17C551822F344C2C00EA0E2F /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseStorage;
+		};
+		17C551932F344C2C00EA0E2F /* FirebaseMessaging */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 17C551822F344C2C00EA0E2F /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseMessaging;
+		};
+		17FF00022F50A00000000002 /* GLTFKit2 */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 17FF00012F50A00000000001 /* XCRemoteSwiftPackageReference "GLTFKit2" */;
+			productName = GLTFKit2;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

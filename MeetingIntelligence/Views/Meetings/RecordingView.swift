@@ -853,10 +853,10 @@ struct RecordingView: View {
     private var meetingHeader: some View {
         VStack(spacing: 8) {
             HStack(spacing: 8) {
-                Image(systemName: viewModel.meeting.meetingType.icon)
+                Image(systemName: viewModel.meeting.safeMeetingType.icon)
                     .font(.subheadline)
                     .foregroundColor(AppColors.accent)
-                Text(viewModel.meeting.meetingType.displayName)
+                Text(viewModel.meeting.safeMeetingType.displayName)
                     .font(AppTypography.caption)
                     .foregroundColor(.white.opacity(0.7))
                 

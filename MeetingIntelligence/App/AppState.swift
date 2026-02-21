@@ -72,13 +72,30 @@ class AppState: ObservableObject {
                 idToken = try await authService.getIDToken()
                 print("✅ Existing session restored for user: \(user.uid)")
                 
+                // ALWAYS validate user exists in backend database
+                let userValid = await validateUserSession()
+                
+                if !userValid {
+                    // User no longer exists in database — force logout
+                    print("🚨 User not found in database — forcing logout (database may have been reset)")
+                    logout()
+                    isLoading = false
+                    isInitialized = true
+                    return
+                }
+                
                 // If we have a token but no organizationId (new device), fetch profile from backend
                 if organizationId == nil || organizationId?.isEmpty == true {
                     print("📥 Fetching user profile from backend (new device or missing data)...")
                     await fetchAndSetUserProfile()
+                } else if let backendUserId = UserDefaults.standard.string(forKey: "user_id") {
+                    // Register for push notifications with the backend user ID
+                    PushNotificationManager.shared.setUser(userId: backendUserId)
                 }
             } catch {
                 print("⚠️ Failed to get ID token: \(error.localizedDescription)")
+                // Token refresh failed — force logout for security
+                logout()
             }
         } else {
             isAuthenticated = false
@@ -170,6 +187,9 @@ class AppState: ObservableObject {
             facilityId: facilityId
         )
         
+        // Register for push notifications
+        PushNotificationManager.shared.setUser(userId: userId)
+        
         print("✅ User profile saved: \(firstName) \(lastName)")
     }
     
@@ -208,14 +228,46 @@ class AppState: ObservableObject {
                 print("✅ User profile fetched and set from backend")
             } else {
                 print("❌ Failed to fetch user profile: \(response.error ?? "Unknown error")")
+                // Profile fetch failed — user may not exist, force logout
+                logout()
             }
         } catch {
             print("❌ Error fetching user profile: \(error.localizedDescription)")
+            // If the error indicates user not found, force logout
+            if error.localizedDescription.contains("not found") || error.localizedDescription.contains("401") {
+                logout()
+            }
+        }
+    }
+    
+    /// Validate that the current user session is still valid in the backend database.
+    /// Returns true if the user exists, false if they don't (database was wiped, account deleted, etc.)
+    private func validateUserSession() async -> Bool {
+        guard let token = idToken else { return false }
+        
+        do {
+            let response = try await APIService.shared.getCurrentUserProfile(token: token)
+            if response.success, response.data?.user != nil {
+                return true
+            }
+            return false
+        } catch {
+            let errorMsg = error.localizedDescription.lowercased()
+            // If it's a "not found" or auth error, user doesn't exist
+            if errorMsg.contains("not found") || errorMsg.contains("401") || errorMsg.contains("authentication") {
+                return false
+            }
+            // Network errors etc. — give benefit of the doubt
+            print("⚠️ Could not validate session (network issue?): \(error.localizedDescription)")
+            return true
         }
     }
     
     func logout() {
         do {
+            // Unregister push notifications before signing out
+            PushNotificationManager.shared.clearUser()
+            
             try authService.signOut()
             
             // Clear user data

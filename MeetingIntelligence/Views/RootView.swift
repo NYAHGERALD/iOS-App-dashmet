@@ -121,6 +121,7 @@ struct MainTabView: View {
     @EnvironmentObject var appState: AppState
     @State private var selectedTab: Tab = .dashboard
     @State private var showProfile = false
+    @State private var showMenu = false
     var onLogout: () -> Void
     
     enum Tab: String, CaseIterable {
@@ -129,6 +130,7 @@ struct MainTabView: View {
         case actionItems = "Action Items"
         case hrConflict = "HR"
         case aiVision = "System Vision"
+        case aiAssistant = "AI Assistant"
         case toDo = "To Do"
         
         var icon: String {
@@ -138,6 +140,7 @@ struct MainTabView: View {
             case .actionItems: return "checklist"
             case .hrConflict: return "person.2.badge.gearshape"
             case .aiVision: return "eye"
+            case .aiAssistant: return "person.crop.circle.badge.questionmark"
             case .toDo: return "checkmark.circle"
             }
         }
@@ -149,39 +152,261 @@ struct MainTabView: View {
             case .actionItems: return "checklist"
             case .hrConflict: return "person.2.badge.gearshape.fill"
             case .aiVision: return "eye.fill"
+            case .aiAssistant: return "person.crop.circle.badge.questionmark.fill"
             case .toDo: return "checkmark.circle.fill"
             }
         }
     }
     
     var body: some View {
-        ZStack(alignment: .bottom) {
-            // Tab content
+        ZStack {
+            // Main content
             Group {
                 switch selectedTab {
                 case .dashboard:
-                    DashboardView(onProfileTap: { showProfile = true })
+                    DashboardView(
+                        onProfileTap: { showProfile = true },
+                        onMenuTap: { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { showMenu = true } }
+                    )
                 case .meetings:
-                    MeetingListView()
+                    MeetingListView(onMenuTap: { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { showMenu = true } })
                 case .actionItems:
-                    TaskListView()
+                    TaskListView(onMenuTap: { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { showMenu = true } })
                 case .hrConflict:
-                    ConflictResolutionView()
+                    ConflictResolutionView(onMenuTap: { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { showMenu = true } })
                 case .aiVision:
-                    AIVisionAssistantView()
+                    AIVisionAssistantView(onMenuTap: { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { showMenu = true } })
+                case .aiAssistant:
+                    AIAssistantView(onMenuTap: { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { showMenu = true } })
                 case .toDo:
-                    ToDoView()
+                    ToDoView(onMenuTap: { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { showMenu = true } })
                 }
             }
-            .padding(.bottom, 80) // Space for custom tab bar
             
-            // Custom Tab Bar
-            CustomTabBar(selectedTab: $selectedTab)
+            // Side Menu Overlay
+            if showMenu {
+                SideMenuView(
+                    selectedTab: $selectedTab,
+                    showMenu: $showMenu,
+                    onProfileTap: { showProfile = true },
+                    onLogout: onLogout
+                )
+            }
         }
         .ignoresSafeArea(.keyboard)
         .sheet(isPresented: $showProfile) {
             EnterpriseProfileView(onLogout: onLogout)
         }
+    }
+}
+
+// MARK: - Side Menu View
+struct SideMenuView: View {
+    @EnvironmentObject var appState: AppState
+    @Binding var selectedTab: MainTabView.Tab
+    @Binding var showMenu: Bool
+    var onProfileTap: () -> Void
+    var onLogout: () -> Void
+    @Environment(\.colorScheme) var colorScheme
+    
+    var body: some View {
+        ZStack {
+            // Full screen menu background
+            AppColors.background.ignoresSafeArea()
+            
+            // Menu content
+            VStack(alignment: .leading, spacing: 0) {
+                // Header with logo and close button
+                HStack {
+                    HStack(spacing: AppSpacing.xs) {
+                        Image(systemName: "brain.head.profile")
+                            .font(.title2)
+                            .foregroundStyle(AppGradients.primary)
+                        Text("MeetingIQ")
+                            .font(.title3)
+                            .fontWeight(.bold)
+                            .foregroundColor(AppColors.textPrimary)
+                    }
+                    
+                    Spacer()
+                    
+                    Button {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            showMenu = false
+                        }
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.title3)
+                            .foregroundColor(AppColors.textSecondary)
+                            .frame(width: 36, height: 36)
+                            .background(AppColors.surfaceSecondary)
+                            .clipShape(Circle())
+                    }
+                }
+                .padding(.horizontal, AppSpacing.lg)
+                .padding(.top, 60)
+                .padding(.bottom, AppSpacing.lg)
+                    
+                    // User profile section
+                    Button {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            showMenu = false
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            onProfileTap()
+                        }
+                    } label: {
+                        HStack(spacing: AppSpacing.md) {
+                            if let profileUrl = appState.profilePictureUrl,
+                               let url = URL(string: profileUrl) {
+                                AsyncImage(url: url) { image in
+                                    image.resizable().scaledToFill()
+                                } placeholder: {
+                                    Image(systemName: "person.circle.fill")
+                                        .font(.system(size: 44))
+                                        .foregroundStyle(AppGradients.primary)
+                                }
+                                .frame(width: 50, height: 50)
+                                .clipShape(Circle())
+                            } else {
+                                Image(systemName: "person.circle.fill")
+                                    .font(.system(size: 44))
+                                    .foregroundStyle(AppGradients.primary)
+                            }
+                            
+                            VStack(alignment: .leading, spacing: 2) {
+                                if let firstName = appState.firstName, let lastName = appState.lastName {
+                                    Text("\(firstName) \(lastName)")
+                                        .font(AppTypography.headline)
+                                        .foregroundColor(AppColors.textPrimary)
+                                } else {
+                                    Text("User")
+                                        .font(AppTypography.headline)
+                                        .foregroundColor(AppColors.textPrimary)
+                                }
+                                Text(appState.email ?? "")
+                                    .font(AppTypography.caption)
+                                    .foregroundColor(AppColors.textSecondary)
+                            }
+                            
+                            Spacer()
+                            
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundColor(AppColors.textTertiary)
+                        }
+                        .padding(AppSpacing.md)
+                        .background(AppColors.surfaceSecondary)
+                        .clipShape(RoundedRectangle(cornerRadius: AppCornerRadius.medium))
+                    }
+                    .padding(.horizontal, AppSpacing.lg)
+                    .padding(.bottom, AppSpacing.lg)
+                    
+                    Divider()
+                        .padding(.horizontal, AppSpacing.lg)
+                    
+                    // Navigation items
+                    ScrollView {
+                        VStack(spacing: AppSpacing.xs) {
+                            ForEach(MainTabView.Tab.allCases, id: \.self) { tab in
+                                MenuNavigationItem(
+                                    tab: tab,
+                                    isSelected: selectedTab == tab
+                                ) {
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                        selectedTab = tab
+                                        showMenu = false
+                                    }
+                                }
+                            }
+                        }
+                        .padding(AppSpacing.lg)
+                    }
+                    
+                    Spacer()
+                    
+                    // Logout button
+                    Divider()
+                        .padding(.horizontal, AppSpacing.lg)
+                    
+                    Button {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            showMenu = false
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            onLogout()
+                        }
+                    } label: {
+                        HStack(spacing: AppSpacing.md) {
+                            Image(systemName: "rectangle.portrait.and.arrow.right")
+                                .font(.title3)
+                                .foregroundColor(AppColors.error)
+                                .frame(width: 40, height: 40)
+                                .background(AppColors.error.opacity(0.1))
+                                .clipShape(RoundedRectangle(cornerRadius: AppCornerRadius.small))
+                            
+                            Text("Sign Out")
+                                .font(AppTypography.headline)
+                                .foregroundColor(AppColors.error)
+                            
+                            Spacer()
+                        }
+                        .padding(AppSpacing.md)
+                    }
+                    .padding(.horizontal, AppSpacing.lg)
+                    .padding(.bottom, 40)
+                }
+            .transition(.move(edge: .leading))
+        }
+    }
+}
+
+// MARK: - Menu Navigation Item
+struct MenuNavigationItem: View {
+    let tab: MainTabView.Tab
+    let isSelected: Bool
+    let action: () -> Void
+    @Environment(\.colorScheme) var colorScheme
+    
+    var tabColor: Color {
+        switch tab {
+        case .dashboard: return Color(hex: "6366F1")
+        case .meetings: return Color(hex: "EF4444")
+        case .actionItems: return Color(hex: "10B981")
+        case .hrConflict: return Color(hex: "8B5CF6")
+        case .aiVision: return Color(hex: "3B82F6")
+        case .aiAssistant: return Color(hex: "7C3AED")
+        case .toDo: return Color(hex: "F59E0B")
+        }
+    }
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: AppSpacing.md) {
+                Image(systemName: isSelected ? tab.selectedIcon : tab.icon)
+                    .font(.title3)
+                    .foregroundColor(isSelected ? .white : tabColor)
+                    .frame(width: 40, height: 40)
+                    .background(isSelected ? tabColor : tabColor.opacity(0.15))
+                    .clipShape(RoundedRectangle(cornerRadius: AppCornerRadius.small))
+                
+                Text(tab.rawValue)
+                    .font(AppTypography.headline)
+                    .foregroundColor(isSelected ? tabColor : AppColors.textPrimary)
+                
+                Spacer()
+                
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.caption)
+                        .foregroundColor(tabColor)
+                }
+            }
+            .padding(AppSpacing.sm)
+            .background(isSelected ? tabColor.opacity(0.1) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: AppCornerRadius.medium))
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -265,6 +490,7 @@ struct TabBarButton: View {
         case .actionItems: return Color(hex: "10B981") // Emerald
         case .hrConflict: return Color(hex: "8B5CF6") // Purple
         case .aiVision: return Color(hex: "3B82F6")  // Blue
+        case .aiAssistant: return Color(hex: "7C3AED")  // Violet
         case .toDo: return Color(hex: "F59E0B")  // Amber
         }
     }

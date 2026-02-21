@@ -390,6 +390,61 @@ class AuditTrailService {
         )
     }
     
+    /// Log case finalized event (alternative signature for case closure)
+    func logCaseFinalized(
+        caseId: UUID,
+        caseNumber: String,
+        finalAction: String,
+        notes: String?
+    ) {
+        var details: [String: String] = [
+            "finalAction": finalAction,
+            "closedAt": ISO8601DateFormatter().string(from: Date())
+        ]
+        if let notes = notes, !notes.isEmpty {
+            details["supervisorNotes"] = String(notes.prefix(200))
+        }
+        
+        logEvent(
+            caseId: caseId,
+            caseNumber: caseNumber,
+            eventType: .caseClosed,
+            description: "Case closed: \(finalAction)",
+            details: details
+        )
+    }
+    
+    /// Log document exported event (alternative signature for PDF export)
+    func logDocumentExported(
+        caseId: UUID,
+        caseNumber: String,
+        documentType: String,
+        pageCount: Int,
+        fileSize: Int64
+    ) {
+        logEvent(
+            caseId: caseId,
+            caseNumber: caseNumber,
+            eventType: .documentExported,
+            description: "Exported \(documentType)",
+            details: [
+                "documentType": documentType,
+                "pageCount": String(pageCount),
+                "fileSize": formatFileSize(fileSize)
+            ]
+        )
+    }
+    
+    /// Format file size for display
+    private func formatFileSize(_ bytes: Int64) -> String {
+        let kb = Double(bytes) / 1024
+        if kb < 1024 {
+            return String(format: "%.1f KB", kb)
+        }
+        let mb = kb / 1024
+        return String(format: "%.2f MB", mb)
+    }
+    
     // MARK: - Retrieve Audit Trail
     
     /// Get audit trail for a specific case

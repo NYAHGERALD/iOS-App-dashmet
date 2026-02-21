@@ -52,6 +52,13 @@ struct ActionItemDetailView: View {
     @State private var isUploadingEvidence = false
     @State private var uploadProgress: Double = 0
     @State private var selectedEvidenceForPreview: TaskEvidence?
+    @State private var displayedTask: TaskItem?
+    @State private var showActivityLog = false
+    
+    // Computed property that uses the latest task data
+    private var currentTask: TaskItem {
+        displayedTask ?? viewModel.selectedTask ?? task
+    }
     
     init(task: TaskItem, viewModel: TaskViewModel, onUpdate: (() -> Void)? = nil) {
         self.task = task
@@ -60,14 +67,16 @@ struct ActionItemDetailView: View {
     }
     
     var body: some View {
+        let taskToShow = displayedTask ?? viewModel.selectedTask ?? task
+        
         NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
                     // Header Card
-                    headerCard
+                    headerCard(for: taskToShow)
                     
                     // Progress Section
-                    progressSection
+                    progressSection(for: taskToShow)
                     
                     // Assignees Section
                     assigneesSection
@@ -76,7 +85,7 @@ struct ActionItemDetailView: View {
                     detailsSection
                     
                     // AI Source Section (if extracted from transcript)
-                    if let sourceText = currentTask.sourceText, !sourceText.isEmpty {
+                    if let sourceText = taskToShow.sourceText, !sourceText.isEmpty {
                         aiSourceSection(sourceText)
                     }
                     
@@ -111,8 +120,21 @@ struct ActionItemDetailView: View {
                         .fontWeight(.semibold)
                         .disabled(isSaving)
                     } else {
-                        Button("Edit") {
-                            startEditing()
+                        Menu {
+                            Button {
+                                startEditing()
+                            } label: {
+                                Label("Edit", systemImage: "pencil")
+                            }
+                            
+                            Button {
+                                showActivityLog = true
+                            } label: {
+                                Label("Activity Log", systemImage: "clock.arrow.circlepath")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                                .font(.system(size: 18))
                         }
                     }
                 }
@@ -125,20 +147,25 @@ struct ActionItemDetailView: View {
             } message: {
                 Text("Are you sure you want to delete this action item? This cannot be undone.")
             }
+            .sheet(isPresented: $showActivityLog) {
+                ActivityLogView(taskId: currentTask.id)
+            }
         }
         .onAppear {
             Task {
                 await viewModel.fetchTaskDetails(taskId: task.id)
             }
         }
-    }
-    
-    private var currentTask: TaskItem {
-        viewModel.selectedTask ?? task
+        .onChange(of: viewModel.selectedTask) { _, newTask in
+            if let newTask = newTask {
+                print("📢 selectedTask changed - Progress: \(newTask.progressValue)%, Status: \(newTask.status.displayName)")
+                displayedTask = newTask
+            }
+        }
     }
     
     // MARK: - Header Card
-    private var headerCard: some View {
+    private func headerCard(for taskItem: TaskItem) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             // Status and Priority Row
             HStack(spacing: 12) {
@@ -147,14 +174,23 @@ struct ActionItemDetailView: View {
                     ForEach(TaskStatus.allCases, id: \.self) { status in
                         Button {
                             Task {
-                                _ = await viewModel.updateTaskStatus(taskId: currentTask.id, status: status)
+                                print("🔄 Updating status to \(status.displayName)")
+                                let success = await viewModel.updateTaskStatus(taskId: taskItem.id, status: status)
+                                if success {
+                                    // selectedTask is already updated by updateTaskStatus
+                                    if let updated = viewModel.selectedTask {
+                                        print("✅ Updated - Progress: \(updated.progressValue)%, Status: \(updated.status.displayName)")
+                                        // Directly update displayedTask for immediate feedback
+                                        displayedTask = updated
+                                    }
+                                }
                                 onUpdate?()
                             }
                         } label: {
                             HStack {
                                 Image(systemName: status.icon)
                                 Text(status.displayName)
-                                if currentTask.status == status {
+                                if taskItem.status == status {
                                     Image(systemName: "checkmark")
                                 }
                             }
@@ -162,18 +198,20 @@ struct ActionItemDetailView: View {
                     }
                 } label: {
                     HStack(spacing: 6) {
-                        Image(systemName: currentTask.status.icon)
+                        Image(systemName: taskItem.status.icon)
                             .font(.system(size: 14))
-                        Text(currentTask.status.displayName)
+                        Text(taskItem.status.displayName)
                             .font(.system(size: 14, weight: .semibold))
+                            .lineLimit(1)
                         Image(systemName: "chevron.down")
                             .font(.system(size: 10))
                     }
                     .foregroundColor(.white)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
-                    .background(statusColor)
+                    .background(statusColor(for: taskItem))
                     .clipShape(Capsule())
+                    .fixedSize(horizontal: true, vertical: false)
                 }
                 
                 // Priority Badge
@@ -181,14 +219,14 @@ struct ActionItemDetailView: View {
                     ForEach(TaskPriority.allCases, id: \.self) { priority in
                         Button {
                             Task {
-                                _ = await viewModel.updateTask(taskId: currentTask.id, priority: priority)
+                                _ = await viewModel.updateTask(taskId: taskItem.id, priority: priority)
                                 onUpdate?()
                             }
                         } label: {
                             HStack {
                                 Image(systemName: priority.icon)
                                 Text(priority.displayName)
-                                if currentTask.priority == priority {
+                                if taskItem.priority == priority {
                                     Image(systemName: "checkmark")
                                 }
                             }
@@ -196,36 +234,23 @@ struct ActionItemDetailView: View {
                     }
                 } label: {
                     HStack(spacing: 6) {
-                        Image(systemName: currentTask.priority.icon)
+                        Image(systemName: taskItem.priority.icon)
                             .font(.system(size: 12))
-                        Text(currentTask.priority.displayName)
+                        Text(taskItem.priority.displayName)
                             .font(.system(size: 14, weight: .medium))
+                            .lineLimit(1)
                         Image(systemName: "chevron.down")
                             .font(.system(size: 10))
                     }
-                    .foregroundColor(priorityColor)
+                    .foregroundColor(priorityColor(for: taskItem))
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .background(priorityColor.opacity(0.12))
+                    .background(priorityColor(for: taskItem).opacity(0.12))
                     .clipShape(Capsule())
+                    .fixedSize(horizontal: true, vertical: false)
                 }
                 
                 Spacer()
-                
-                // AI Badge
-                if currentTask.isAiExtracted == true {
-                    HStack(spacing: 4) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 12))
-                        Text("System")
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                    .foregroundColor(AppColors.primary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(AppColors.primary.opacity(0.12))
-                    .clipShape(Capsule())
-                }
             }
             
             // Title
@@ -234,7 +259,7 @@ struct ActionItemDetailView: View {
                     .font(.system(size: 22, weight: .bold))
                     .textFieldStyle(.plain)
             } else {
-                Text(currentTask.title)
+                Text(taskItem.title)
                     .font(.system(size: 22, weight: .bold))
                     .foregroundColor(AppColors.textPrimary)
             }
@@ -247,7 +272,7 @@ struct ActionItemDetailView: View {
                     .padding(8)
                     .background(AppColors.surfaceSecondary)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
-            } else if let description = currentTask.description, !description.isEmpty {
+            } else if let description = taskItem.description, !description.isEmpty {
                 Text(description)
                     .font(.system(size: 16))
                     .foregroundColor(AppColors.textSecondary)
@@ -266,18 +291,18 @@ struct ActionItemDetailView: View {
                                 .labelsHidden()
                         }
                     }
-                } else if let dueDate = currentTask.dueDate {
+                } else if let dueDate = taskItem.dueDate {
                     HStack(spacing: 6) {
                         Image(systemName: "calendar")
                             .font(.system(size: 14))
                         Text(formatDueDate(dueDate))
                             .font(.system(size: 14))
                     }
-                    .foregroundColor(dueDateColor)
+                    .foregroundColor(dueDateColor(for: taskItem))
                 }
                 
                 // Assignee
-                if let assignee = currentTask.assignee {
+                if let assignee = taskItem.assignee {
                     HStack(spacing: 6) {
                         Circle()
                             .fill(AppColors.primary.opacity(0.2))
@@ -302,22 +327,22 @@ struct ActionItemDetailView: View {
     }
     
     // MARK: - Progress Section
-    private var progressSection: some View {
+    private func progressSection(for taskItem: TaskItem) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Image(systemName: "chart.bar.fill")
-                    .foregroundColor(AppColors.primary)
+                    .foregroundColor(progressColor(for: taskItem))
                 Text("Progress")
                     .font(.system(size: 16, weight: .semibold))
                 
                 Spacer()
                 
-                Text("\(currentTask.progressValue)%")
+                Text("\(taskItem.progressValue)%")
                     .font(.system(size: 18, weight: .bold))
-                    .foregroundColor(progressColor)
+                    .foregroundColor(progressColor(for: taskItem))
             }
             
-            // Progress Bar
+            // Progress Bar with gradient colors
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 8)
@@ -325,35 +350,65 @@ struct ActionItemDetailView: View {
                         .frame(height: 12)
                     
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(progressGradient)
-                        .frame(width: geometry.size.width * CGFloat(currentTask.progressValue) / 100, height: 12)
+                        .fill(progressGradient(for: taskItem))
+                        .frame(width: geometry.size.width * CGFloat(taskItem.progressValue) / 100, height: 12)
                 }
             }
             .frame(height: 12)
             
-            // Quick Progress Buttons - tap to change progress
-            HStack(spacing: 8) {
-                ForEach([0, 25, 50, 75, 100], id: \.self) { value in
-                    Button {
-                        Task {
-                            _ = await viewModel.updateTaskProgress(taskId: currentTask.id, progress: value)
-                            onUpdate?()
+            // Quick Progress Buttons - 5% increments in scrollable row
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(Array(stride(from: 0, through: 100, by: 5)), id: \.self) { value in
+                        Button {
+                            Task {
+                                print("🔄 Updating progress to \(value)%")
+                                let success = await viewModel.updateTaskProgress(taskId: taskItem.id, progress: value)
+                                if success {
+                                    // selectedTask is already updated by updateTask
+                                    if let updated = viewModel.selectedTask {
+                                        print("✅ Updated - Progress: \(updated.progressValue)%, Status: \(updated.status.displayName)")
+                                        // Directly update displayedTask for immediate feedback
+                                        displayedTask = updated
+                                    }
+                                }
+                                // Trigger parent refresh
+                                onUpdate?()
+                            }
+                        } label: {
+                            Text("\(value)%")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(taskItem.progressValue == value ? .white : AppColors.textSecondary)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(
+                                    taskItem.progressValue == value 
+                                        ? progressButtonColor(for: value) 
+                                        : AppColors.surfaceSecondary
+                                )
+                                .clipShape(Capsule())
+                                .overlay(
+                                    taskItem.progressValue == value 
+                                        ? Capsule().stroke(progressButtonColor(for: value).opacity(0.5), lineWidth: 2)
+                                        : nil
+                                )
                         }
-                    } label: {
-                        Text("\(value)%")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(currentTask.progressValue == value ? .white : AppColors.textSecondary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(currentTask.progressValue == value ? AppColors.primary : AppColors.surfaceSecondary)
-                            .clipShape(Capsule())
                     }
                 }
+                .padding(.horizontal, 2)
             }
         }
         .padding(20)
         .background(AppColors.surface)
         .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+    
+    // Helper to get button color based on progress value
+    private func progressButtonColor(for value: Int) -> Color {
+        if value <= 20 { return .red }
+        if value <= 50 { return .orange }
+        if value <= 80 { return .green }
+        return .blue
     }
     
     // MARK: - Assignees Section
@@ -393,15 +448,28 @@ struct ActionItemDetailView: View {
                 VStack(spacing: 8) {
                     ForEach(assignees) { assignee in
                         HStack(spacing: 12) {
-                            // Avatar
-                            ZStack {
-                                Circle()
-                                    .fill(AppColors.primary.opacity(0.15))
-                                    .frame(width: 36, height: 36)
-                                
-                                Text(assignee.user?.initials ?? "?")
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundColor(AppColors.primary)
+                            // Avatar - show profile picture if available, otherwise initials
+                            if let profileUrl = assignee.user?.profilePicture, !profileUrl.isEmpty, let url = URL(string: profileUrl) {
+                                AsyncImage(url: url) { phase in
+                                    switch phase {
+                                    case .empty:
+                                        ProgressView()
+                                            .frame(width: 36, height: 36)
+                                    case .success(let image):
+                                        image
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fill)
+                                            .frame(width: 36, height: 36)
+                                            .clipShape(Circle())
+                                    case .failure(_):
+                                        assigneeInitialsView(for: assignee)
+                                    @unknown default:
+                                        assigneeInitialsView(for: assignee)
+                                    }
+                                }
+                                .frame(width: 36, height: 36)
+                            } else {
+                                assigneeInitialsView(for: assignee)
                             }
                             
                             VStack(alignment: .leading, spacing: 2) {
@@ -486,11 +554,26 @@ struct ActionItemDetailView: View {
                             taskId: currentTask.id,
                             userIds: Array(selectedAssigneeIds)
                         )
+                        // Force refresh task to get full data including profilePicture
+                        await viewModel.fetchTaskDetails(taskId: currentTask.id)
                         onUpdate?()
                         isUpdatingAssignees = false
                     }
                 }
             )
+        }
+    }
+    
+    // Helper view for assignee initials
+    private func assigneeInitialsView(for assignee: TaskAssignee) -> some View {
+        ZStack {
+            Circle()
+                .fill(AppColors.primary.opacity(0.15))
+                .frame(width: 36, height: 36)
+            
+            Text(assignee.user?.initials ?? "?")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(AppColors.primary)
         }
     }
     
@@ -1080,8 +1163,8 @@ struct ActionItemDetailView: View {
         }
     }
     
-    private var statusColor: Color {
-        switch currentTask.status {
+    private func statusColor(for taskItem: TaskItem) -> Color {
+        switch taskItem.status {
         case .completed: return AppColors.success
         case .inProgress: return AppColors.primary
         case .cancelled: return AppColors.error
@@ -1089,8 +1172,8 @@ struct ActionItemDetailView: View {
         }
     }
     
-    private var priorityColor: Color {
-        switch currentTask.priority {
+    private func priorityColor(for taskItem: TaskItem) -> Color {
+        switch taskItem.priority {
         case .urgent: return AppColors.error
         case .high: return AppColors.warning
         case .medium: return AppColors.info
@@ -1098,9 +1181,9 @@ struct ActionItemDetailView: View {
         }
     }
     
-    private var dueDateColor: Color {
-        guard let dueDate = currentTask.dueDate else { return AppColors.textSecondary }
-        if dueDate < Date() && currentTask.status != .completed {
+    private func dueDateColor(for taskItem: TaskItem) -> Color {
+        guard let dueDate = taskItem.dueDate else { return AppColors.textSecondary }
+        if dueDate < Date() && taskItem.status != .completed {
             return AppColors.error
         } else if Calendar.current.isDateInToday(dueDate) {
             return AppColors.warning
@@ -1108,21 +1191,69 @@ struct ActionItemDetailView: View {
         return AppColors.textSecondary
     }
     
-    private var progressColor: Color {
-        let progress = currentTask.progressValue
-        if progress >= 100 { return AppColors.success }
-        if progress >= 75 { return AppColors.primary }
-        if progress >= 50 { return AppColors.info }
-        if progress >= 25 { return AppColors.warning }
-        return AppColors.textTertiary
+    private func progressColor(for taskItem: TaskItem) -> Color {
+        let progress = taskItem.progressValue
+        // Color ranges: 0-20% Red, 20-50% Yellow/Orange, 50-80% Green, 80-100% Blue
+        if progress <= 20 { return .red }
+        if progress <= 50 { return .orange }
+        if progress <= 80 { return .green }
+        return .blue
     }
     
-    private var progressGradient: LinearGradient {
-        let progress = currentTask.progressValue
-        if progress >= 100 {
-            return LinearGradient(colors: [AppColors.success, AppColors.success.opacity(0.8)], startPoint: .leading, endPoint: .trailing)
+    private func progressGradient(for taskItem: TaskItem) -> LinearGradient {
+        // Colors appear at their range positions: Red 0-20%, Yellow 20-50%, Green 50-80%, Blue 80-100%
+        // Gradient stops are scaled relative to current progress
+        let progress = Double(taskItem.progressValue)
+        
+        if progress <= 20 {
+            // 0-20%: Solid red
+            return LinearGradient(colors: [.red], startPoint: .leading, endPoint: .trailing)
+        } else if progress <= 50 {
+            // 20-50%: Red transitioning to Yellow
+            let redEnd = 20.0 / progress
+            return LinearGradient(
+                stops: [
+                    .init(color: .red, location: 0.0),
+                    .init(color: .red, location: redEnd),
+                    .init(color: .yellow, location: 1.0)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+        } else if progress <= 80 {
+            // 50-80%: Red → Yellow → Green
+            let redEnd = 20.0 / progress
+            let yellowEnd = 50.0 / progress
+            return LinearGradient(
+                stops: [
+                    .init(color: .red, location: 0.0),
+                    .init(color: .red, location: redEnd),
+                    .init(color: .yellow, location: redEnd),
+                    .init(color: .yellow, location: yellowEnd),
+                    .init(color: .green, location: 1.0)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+        } else {
+            // 80-100%: Red → Yellow → Green → Blue
+            let redEnd = 20.0 / progress
+            let yellowEnd = 50.0 / progress
+            let greenEnd = 80.0 / progress
+            return LinearGradient(
+                stops: [
+                    .init(color: .red, location: 0.0),
+                    .init(color: .red, location: redEnd),
+                    .init(color: .yellow, location: redEnd),
+                    .init(color: .yellow, location: yellowEnd),
+                    .init(color: .green, location: yellowEnd),
+                    .init(color: .green, location: greenEnd),
+                    .init(color: .blue, location: 1.0)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
         }
-        return LinearGradient(colors: [AppColors.primary, AppColors.primary.opacity(0.7)], startPoint: .leading, endPoint: .trailing)
     }
     
     private func formatDueDate(_ date: Date) -> String {
@@ -1138,6 +1269,13 @@ struct ActionItemDetailView: View {
     }
     
     private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, yyyy 'at' h:mm a"
+        return formatter.string(from: date)
+    }
+    
+    private func formatDate(_ date: Date?) -> String {
+        guard let date = date else { return "Unknown" }
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM d, yyyy 'at' h:mm a"
         return formatter.string(from: date)
@@ -1266,10 +1404,13 @@ struct AssigneesPickerView: View {
     @State private var searchText = ""
     
     var filteredUsers: [OrganizationUser] {
+        // Exclude current user from the picker
+        let usersExcludingSelf = viewModel.organizationUsers.filter { $0.id != viewModel.currentUserId }
+        
         if searchText.isEmpty {
-            return viewModel.organizationUsers
+            return usersExcludingSelf
         }
-        return viewModel.organizationUsers.filter { user in
+        return usersExcludingSelf.filter { user in
             user.fullName.localizedCaseInsensitiveContains(searchText) ||
             user.email.localizedCaseInsensitiveContains(searchText)
         }
@@ -1398,22 +1539,38 @@ struct UserSelectionRow: View {
     var body: some View {
         Button(action: onToggle) {
             HStack(spacing: 12) {
-                // Avatar
+                // Avatar - show profile picture if available, otherwise initials
                 ZStack {
-                    Circle()
-                        .fill(isSelected ? AppColors.primary : AppColors.primary.opacity(0.15))
-                        .frame(width: 44, height: 44)
-                    
                     if isSelected {
+                        Circle()
+                            .fill(AppColors.primary)
+                            .frame(width: 44, height: 44)
                         Image(systemName: "checkmark")
                             .font(.system(size: 16, weight: .bold))
                             .foregroundColor(.white)
+                    } else if let profileUrl = user.profilePicture, !profileUrl.isEmpty, let url = URL(string: profileUrl) {
+                        AsyncImage(url: url) { phase in
+                            switch phase {
+                            case .empty:
+                                ProgressView()
+                                    .frame(width: 44, height: 44)
+                            case .success(let image):
+                                image
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(width: 44, height: 44)
+                                    .clipShape(Circle())
+                            case .failure(_):
+                                initialsView
+                            @unknown default:
+                                initialsView
+                            }
+                        }
                     } else {
-                        Text(user.initials)
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(AppColors.primary)
+                        initialsView
                     }
                 }
+                .frame(width: 44, height: 44)
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(user.fullName)
@@ -1446,6 +1603,18 @@ struct UserSelectionRow: View {
             )
         }
         .buttonStyle(.plain)
+    }
+    
+    // Initials fallback view
+    private var initialsView: some View {
+        ZStack {
+            Circle()
+                .fill(AppColors.primary.opacity(0.15))
+                .frame(width: 44, height: 44)
+            Text(user.initials)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(AppColors.primary)
+        }
     }
 }
 
@@ -1484,16 +1653,20 @@ struct EvidenceThumbnailCard: View {
                                 case .empty:
                                     RoundedRectangle(cornerRadius: 8)
                                         .fill(AppColors.surfaceSecondary)
+                                        .frame(height: 140)
                                         .overlay(ProgressView())
                                 case .success(let image):
                                     image
                                         .resizable()
-                                        .aspectRatio(contentMode: .fill)
-                                        .frame(height: 120)
-                                        .clipped()
+                                        .aspectRatio(contentMode: .fit)
+                                        .frame(maxHeight: 180)
+                                        .frame(maxWidth: .infinity)
+                                        .background(AppColors.surfaceSecondary)
+                                        .clipShape(RoundedRectangle(cornerRadius: 8))
                                 case .failure:
                                     RoundedRectangle(cornerRadius: 8)
                                         .fill(AppColors.surfaceSecondary)
+                                        .frame(height: 140)
                                         .overlay(
                                             Image(systemName: evidence.fileIcon)
                                                 .font(.system(size: 32))
@@ -1506,6 +1679,7 @@ struct EvidenceThumbnailCard: View {
                         } else {
                             RoundedRectangle(cornerRadius: 8)
                                 .fill(AppColors.surfaceSecondary)
+                                .frame(height: 140)
                                 .overlay(
                                     Image(systemName: evidence.fileIcon)
                                         .font(.system(size: 32))
@@ -1513,7 +1687,6 @@ struct EvidenceThumbnailCard: View {
                                 )
                         }
                     }
-                    .frame(height: 120)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
                 .buttonStyle(.plain)

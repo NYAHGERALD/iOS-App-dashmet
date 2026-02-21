@@ -10,13 +10,31 @@ import SwiftUI
 import Combine
 
 struct EditHistoryView: View {
-    let edits: [DocumentEdit]
+    let caseId: String  // Backend database ID
+    let initialEdits: [DocumentEdit]  // Session edits passed in
     let onDismiss: () -> Void
     
+    @State private var edits: [DocumentEdit] = []
     @State private var selectedEdit: DocumentEdit?
     @State private var showDiffView = false
+    @State private var isLoading = false
+    @State private var loadError: String?
     
     @Environment(\.colorScheme) private var colorScheme
+    
+    // Convenience initializer for backwards compatibility
+    init(edits: [DocumentEdit], onDismiss: @escaping () -> Void) {
+        self.caseId = "" // Empty - won't load from DB
+        self.initialEdits = edits
+        self.onDismiss = onDismiss
+    }
+    
+    // Full initializer with caseId for database loading
+    init(caseId: String, sessionEdits: [DocumentEdit] = [], onDismiss: @escaping () -> Void) {
+        self.caseId = caseId
+        self.initialEdits = sessionEdits
+        self.onDismiss = onDismiss
+    }
     
     private var textPrimary: Color {
         colorScheme == .dark ? .white : .black
@@ -28,15 +46,18 @@ struct EditHistoryView: View {
     
     private var cardBackground: Color {
         colorScheme == .dark ? Color.white.opacity(0.08) : Color.white
-    }
-    
+    }    
     var body: some View {
         NavigationView {
             ZStack {
                 Color(UIColor.systemGroupedBackground)
                     .ignoresSafeArea()
                 
-                if edits.isEmpty {
+                if isLoading {
+                    ProgressView("Loading edit history...")
+                } else if let error = loadError {
+                    errorView(error)
+                } else if edits.isEmpty {
                     emptyState
                 } else {
                     ScrollView {
@@ -54,6 +75,13 @@ struct EditHistoryView: View {
             .navigationTitle("Edit History")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    if !isLoading {
+                        Button(action: loadEditsFromDatabase) {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                    }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
                         onDismiss()
@@ -65,7 +93,70 @@ struct EditHistoryView: View {
                     DiffDetailView(edit: edit, onDismiss: { showDiffView = false })
                 }
             }
+            .onAppear {
+                // Start with session edits, then load full history from database
+                edits = initialEdits
+                if !caseId.isEmpty {
+                    loadEditsFromDatabase()
+                }
+            }
         }
+    }
+    
+    // MARK: - Load Edits from Database
+    private func loadEditsFromDatabase() {
+        guard !caseId.isEmpty else {
+            // No backend ID - just use session edits
+            edits = initialEdits
+            return
+        }
+        
+        isLoading = true
+        loadError = nil
+        
+        Task {
+            do {
+                let dbEdits = try await EditTrackingService.shared.getEdits(for: caseId)
+                await MainActor.run {
+                    // Merge database edits with any session edits not yet saved
+                    let dbEditIds = Set(dbEdits.map { $0.id })
+                    let unsavedSessionEdits = initialEdits.filter { !dbEditIds.contains($0.id) }
+                    self.edits = dbEdits + unsavedSessionEdits
+                    self.edits.sort { $0.editedAt > $1.editedAt }
+                    self.isLoading = false
+                }
+            } catch {
+                await MainActor.run {
+                    // Fall back to session edits on error
+                    self.edits = initialEdits
+                    self.loadError = error.localizedDescription
+                    self.isLoading = false
+                }
+            }
+        }
+    }
+    
+    // MARK: - Error View
+    private func errorView(_ error: String) -> some View {
+        VStack(spacing: 16) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 40))
+                .foregroundColor(.orange)
+            
+            Text("Failed to load edit history")
+                .font(.headline)
+            
+            Text(error)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+            
+            Button("Retry") {
+                loadEditsFromDatabase()
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding()
     }
     
     // MARK: - Empty State
@@ -500,39 +591,100 @@ struct DiffDetailView: View {
 class EditTrackingService: ObservableObject {
     static let shared = EditTrackingService()
     
+    private let baseURL = "https://dashmet-rca-api.onrender.com/api/conflict-cases"
+    
     @Published var currentSessionEdits: [DocumentEdit] = []
-    @Published var allCaseEdits: [UUID: [DocumentEdit]] = [:] // caseId: edits
+    @Published var isLoading = false
+    @Published var error: String?
     
     private init() {}
     
-    // MARK: - Track Edit
+    // MARK: - Track Edit (Save to Database)
     func trackEdit(
-        caseId: UUID,
+        caseId: String,
         sectionId: String,
         sectionTitle: String,
         originalContent: String,
         newContent: String,
         editedBy: String
-    ) {
-        let edit = DocumentEdit(
-            sectionId: sectionId,
-            sectionTitle: sectionTitle,
-            originalContent: originalContent,
-            newContent: newContent,
-            editedBy: editedBy
-        )
-        
-        currentSessionEdits.append(edit)
-        
-        if allCaseEdits[caseId] == nil {
-            allCaseEdits[caseId] = []
+    ) async throws -> DocumentEdit {
+        guard let url = URL(string: "\(baseURL)/\(caseId)/document-edits") else {
+            throw EditTrackingError.invalidURL
         }
-        allCaseEdits[caseId]?.append(edit)
+        
+        let requestBody: [String: Any] = [
+            "sectionId": sectionId,
+            "sectionTitle": sectionTitle,
+            "originalContent": originalContent,
+            "newContent": newContent,
+            "editedBy": editedBy
+        ]
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw EditTrackingError.invalidResponse
+        }
+        
+        guard httpResponse.statusCode == 201 else {
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let errorMessage = json["error"] as? String {
+                throw EditTrackingError.apiError(errorMessage)
+            }
+            throw EditTrackingError.apiError("Failed to save edit: HTTP \(httpResponse.statusCode)")
+        }
+        
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let dataObj = json["data"] as? [String: Any] else {
+            throw EditTrackingError.parsingError
+        }
+        
+        let edit = parseDocumentEdit(from: dataObj)
+        
+        await MainActor.run {
+            self.currentSessionEdits.append(edit)
+        }
+        
+        return edit
     }
     
-    // MARK: - Get Edits for Case
-    func getEdits(for caseId: UUID) -> [DocumentEdit] {
-        return allCaseEdits[caseId] ?? []
+    // MARK: - Get Edits for Case (From Database)
+    func getEdits(for caseId: String) async throws -> [DocumentEdit] {
+        guard let url = URL(string: "\(baseURL)/\(caseId)/document-edits") else {
+            throw EditTrackingError.invalidURL
+        }
+        
+        await MainActor.run { self.isLoading = true }
+        defer { Task { @MainActor in self.isLoading = false } }
+        
+        let (data, response) = try await URLSession.shared.data(from: url)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw EditTrackingError.invalidResponse
+        }
+        
+        guard httpResponse.statusCode == 200 else {
+            throw EditTrackingError.apiError("Failed to fetch edits: HTTP \(httpResponse.statusCode)")
+        }
+        
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let editsData = json["data"] as? [[String: Any]] else {
+            throw EditTrackingError.parsingError
+        }
+        
+        return editsData.map { parseDocumentEdit(from: $0) }
+    }
+    
+    // MARK: - Synchronous wrapper for backwards compatibility
+    func getEdits(for caseId: String) -> [DocumentEdit] {
+        // Return cached session edits for current session
+        // Full history should be fetched async
+        return currentSessionEdits.filter { _ in true } // Placeholder - use async version
     }
     
     // MARK: - Clear Session
@@ -540,34 +692,46 @@ class EditTrackingService: ObservableObject {
         currentSessionEdits = []
     }
     
-    // MARK: - Undo Last Edit
-    func undoLastEdit(for caseId: UUID) -> DocumentEdit? {
-        guard var edits = allCaseEdits[caseId], !edits.isEmpty else { return nil }
-        let removed = edits.removeLast()
-        allCaseEdits[caseId] = edits
+    // MARK: - Undo Last Edit (Delete from Database)
+    func undoLastEdit(for caseId: String) async throws -> DocumentEdit? {
+        let edits = try await getEdits(for: caseId)
+        guard let lastEdit = edits.first else { return nil } // edits are ordered desc
         
-        if let sessionIndex = currentSessionEdits.firstIndex(where: { $0.id == removed.id }) {
-            currentSessionEdits.remove(at: sessionIndex)
+        guard let url = URL(string: "\(baseURL)/\(caseId)/document-edits/\(lastEdit.id.uuidString)") else {
+            throw EditTrackingError.invalidURL
         }
         
-        return removed
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        
+        let (_, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw EditTrackingError.apiError("Failed to undo edit")
+        }
+        
+        await MainActor.run {
+            if let index = self.currentSessionEdits.firstIndex(where: { $0.id == lastEdit.id }) {
+                self.currentSessionEdits.remove(at: index)
+            }
+        }
+        
+        return lastEdit
     }
     
     // MARK: - Export Edit History
-    func exportEditHistory(for caseId: UUID) -> Data? {
-        guard let edits = allCaseEdits[caseId] else { return nil }
+    func exportEditHistory(for caseId: String) async throws -> Data {
+        let edits = try await getEdits(for: caseId)
         
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = .prettyPrinted
         
-        return try? encoder.encode(edits)
+        return try encoder.encode(edits)
     }
     
     // MARK: - Calculate Total Changes
-    func calculateTotalChanges(for caseId: UUID) -> (added: Int, removed: Int) {
-        guard let edits = allCaseEdits[caseId] else { return (0, 0) }
-        
+    func calculateTotalChanges(for edits: [DocumentEdit]) -> (added: Int, removed: Int) {
         var added = 0
         var removed = 0
         
@@ -583,5 +747,49 @@ class EditTrackingService: ObservableObject {
         }
         
         return (added, removed)
+    }
+    
+    // MARK: - Parse Document Edit from JSON
+    private func parseDocumentEdit(from data: [String: Any]) -> DocumentEdit {
+        let id = UUID(uuidString: data["id"] as? String ?? "") ?? UUID()
+        let sectionId = data["sectionId"] as? String ?? ""
+        let sectionTitle = data["sectionTitle"] as? String ?? ""
+        let originalContent = data["originalContent"] as? String ?? ""
+        let newContent = data["newContent"] as? String ?? ""
+        let editedBy = data["editedBy"] as? String ?? ""
+        
+        var editedAt = Date()
+        if let createdAtString = data["createdAt"] as? String {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            editedAt = formatter.date(from: createdAtString) ?? Date()
+        }
+        
+        return DocumentEdit(
+            id: id,
+            sectionId: sectionId,
+            sectionTitle: sectionTitle,
+            originalContent: originalContent,
+            newContent: newContent,
+            editedBy: editedBy,
+            editedAt: editedAt
+        )
+    }
+}
+
+// MARK: - Edit Tracking Errors
+enum EditTrackingError: LocalizedError {
+    case invalidURL
+    case invalidResponse
+    case apiError(String)
+    case parsingError
+    
+    var errorDescription: String? {
+        switch self {
+        case .invalidURL: return "Invalid URL"
+        case .invalidResponse: return "Invalid response from server"
+        case .apiError(let message): return message
+        case .parsingError: return "Failed to parse response"
+        }
     }
 }

@@ -20,6 +20,8 @@ struct EvidenceExpansionView: View {
     @State private var expandedSection: ExpandedSection? = nil
     @State private var hasWitnesses: Bool? = nil
     @State private var hasPriorHistory: Bool? = nil
+    @State private var showReanalyzeWarning = false  // Warning before re-analyzing
+    @State private var arrowPulse = false  // For blinking arrow animation
     
     enum ExpandedSection {
         case witnesses
@@ -73,6 +75,14 @@ struct EvidenceExpansionView: View {
         .frame(maxWidth: .infinity)
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
+        .alert("Re-Analyze with New Evidence?", isPresented: $showReanalyzeWarning) {
+            Button("Cancel", role: .cancel) { }
+            Button("Re-Analyze", role: .destructive) {
+                onReAnalyze()
+            }
+        } message: {
+            Text("This will re-run the analysis and automatically update Policy Alignment and Decision Support. Continue?")
+        }
     }
     
     // MARK: - Header
@@ -434,10 +444,17 @@ struct EvidenceExpansionView: View {
         VStack(spacing: 12) {
             // Re-analyze button (if new evidence added)
             let hasNewEvidence = !conflictCase.witnesses.isEmpty || hasPriorHistoryDocs
+            // Check if existing analysis data exists
+            let hasExistingAnalysisData = conflictCase.policyMatchingResult != nil || conflictCase.recommendationResult != nil
             
             if hasNewEvidence {
                 Button {
-                    onReAnalyze()
+                    // Show warning if existing data will be overwritten
+                    if hasExistingAnalysisData {
+                        showReanalyzeWarning = true
+                    } else {
+                        onReAnalyze()
+                    }
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "sparkles")
@@ -452,13 +469,24 @@ struct EvidenceExpansionView: View {
                 }
             }
             
-            // Continue button
+            // Continue arrow (blinking)
             Button {
                 onSkip()
             } label: {
-                Text(hasNewEvidence ? "Continue to Policy Alignment" : "Skip for Now")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(textSecondary)
+                Image(systemName: "chevron.down.circle.fill")
+                    .font(.system(size: 28))
+                    .foregroundColor(.green)
+                    .scaleEffect(arrowPulse ? 1.15 : 0.95)
+                    .opacity(arrowPulse ? 1.0 : 0.5)
+                    .shadow(color: .yellow.opacity(arrowPulse ? 0.7 : 0.2), radius: arrowPulse ? 10 : 4)
+            }
+            .onAppear {
+                withAnimation(
+                    Animation.easeInOut(duration: 0.8)
+                        .repeatForever(autoreverses: true)
+                ) {
+                    arrowPulse = true
+                }
             }
         }
     }

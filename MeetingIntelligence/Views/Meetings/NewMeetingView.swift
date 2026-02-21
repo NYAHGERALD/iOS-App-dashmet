@@ -6,10 +6,14 @@
 //
 
 import SwiftUI
+import AVFoundation
 
 struct NewMeetingView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var viewModel: MeetingViewModel
+    
+    // Imported audio (optional - for Import Recording flow)
+    var importedAudioURL: URL? = nil
     
     // Basic fields
     @State private var title: String = ""
@@ -41,10 +45,17 @@ struct NewMeetingView: View {
     
     // State
     @State private var isCreating: Bool = false
+    @State private var isUploading: Bool = false
+    @State private var uploadProgress: Double = 0
     @State private var showError: Bool = false
     @State private var errorMessage: String = ""
     @State private var showRecording: Bool = false
     @State private var createdMeeting: Meeting?
+    
+    // Post-recording flow state (for imported audio)
+    @State private var showPostRecording: Bool = false
+    @State private var uploadedMeeting: Meeting?
+    @State private var localAudioURL: URL?
     
     var onMeetingCreated: ((Meeting) -> Void)?
     
@@ -77,8 +88,10 @@ struct NewMeetingView: View {
                         // SECTION 5 — AI Settings (Collapsible)
                         aiSettingsSection
                         
-                        // SECTION 6 — Quick Actions
-                        quickActionsSection
+                        // SECTION 6 — Quick Actions (only for new recordings, not imports)
+                        if importedAudioURL == nil {
+                            quickActionsSection
+                        }
                         
                         // Spacer for floating button
                         Color.clear.frame(height: 80)
@@ -128,7 +141,7 @@ struct NewMeetingView: View {
             } message: {
                 Text(errorMessage)
             }
-            .disabled(isCreating)
+            .disabled(isCreating || isUploading)
             .overlay {
                 if isCreating {
                     ProgressView("Creating meeting...")
@@ -136,6 +149,18 @@ struct NewMeetingView: View {
                         .background(Color(.systemBackground))
                         .cornerRadius(12)
                         .shadow(radius: 10)
+                } else if isUploading {
+                    VStack(spacing: 12) {
+                        ProgressView(value: uploadProgress)
+                            .progressViewStyle(.linear)
+                            .frame(width: 200)
+                        Text("Uploading recording... \(Int(uploadProgress * 100))%")
+                            .font(.subheadline)
+                    }
+                    .padding()
+                    .background(Color(.systemBackground))
+                    .cornerRadius(12)
+                    .shadow(radius: 10)
                 }
             }
             .fullScreenCover(isPresented: $showRecording) {
@@ -144,6 +169,31 @@ struct NewMeetingView: View {
                         onMeetingCreated?(meeting)
                         dismiss()
                     }
+                }
+            }
+            .fullScreenCover(isPresented: $showPostRecording) {
+                if let meeting = uploadedMeeting, let audioURL = localAudioURL {
+                    PostRecordingView(
+                        meeting: meeting,
+                        recordingURL: audioURL,
+                        bookmarks: [],
+                        meetingNotes: "",
+                        meetingViewModel: viewModel,
+                        onComplete: {
+                            // Clean up temp file
+                            try? FileManager.default.removeItem(at: audioURL)
+                            onMeetingCreated?(meeting)
+                            dismiss()
+                        },
+                        onDiscard: {
+                            // User discarded - delete meeting and clean up
+                            Task {
+                                _ = await viewModel.deleteMeeting(meetingId: meeting.id)
+                            }
+                            try? FileManager.default.removeItem(at: audioURL)
+                            dismiss()
+                        }
+                    )
                 }
             }
             .sheet(isPresented: $showAddParticipant) {
@@ -637,7 +687,7 @@ struct NewMeetingView: View {
                 await createMeetingOnly()
             }
         } label: {
-            Text("Create Meeting")
+            Text(importedAudioURL != nil ? "Create & Upload Recording" : "Create Meeting")
                 .font(.headline)
                 .fontWeight(.semibold)
                 .foregroundColor(.white)
@@ -647,7 +697,7 @@ struct NewMeetingView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 14))
                 .shadow(color: AppColors.primary.opacity(0.3), radius: 8, y: 4)
         }
-        .disabled(isCreating)
+        .disabled(isCreating || isUploading)
         .padding(.horizontal, 20)
         .padding(.bottom, 20)
         .background(
@@ -697,14 +747,94 @@ struct NewMeetingView: View {
             confidentialityLevel: confidentialityLevel.rawValue,
             participants: buildParticipantsRequest()
         ) {
-            onMeetingCreated?(meeting)
-            dismiss()
+            isCreating = false
+            
+            // If we have imported audio, upload it
+            if let audioURL = importedAudioURL {
+                await uploadImportedAudio(meeting: meeting, audioURL: audioURL)
+            } else {
+                onMeetingCreated?(meeting)
+                dismiss()
+            }
         } else {
             errorMessage = viewModel.errorMessage ?? "Failed to create meeting"
             showError = true
+            isCreating = false
+        }
+    }
+    
+    // MARK: - Upload Imported Audio
+    private func uploadImportedAudio(meeting: Meeting, audioURL: URL) async {
+        guard let userId = viewModel.userId else {
+            errorMessage = "User not configured"
+            showError = true
+            return
         }
         
-        isCreating = false
+        isUploading = true
+        uploadProgress = 0
+        
+        do {
+            // Get audio duration
+            let asset = AVAsset(url: audioURL)
+            let duration = try await asset.load(.duration)
+            let durationSeconds = Int(duration.seconds)
+            
+            // Upload to Firebase Storage
+            let downloadURL = try await FirebaseStorageService.shared.uploadNow(
+                meetingId: meeting.id,
+                localURL: audioURL,
+                userId: userId
+            )
+            
+            uploadProgress = 0.7
+            
+            // Update meeting with recording info
+            let _ = await viewModel.uploadMeeting(
+                meetingId: meeting.id,
+                recordingUrl: downloadURL,
+                duration: durationSeconds,
+                recordedAt: Date(),
+                language: "en",
+                speakerCountHint: nil
+            )
+            
+            uploadProgress = 0.9
+            
+            // Notify backend audio is ready for processing (non-blocking)
+            do {
+                try await APIService.shared.notifyAudioReady(
+                    meetingId: meeting.id,
+                    audioUrl: downloadURL,
+                    duration: durationSeconds,
+                    language: "en",
+                    speakerCountHint: nil
+                )
+            } catch {
+                // Don't fail the whole upload if backend notification fails
+                // The backend can detect uploads from the recording URL
+                print("⚠️ Failed to notify backend: \(error)")
+            }
+            
+            uploadProgress = 1.0
+            
+            // Store for PostRecordingView (don't clean up file yet)
+            uploadedMeeting = meeting
+            localAudioURL = audioURL
+            
+            isUploading = false
+            
+            // Show PostRecordingView for transcript generation
+            showPostRecording = true
+            
+        } catch {
+            isUploading = false
+            errorMessage = "Upload failed: \(error.localizedDescription)"
+            showError = true
+            
+            // Delete the meeting since upload failed
+            _ = await viewModel.deleteMeeting(meetingId: meeting.id)
+        }
     }
     
     // MARK: - Create Meeting and Start Recording

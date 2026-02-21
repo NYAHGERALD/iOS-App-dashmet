@@ -104,6 +104,8 @@ struct AIVisionAssistantView: View {
     @State private var showTopicSelector = false
     @State private var showVisionSessions = false
     
+    var onMenuTap: (() -> Void)?
+    
     var body: some View {
         ZStack {
             // Camera Preview
@@ -191,11 +193,11 @@ struct AIVisionAssistantView: View {
     // MARK: - Top Bar
     private var topBar: some View {
         HStack {
-            // Close button
+            // Menu button
             Button {
-                dismiss()
+                onMenuTap?()
             } label: {
-                Image(systemName: "xmark")
+                Image(systemName: "line.3.horizontal")
                     .font(.title3.weight(.semibold))
                     .foregroundColor(.white)
                     .frame(width: 44, height: 44)

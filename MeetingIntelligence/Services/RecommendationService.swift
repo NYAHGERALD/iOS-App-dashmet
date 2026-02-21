@@ -138,9 +138,13 @@ class RecommendationService {
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
         request.timeoutInterval = 120 // 2 minutes for recommendation generation
         
-        print("RecommendationService: Generating recommendations...")
+        let startTime = Date()
+        print("RecommendationService: Starting recommendation generation at \(startTime)")
         
         let (data, response) = try await URLSession.shared.data(for: request)
+        
+        let elapsed = Date().timeIntervalSince(startTime)
+        print("RecommendationService: Response received in \(String(format: "%.1f", elapsed))s")
         
         guard let httpResponse = response as? HTTPURLResponse else {
             throw RecommendationError.invalidResponse
@@ -327,7 +331,7 @@ struct PriorHistoryInfo {
 }
 
 /// Result containing all recommendations
-struct RecommendationResult {
+struct RecommendationResult: Codable {
     let recommendations: [RecommendationOption]
     let primaryRecommendationId: String
     let supervisorGuidance: String
@@ -343,7 +347,7 @@ struct RecommendationResult {
 }
 
 /// Types of recommended actions
-enum RecommendationType: String, CaseIterable {
+enum RecommendationType: String, CaseIterable, Codable {
     case coaching = "coaching"
     case counseling = "counseling"
     case warning = "warning"
@@ -414,7 +418,7 @@ enum RecommendationType: String, CaseIterable {
 }
 
 /// Risk levels for recommendations
-enum RiskLevel: String, CaseIterable {
+enum RiskLevel: String, CaseIterable, Codable {
     case low = "low"
     case moderate = "moderate"
     case high = "high"
@@ -476,7 +480,7 @@ enum RiskLevel: String, CaseIterable {
 }
 
 /// Individual recommendation option
-struct RecommendationOption: Identifiable {
+struct RecommendationOption: Identifiable, Codable {
     let id: String
     let type: RecommendationType
     let title: String

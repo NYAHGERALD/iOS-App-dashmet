@@ -65,6 +65,38 @@ struct TaskRowView: View {
                     }
                     .foregroundColor(.secondary)
                 }
+                
+                // Progress bar (only show if progress > 0)
+                if task.progressValue > 0 {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("Progress")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text("\(task.progressValue)%")
+                                .font(.caption2)
+                                .fontWeight(.medium)
+                                .foregroundColor(progressColor)
+                        }
+                        
+                        GeometryReader { geometry in
+                            ZStack(alignment: .leading) {
+                                // Background track
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(Color.gray.opacity(0.2))
+                                    .frame(height: 6)
+                                
+                                // Filled progress with gradient
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(progressGradient)
+                                    .frame(width: geometry.size.width * CGFloat(task.progressValue) / 100.0, height: 6)
+                            }
+                        }
+                        .frame(height: 6)
+                    }
+                    .padding(.top, 4)
+                }
             }
             
             Spacer()
@@ -86,6 +118,62 @@ struct TaskRowView: View {
         case .inProgress: return .completed
         case .completed: return .pending
         case .cancelled: return .pending
+        }
+    }
+    
+    private var progressColor: Color {
+        let progress = task.progressValue
+        // Color ranges: 0-20% Red, 20-50% Yellow/Orange, 50-80% Green, 80-100% Blue
+        if progress <= 20 { return .red }
+        if progress <= 50 { return .orange }
+        if progress <= 80 { return .green }
+        return .blue
+    }
+    
+    private var progressGradient: LinearGradient {
+        let progress = Double(task.progressValue)
+        
+        if progress <= 20 {
+            return LinearGradient(colors: [.red], startPoint: .leading, endPoint: .trailing)
+        } else if progress <= 50 {
+            let redEnd = 20.0 / progress
+            return LinearGradient(
+                stops: [
+                    .init(color: .red, location: 0.0),
+                    .init(color: .red, location: redEnd),
+                    .init(color: .orange, location: 1.0)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+        } else if progress <= 80 {
+            let redEnd = 20.0 / progress
+            let orangeEnd = 50.0 / progress
+            return LinearGradient(
+                stops: [
+                    .init(color: .red, location: 0.0),
+                    .init(color: .red, location: redEnd),
+                    .init(color: .orange, location: orangeEnd),
+                    .init(color: .green, location: 1.0)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+        } else {
+            let redEnd = 20.0 / progress
+            let orangeEnd = 50.0 / progress
+            let greenEnd = 80.0 / progress
+            return LinearGradient(
+                stops: [
+                    .init(color: .red, location: 0.0),
+                    .init(color: .red, location: redEnd),
+                    .init(color: .orange, location: orangeEnd),
+                    .init(color: .green, location: greenEnd),
+                    .init(color: .blue, location: 1.0)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
         }
     }
 }
@@ -173,13 +261,14 @@ struct TaskRowView_Previews: PreviewProvider {
             sourceText: nil,
             isAiExtracted: false,
             ownerId: "user1",
-            owner: TaskUser(id: "user1", firstName: "John", lastName: "Doe", email: "john@example.com"),
+            owner: TaskUser(id: "user1", firstName: "John", lastName: "Doe", email: "john@example.com", profilePicture: nil),
             assigneeId: "user2",
-            assignee: TaskUser(id: "user2", firstName: "Jane", lastName: "Smith", email: "jane@example.com"),
+            assignee: TaskUser(id: "user2", firstName: "Jane", lastName: "Smith", email: "jane@example.com", profilePicture: nil),
             assignees: nil,
             organizationId: "org1",
             facilityId: nil,
             meetingId: nil,
+            meeting: nil,
             comments: nil,
             evidence: nil,
             _count: nil,
@@ -209,6 +298,7 @@ struct TaskRowView_Previews: PreviewProvider {
                 organizationId: "org1",
                 facilityId: nil,
                 meetingId: nil,
+                meeting: nil,
                 comments: nil,
                 evidence: nil,
                 _count: nil,

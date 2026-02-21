@@ -3,22 +3,30 @@
 //  MeetingIntelligence
 //
 //  Phase 9: Document Section Editor
-//  Inline editing for individual document sections
+//  Enterprise-grade inline editing with AI-powered analysis
 //
 
 import SwiftUI
 
+// MARK: - Document Section Editor Sheet
 struct DocumentSectionEditorSheet: View {
     let section: DocumentSection
     let onSave: (String) -> Void
     let onCancel: () -> Void
     
     @State private var editedContent: String
-    @State private var showAISuggestions = false
-    @State private var aiSuggestions: [String] = []
-    @State private var isLoadingSuggestions = false
+    @State private var showAIAnalysis = false
+    @State private var showToneAnalysis = false
+    
+    // AI Analysis State
+    @StateObject private var analysisService = AITextAnalysisService.shared
+    @State private var contentSuggestions: [AIContentSuggestion] = []
+    @State private var toneResult: ToneAnalysisResult?
+    
+    // Text metrics
     @State private var wordCount: Int = 0
     @State private var characterCount: Int = 0
+    @State private var sentenceCount: Int = 0
     
     @Environment(\.colorScheme) private var colorScheme
     
@@ -32,6 +40,10 @@ struct DocumentSectionEditorSheet: View {
     
     private var cardBackground: Color {
         colorScheme == .dark ? Color.white.opacity(0.08) : Color.white
+    }
+    
+    private var hasChanges: Bool {
+        editedContent != section.content
     }
     
     init(section: DocumentSection, onSave: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
@@ -48,74 +60,84 @@ struct DocumentSectionEditorSheet: View {
                     .ignoresSafeArea()
                 
                 VStack(spacing: 0) {
-                    // Section header
                     sectionHeader
                     
-                    // Editor
                     ScrollView {
                         VStack(spacing: 16) {
-                            // Text editor
                             textEditorSection
+                            metricsBar
                             
-                            // Stats bar
-                            statsBar
-                            
-                            // AI Suggestions
-                            if showAISuggestions {
-                                aiSuggestionsSection
+                            if showAIAnalysis {
+                                aiAnalysisSection
                             }
                             
-                            // Formatting tips
-                            formattingTips
+                            formattingGuidelines
                         }
                         .padding()
                     }
                     
-                    // Bottom toolbar
                     bottomToolbar
+                }
+                
+                // Loading overlay
+                if analysisService.isAnalyzing {
+                    analysisLoadingOverlay
                 }
             }
             .navigationTitle("Edit Section")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        onCancel()
-                    }
+                    Button("Cancel") { onCancel() }
                 }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") {
-                        onSave(editedContent)
-                    }
-                    .fontWeight(.semibold)
-                    .disabled(editedContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button("Save") { onSave(editedContent) }
+                        .fontWeight(.semibold)
+                        .disabled(editedContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
             .onChange(of: editedContent) { _, newValue in
-                updateCounts(newValue)
+                updateMetrics(newValue)
             }
             .onAppear {
-                updateCounts(editedContent)
+                updateMetrics(editedContent)
+            }
+            .fullScreenCover(isPresented: $showToneAnalysis) {
+                ToneAnalysisSheet(
+                    toneResult: toneResult,
+                    isLoading: analysisService.isAnalyzing,
+                    analysisProgress: analysisService.analysisProgress,
+                    currentStep: analysisService.currentAnalysisStep,
+                    onApplySuggestion: { suggestion in
+                        applyToneSuggestion(suggestion)
+                    },
+                    onDismiss: {
+                        showToneAnalysis = false
+                    }
+                )
             }
         }
     }
     
     // MARK: - Section Header
     private var sectionHeader: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(section.title)
-                .font(.system(size: 17, weight: .semibold))
+                .font(.system(size: 18, weight: .semibold))
                 .foregroundColor(textPrimary)
             
-            if section.hasChanges {
-                HStack(spacing: 4) {
-                    Image(systemName: "pencil.circle.fill")
+            HStack(spacing: 12) {
+                if section.hasChanges {
+                    Label("Modified", systemImage: "pencil.circle.fill")
                         .font(.system(size: 12))
                         .foregroundColor(.orange)
-                    Text("Modified")
+                }
+                
+                if let result = toneResult {
+                    Label(result.overallTone.rawValue, systemImage: result.overallTone.icon)
                         .font(.system(size: 12))
-                        .foregroundColor(.orange)
+                        .foregroundColor(toneColor(result.overallTone))
                 }
             }
         }
@@ -124,28 +146,23 @@ struct DocumentSectionEditorSheet: View {
         .background(cardBackground)
     }
     
-    // MARK: - Text Editor Section
+    // MARK: - Text Editor
     private var textEditorSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Original content reference
+        VStack(alignment: .leading, spacing: 10) {
             DisclosureGroup {
                 Text(section.content)
                     .font(.system(size: 13))
                     .foregroundColor(textSecondary)
                     .padding()
-                    .background(Color.gray.opacity(0.1))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.gray.opacity(0.08))
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "doc.text")
-                        .font(.system(size: 12))
-                    Text("Original Content")
-                        .font(.system(size: 13, weight: .medium))
-                }
-                .foregroundColor(textSecondary)
+                Label("Original Content", systemImage: "doc.text")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(textSecondary)
             }
             
-            // Editor
             TextEditor(text: $editedContent)
                 .font(.system(size: 15))
                 .frame(minHeight: 200)
@@ -159,64 +176,57 @@ struct DocumentSectionEditorSheet: View {
         }
     }
     
-    // MARK: - Stats Bar
-    private var statsBar: some View {
-        HStack(spacing: 16) {
-            statItem(label: "Words", value: "\(wordCount)")
-            Divider().frame(height: 20)
-            statItem(label: "Characters", value: "\(characterCount)")
-            Divider().frame(height: 20)
-            statItem(label: "Changed", value: hasChanges ? "Yes" : "No", color: hasChanges ? .orange : .green)
+    // MARK: - Metrics Bar
+    private var metricsBar: some View {
+        HStack(spacing: 0) {
+            metricItem(value: "\(wordCount)", label: "Words", color: .blue)
+            Divider().frame(height: 30)
+            metricItem(value: "\(characterCount)", label: "Characters", color: .purple)
+            Divider().frame(height: 30)
+            metricItem(value: "\(sentenceCount)", label: "Sentences", color: .teal)
+            Divider().frame(height: 30)
+            metricItem(value: hasChanges ? "Yes" : "No", label: "Changed", color: hasChanges ? .orange : .green)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.vertical, 12)
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
     
-    private func statItem(label: String, value: String, color: Color = .blue) -> some View {
+    private func metricItem(value: String, label: String, color: Color) -> some View {
         VStack(spacing: 2) {
             Text(value)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: 15, weight: .semibold))
                 .foregroundColor(color)
             Text(label)
                 .font(.system(size: 10))
                 .foregroundColor(textSecondary)
         }
+        .frame(maxWidth: .infinity)
     }
     
-    private var hasChanges: Bool {
-        editedContent != section.content
-    }
-    
-    // MARK: - AI Suggestions Section
-    private var aiSuggestionsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+    // MARK: - AI Analysis Section
+    private var aiAnalysisSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Image(systemName: "sparkles")
-                    .foregroundColor(.purple)
-                Text("AI Suggestions")
+                Label("AI Content Analysis", systemImage: "sparkles")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(textPrimary)
+                    .foregroundColor(.purple)
                 
                 Spacer()
                 
-                if isLoadingSuggestions {
-                    ProgressView()
-                        .scaleEffect(0.8)
+                Button {
+                    runContentAnalysis()
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                        .font(.system(size: 12))
+                        .foregroundColor(.purple)
                 }
             }
             
-            if aiSuggestions.isEmpty && !isLoadingSuggestions {
-                Button {
-                    loadAISuggestions()
-                } label: {
-                    Text("Get AI suggestions for improvement")
-                        .font(.system(size: 13))
-                        .foregroundColor(.purple)
-                }
+            if contentSuggestions.isEmpty {
+                emptyAnalysisState
             } else {
-                ForEach(aiSuggestions, id: \.self) { suggestion in
+                ForEach(contentSuggestions) { suggestion in
                     suggestionCard(suggestion)
                 }
             }
@@ -226,47 +236,104 @@ struct DocumentSectionEditorSheet: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
     
-    private func suggestionCard(_ suggestion: String) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "lightbulb.fill")
-                .font(.system(size: 14))
-                .foregroundColor(.purple)
+    private var emptyAnalysisState: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "wand.and.stars")
+                .font(.system(size: 36))
+                .foregroundColor(.purple.opacity(0.4))
             
-            Text(suggestion)
+            Text("Analyze your content for professional HR documentation standards")
                 .font(.system(size: 13))
-                .foregroundColor(textPrimary)
-            
-            Spacer()
+                .foregroundColor(textSecondary)
+                .multilineTextAlignment(.center)
             
             Button {
-                applySuggestion(suggestion)
+                runContentAnalysis()
             } label: {
-                Text("Apply")
-                    .font(.system(size: 11, weight: .medium))
+                Text("Run Analysis")
+                    .font(.system(size: 14, weight: .medium))
                     .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 10)
                     .background(Color.purple)
                     .clipShape(Capsule())
             }
         }
-        .padding()
-        .background(cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
     }
     
-    // MARK: - Formatting Tips
-    private var formattingTips: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Formatting Tips")
+    private func suggestionCard(_ suggestion: AIContentSuggestion) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: suggestion.type.icon)
+                    .font(.system(size: 12))
+                    .foregroundColor(suggestionColor(suggestion.type))
+                
+                Text(suggestion.type.rawValue)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(suggestionColor(suggestion.type))
+                
+                Spacer()
+                
+                // Impact badge
+                Text(suggestion.impact.rawValue)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(impactColor(suggestion.impact))
+                    .clipShape(Capsule())
+                
+                // Confidence indicator
+                Text("\(Int(suggestion.confidence * 100))%")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(textSecondary)
+            }
+            
+            Text(suggestion.title)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(textPrimary)
+            
+            Text(suggestion.description)
+                .font(.system(size: 12))
+                .foregroundColor(textSecondary)
+            
+            if let suggestedText = suggestion.suggestedText {
+                HStack {
+                    Spacer()
+                    Button {
+                        editedContent = suggestedText
+                    } label: {
+                        Label("Apply Fix", systemImage: "checkmark.circle.fill")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(suggestionColor(suggestion.type))
+                            .clipShape(Capsule())
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .background(cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+    
+    // MARK: - Formatting Guidelines
+    private var formattingGuidelines: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("HR Documentation Standards")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(textSecondary)
             
-            VStack(alignment: .leading, spacing: 6) {
-                tipRow(icon: "text.justify", tip: "Use clear, concise language")
-                tipRow(icon: "list.bullet", tip: "Break long paragraphs into bullet points")
-                tipRow(icon: "checkmark.circle", tip: "Avoid subjective or emotional language")
-                tipRow(icon: "doc.text", tip: "Reference specific policies when applicable")
+            VStack(alignment: .leading, spacing: 8) {
+                guidelineRow(icon: "target", text: "Be specific with dates, times, and observable behaviors")
+                guidelineRow(icon: "doc.text.fill", text: "Reference applicable policy sections")
+                guidelineRow(icon: "person.fill", text: "Focus on actions, not personal attributes")
+                guidelineRow(icon: "clock.fill", text: "Include clear timeframes for corrective actions")
+                guidelineRow(icon: "checkmark.shield.fill", text: "Ensure legal compliance and consistency")
             }
         }
         .padding()
@@ -274,14 +341,14 @@ struct DocumentSectionEditorSheet: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
     
-    private func tipRow(icon: String, tip: String) -> some View {
-        HStack(spacing: 8) {
+    private func guidelineRow(icon: String, text: String) -> some View {
+        HStack(spacing: 10) {
             Image(systemName: icon)
                 .font(.system(size: 12))
                 .foregroundColor(.blue)
                 .frame(width: 20)
             
-            Text(tip)
+            Text(text)
                 .font(.system(size: 12))
                 .foregroundColor(textSecondary)
         }
@@ -289,51 +356,33 @@ struct DocumentSectionEditorSheet: View {
     
     // MARK: - Bottom Toolbar
     private var bottomToolbar: some View {
-        HStack(spacing: 16) {
-            // Undo button
-            Button {
+        HStack(spacing: 20) {
+            toolbarButton(icon: "arrow.uturn.backward", label: "Reset", isActive: hasChanges) {
                 editedContent = section.content
-            } label: {
-                VStack(spacing: 2) {
-                    Image(systemName: "arrow.uturn.backward")
-                        .font(.system(size: 18))
-                    Text("Reset")
-                        .font(.system(size: 10))
-                }
-                .foregroundColor(hasChanges ? .blue : .gray)
             }
             .disabled(!hasChanges)
             
-            Divider().frame(height: 30)
+            Divider().frame(height: 32)
             
-            // AI Suggestions toggle
-            Button {
-                withAnimation {
-                    showAISuggestions.toggle()
+            toolbarButton(icon: "sparkles", label: "AI Help", isActive: showAIAnalysis) {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showAIAnalysis.toggle()
+                    if showAIAnalysis && contentSuggestions.isEmpty {
+                        runContentAnalysis()
+                    }
                 }
-            } label: {
-                VStack(spacing: 2) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 18))
-                    Text("AI Help")
-                        .font(.system(size: 10))
-                }
-                .foregroundColor(showAISuggestions ? .purple : .gray)
             }
             
-            Divider().frame(height: 30)
+            Divider().frame(height: 32)
             
-            // Tone check
-            Button {
-                // Check tone
-            } label: {
-                VStack(spacing: 2) {
-                    Image(systemName: "waveform")
-                        .font(.system(size: 18))
-                    Text("Tone")
-                        .font(.system(size: 10))
-                }
-                .foregroundColor(.gray)
+            toolbarButton(
+                icon: "waveform",
+                label: "Tone",
+                isActive: toneResult != nil,
+                activeColor: toneResult != nil ? toneColor(toneResult!.overallTone) : .gray
+            ) {
+                runToneAnalysis()
+                showToneAnalysis = true
             }
             
             Spacer()
@@ -342,48 +391,495 @@ struct DocumentSectionEditorSheet: View {
         .background(cardBackground)
     }
     
-    // MARK: - Helper Methods
-    
-    private func updateCounts(_ text: String) {
-        characterCount = text.count
-        wordCount = text.split(separator: " ").count
-    }
-    
-    private func loadAISuggestions() {
-        isLoadingSuggestions = true
-        
-        // Simulate AI suggestions (would call API in production)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            aiSuggestions = [
-                "Consider using more specific language to describe the behavior.",
-                "Add a reference to the relevant policy section for clarity.",
-                "Rephrase to focus on observable actions rather than intentions."
-            ]
-            isLoadingSuggestions = false
+    private func toolbarButton(icon: String, label: String, isActive: Bool, activeColor: Color = .blue, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 3) {
+                Image(systemName: icon)
+                    .font(.system(size: 20))
+                Text(label)
+                    .font(.system(size: 10))
+            }
+            .foregroundColor(isActive ? activeColor : .gray)
         }
     }
     
-    private func applySuggestion(_ suggestion: String) {
-        // In production, this would intelligently apply the suggestion
-        // For now, just append a note
-        editedContent += "\n\n[Applied suggestion: \(suggestion)]"
+    // MARK: - Loading Overlay
+    private var analysisLoadingOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.4)
+                .ignoresSafeArea()
+            
+            VStack(spacing: 20) {
+                // Animated progress ring
+                ZStack {
+                    Circle()
+                        .stroke(Color.purple.opacity(0.2), lineWidth: 4)
+                        .frame(width: 60, height: 60)
+                    
+                    Circle()
+                        .trim(from: 0, to: analysisService.analysisProgress)
+                        .stroke(Color.purple, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                        .frame(width: 60, height: 60)
+                        .rotationEffect(.degrees(-90))
+                        .animation(.easeInOut(duration: 0.3), value: analysisService.analysisProgress)
+                    
+                    Text("\(Int(analysisService.analysisProgress * 100))%")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white)
+                }
+                
+                Text(analysisService.currentAnalysisStep)
+                    .font(.system(size: 13))
+                    .foregroundColor(.white.opacity(0.9))
+                    .multilineTextAlignment(.center)
+            }
+            .padding(30)
+            .background(Color(UIColor.systemBackground).opacity(0.95))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .shadow(color: .black.opacity(0.2), radius: 20)
+        }
+    }
+    
+    // MARK: - Helper Methods
+    
+    private func updateMetrics(_ text: String) {
+        let words = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+        let sentences = text.components(separatedBy: CharacterSet(charactersIn: ".!?")).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        
+        wordCount = words.count
+        characterCount = text.count
+        sentenceCount = sentences.count
+    }
+    
+    private func runContentAnalysis() {
+        let context = DocumentContext(
+            documentType: .warning,
+            sectionType: section.title,
+            companyName: nil,
+            employeeName: nil
+        )
+        
+        Task {
+            contentSuggestions = await analysisService.generateContentSuggestions(
+                text: editedContent,
+                sectionType: section.title,
+                context: context
+            )
+        }
+    }
+    
+    private func runToneAnalysis() {
+        let context = DocumentContext(
+            documentType: .warning,
+            sectionType: section.title,
+            companyName: nil,
+            employeeName: nil
+        )
+        
+        Task {
+            toneResult = await analysisService.analyzeTone(text: editedContent, context: context)
+        }
+    }
+    
+    private func applyToneSuggestion(_ suggestion: ToneAnalysisResult.ToneSuggestion) {
+        editedContent = editedContent.replacingOccurrences(
+            of: suggestion.original,
+            with: suggestion.suggested,
+            options: .caseInsensitive
+        )
+        runToneAnalysis()
+    }
+    
+    private func toneColor(_ tone: ToneAnalysisResult.ToneType) -> Color {
+        switch tone.color {
+        case "green": return .green
+        case "blue": return .blue
+        case "gray": return .gray
+        case "orange": return .orange
+        case "red": return .red
+        case "purple": return .purple
+        case "teal": return .teal
+        default: return .gray
+        }
+    }
+    
+    private func suggestionColor(_ type: AIContentSuggestion.SuggestionType) -> Color {
+        switch type.color {
+        case "blue": return .blue
+        case "orange": return .orange
+        case "purple": return .purple
+        case "green": return .green
+        case "teal": return .teal
+        case "pink": return .pink
+        case "indigo": return .indigo
+        case "cyan": return .cyan
+        default: return .gray
+        }
+    }
+    
+    private func impactColor(_ impact: AIContentSuggestion.ImpactLevel) -> Color {
+        switch impact {
+        case .critical: return .red
+        case .high: return .orange
+        case .medium: return .blue
+        case .low: return .gray
+        }
     }
 }
 
-// MARK: - Add Comment Sheet
+// MARK: - Tone Analysis Sheet
+struct ToneAnalysisSheet: View {
+    let toneResult: ToneAnalysisResult?
+    let isLoading: Bool
+    let analysisProgress: Double
+    let currentStep: String
+    let onApplySuggestion: (ToneAnalysisResult.ToneSuggestion) -> Void
+    let onDismiss: () -> Void
+    
+    @Environment(\.colorScheme) private var colorScheme
+    
+    private var textPrimary: Color { colorScheme == .dark ? .white : .black }
+    private var textSecondary: Color { colorScheme == .dark ? .white.opacity(0.7) : .black.opacity(0.6) }
+    private var cardBackground: Color { colorScheme == .dark ? Color.white.opacity(0.08) : Color.white }
+    
+    var body: some View {
+        NavigationView {
+            ZStack {
+                Color(UIColor.systemGroupedBackground).ignoresSafeArea()
+                
+                if isLoading {
+                    loadingView
+                } else if let result = toneResult {
+                    analysisResultView(result)
+                } else {
+                    emptyStateView
+                }
+            }
+            .navigationTitle("Tone Analysis")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") { onDismiss() }
+                        .fontWeight(.semibold)
+                }
+            }
+        }
+    }
+    
+    private var loadingView: some View {
+        VStack(spacing: 24) {
+            ZStack {
+                Circle()
+                    .stroke(Color.purple.opacity(0.2), lineWidth: 6)
+                    .frame(width: 80, height: 80)
+                
+                Circle()
+                    .trim(from: 0, to: analysisProgress)
+                    .stroke(Color.purple, style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                    .frame(width: 80, height: 80)
+                    .rotationEffect(.degrees(-90))
+                    .animation(.easeInOut(duration: 0.3), value: analysisProgress)
+                
+                Text("\(Int(analysisProgress * 100))%")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(textPrimary)
+            }
+            
+            VStack(spacing: 6) {
+                Text("Analyzing Content")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(textPrimary)
+                
+                Text(currentStep)
+                    .font(.system(size: 13))
+                    .foregroundColor(textSecondary)
+            }
+        }
+    }
+    
+    private func analysisResultView(_ result: ToneAnalysisResult) -> some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                overallToneCard(result)
+                metricsSection(result)
+                scoresSection(result)
+                
+                if !result.suggestions.isEmpty {
+                    suggestionsSection(result)
+                }
+                
+                writingTipsSection
+            }
+            .padding()
+        }
+    }
+    
+    private var emptyStateView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "waveform")
+                .font(.system(size: 48))
+                .foregroundColor(.gray.opacity(0.4))
+            Text("No analysis available")
+                .font(.system(size: 14))
+                .foregroundColor(textSecondary)
+        }
+    }
+    
+    private func overallToneCard(_ result: ToneAnalysisResult) -> some View {
+        VStack(spacing: 16) {
+            ZStack {
+                Circle()
+                    .fill(toneColor(result.overallTone).opacity(0.15))
+                    .frame(width: 90, height: 90)
+                
+                Image(systemName: result.overallTone.icon)
+                    .font(.system(size: 36))
+                    .foregroundColor(toneColor(result.overallTone))
+            }
+            
+            VStack(spacing: 6) {
+                Text("Overall Tone")
+                    .font(.system(size: 12))
+                    .foregroundColor(textSecondary)
+                
+                Text(result.overallTone.rawValue)
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundColor(toneColor(result.overallTone))
+            }
+            
+            Text(result.overallTone.description)
+                .font(.system(size: 13))
+                .foregroundColor(textSecondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+        }
+        .padding()
+        .frame(maxWidth: .infinity)
+        .background(cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+    
+    private func metricsSection(_ result: ToneAnalysisResult) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Text Metrics")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(textPrimary)
+            
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                metricCard(label: "Words", value: "\(result.metrics.wordCount)", icon: "textformat.abc")
+                metricCard(label: "Sentences", value: "\(result.metrics.sentenceCount)", icon: "text.alignleft")
+                metricCard(label: "Avg Words/Sentence", value: String(format: "%.1f", result.metrics.averageWordsPerSentence), icon: "chart.bar.fill")
+                metricCard(label: "Reading Grade", value: String(format: "%.1f", result.metrics.fleschKincaidGrade), icon: "graduationcap.fill")
+                metricCard(label: "Passive Voice", value: String(format: "%.0f%%", result.metrics.passiveVoicePercentage), icon: "arrow.left.arrow.right")
+                metricCard(label: "Complex Words", value: String(format: "%.0f%%", result.metrics.complexWordPercentage), icon: "textformat.size")
+            }
+        }
+        .padding()
+        .background(cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+    
+    private func metricCard(label: String, value: String, icon: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 14))
+                .foregroundColor(.blue)
+                .frame(width: 24)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(value)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(textPrimary)
+                Text(label)
+                    .font(.system(size: 10))
+                    .foregroundColor(textSecondary)
+            }
+            
+            Spacer()
+        }
+        .padding(10)
+        .background(Color.gray.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+    
+    private func scoresSection(_ result: ToneAnalysisResult) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Quality Scores")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(textPrimary)
+            
+            VStack(spacing: 14) {
+                scoreBar(label: "Professionalism", score: result.professionalismScore, color: .blue)
+                scoreBar(label: "Clarity", score: result.clarityScore, color: .green)
+                scoreBar(label: "Objectivity", score: result.objectivityScore, color: .purple)
+                scoreBar(label: "Readability", score: result.readabilityScore, color: .teal)
+            }
+        }
+        .padding()
+        .background(cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+    
+    private func scoreBar(label: String, score: Double, color: Color) -> some View {
+        VStack(spacing: 6) {
+            HStack {
+                Text(label)
+                    .font(.system(size: 13))
+                    .foregroundColor(textSecondary)
+                Spacer()
+                Text("\(Int(score))%")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(scoreColor(score))
+            }
+            
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.gray.opacity(0.15))
+                        .frame(height: 8)
+                    
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(
+                            LinearGradient(
+                                colors: [scoreColor(score).opacity(0.7), scoreColor(score)],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: geometry.size.width * (score / 100), height: 8)
+                        .animation(.easeOut(duration: 0.5), value: score)
+                }
+            }
+            .frame(height: 8)
+        }
+    }
+    
+    private func suggestionsSection(_ result: ToneAnalysisResult) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Improvement Suggestions", systemImage: "lightbulb.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.orange)
+            
+            ForEach(result.suggestions) { suggestion in
+                toneSuggestionCard(suggestion)
+            }
+        }
+        .padding()
+        .background(cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+    
+    private func toneSuggestionCard(_ suggestion: ToneAnalysisResult.ToneSuggestion) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text("\"\(suggestion.original)\"")
+                    .font(.system(size: 12))
+                    .foregroundColor(.red)
+                    .strikethrough()
+                
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 10))
+                    .foregroundColor(textSecondary)
+                
+                Text("\"\(suggestion.suggested)\"")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.green)
+                
+                Spacer()
+                
+                Text("\(Int(suggestion.confidence * 100))%")
+                    .font(.system(size: 10))
+                    .foregroundColor(textSecondary)
+            }
+            
+            HStack {
+                Text(suggestion.reason)
+                    .font(.system(size: 11))
+                    .foregroundColor(textSecondary)
+                
+                Spacer()
+                
+                Button {
+                    onApplySuggestion(suggestion)
+                } label: {
+                    Text("Apply")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 5)
+                        .background(Color.green)
+                        .clipShape(Capsule())
+                }
+            }
+        }
+        .padding(12)
+        .background(Color.orange.opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+    
+    private var writingTipsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("HR Documentation Best Practices", systemImage: "info.circle.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.blue)
+            
+            VStack(alignment: .leading, spacing: 10) {
+                tipRow("Document observable behaviors, not attitudes or intentions")
+                tipRow("Include specific dates, times, and locations")
+                tipRow("Reference applicable policy sections by number")
+                tipRow("Use objective, non-judgmental language")
+                tipRow("State clear expectations and consequences")
+                tipRow("Include deadlines for corrective actions")
+            }
+        }
+        .padding()
+        .background(Color.blue.opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+    
+    private func tipRow(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 12))
+                .foregroundColor(.green)
+            
+            Text(text)
+                .font(.system(size: 12))
+                .foregroundColor(textSecondary)
+        }
+    }
+    
+    private func toneColor(_ tone: ToneAnalysisResult.ToneType) -> Color {
+        switch tone.color {
+        case "green": return .green
+        case "blue": return .blue
+        case "gray": return .gray
+        case "orange": return .orange
+        case "red": return .red
+        case "purple": return .purple
+        case "teal": return .teal
+        default: return .gray
+        }
+    }
+    
+    private func scoreColor(_ score: Double) -> Color {
+        if score >= 80 { return .green }
+        if score >= 60 { return .orange }
+        return .red
+    }
+}
+
+// MARK: - Supporting Views (Add Comment, Approval, Reject Sheets)
+
 struct AddCommentSheet: View {
     let sections: [DocumentSection]
     let onAdd: (String, String) -> Void
     let onCancel: () -> Void
     
-    @State private var selectedSection: String = ""
+    @State private var selectedSection: String = "General"
     @State private var comment: String = ""
     
     @Environment(\.colorScheme) private var colorScheme
-    
-    private var textPrimary: Color {
-        colorScheme == .dark ? .white : .black
-    }
     
     private var textSecondary: Color {
         colorScheme == .dark ? .white.opacity(0.7) : .black.opacity(0.6)
@@ -416,29 +912,18 @@ struct AddCommentSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        onCancel()
-                    }
+                    Button("Cancel") { onCancel() }
                 }
-                
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Add") {
-                        onAdd(selectedSection.isEmpty ? "General" : selectedSection, comment)
-                    }
-                    .fontWeight(.semibold)
-                    .disabled(comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
-            .onAppear {
-                if selectedSection.isEmpty {
-                    selectedSection = "General"
+                    Button("Add") { onAdd(selectedSection, comment) }
+                        .fontWeight(.semibold)
+                        .disabled(comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }
     }
 }
 
-// MARK: - Approval Confirmation Sheet
 struct ApprovalConfirmationSheet: View {
     let documentTitle: String
     let editCount: Int
@@ -447,44 +932,25 @@ struct ApprovalConfirmationSheet: View {
     let onCancel: () -> Void
     
     @State private var confirmationChecked = false
-    
     @Environment(\.colorScheme) private var colorScheme
     
-    private var textPrimary: Color {
-        colorScheme == .dark ? .white : .black
-    }
-    
-    private var textSecondary: Color {
-        colorScheme == .dark ? .white.opacity(0.7) : .black.opacity(0.6)
-    }
+    private var textPrimary: Color { colorScheme == .dark ? .white : .black }
+    private var textSecondary: Color { colorScheme == .dark ? .white.opacity(0.7) : .black.opacity(0.6) }
     
     var body: some View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 24) {
-                    // Success icon
                     ZStack {
-                        Circle()
-                            .fill(Color.green.opacity(0.15))
-                            .frame(width: 80, height: 80)
-                        
-                        Image(systemName: "checkmark.seal.fill")
-                            .font(.system(size: 36))
-                            .foregroundColor(.green)
+                        Circle().fill(Color.green.opacity(0.15)).frame(width: 80, height: 80)
+                        Image(systemName: "checkmark.seal.fill").font(.system(size: 36)).foregroundColor(.green)
                     }
                     
-                    // Title
                     VStack(spacing: 8) {
-                        Text("Approve Document")
-                            .font(.system(size: 20, weight: .bold))
-                            .foregroundColor(textPrimary)
-                        
-                        Text(documentTitle)
-                            .font(.system(size: 14))
-                            .foregroundColor(textSecondary)
+                        Text("Approve Document").font(.system(size: 20, weight: .bold)).foregroundColor(textPrimary)
+                        Text(documentTitle).font(.system(size: 14)).foregroundColor(textSecondary)
                     }
                     
-                    // Summary
                     VStack(alignment: .leading, spacing: 12) {
                         summaryRow(label: "Edits Made", value: "\(editCount)")
                         summaryRow(label: "Status", value: "Ready for Finalization")
@@ -494,46 +960,20 @@ struct ApprovalConfirmationSheet: View {
                     .background(Color.gray.opacity(0.1))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     
-                    // Notes
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Approval Notes (Optional)")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(textSecondary)
-                        
-                        TextEditor(text: $notes)
-                            .frame(height: 80)
-                            .padding(8)
-                            .background(Color.gray.opacity(0.1))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                        Text("Approval Notes (Optional)").font(.system(size: 13, weight: .medium)).foregroundColor(textSecondary)
+                        TextEditor(text: $notes).frame(height: 80).padding(8).background(Color.gray.opacity(0.1)).clipShape(RoundedRectangle(cornerRadius: 8))
                     }
                     
-                    // Confirmation checkbox
-                    Button {
-                        confirmationChecked.toggle()
-                    } label: {
+                    Button { confirmationChecked.toggle() } label: {
                         HStack(alignment: .top, spacing: 12) {
-                            Image(systemName: confirmationChecked ? "checkmark.square.fill" : "square")
-                                .font(.system(size: 20))
-                                .foregroundColor(confirmationChecked ? .green : .gray)
-                            
-                            Text("I have reviewed this document and confirm it is ready for finalization.")
-                                .font(.system(size: 13))
-                                .foregroundColor(textPrimary)
-                                .multilineTextAlignment(.leading)
+                            Image(systemName: confirmationChecked ? "checkmark.square.fill" : "square").font(.system(size: 20)).foregroundColor(confirmationChecked ? .green : .gray)
+                            Text("I have reviewed this document and confirm it is ready for finalization.").font(.system(size: 13)).foregroundColor(textPrimary).multilineTextAlignment(.leading)
                         }
                     }
                     
-                    // Approve button
-                    Button {
-                        onApprove()
-                    } label: {
-                        Text("Approve & Continue")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 14)
-                            .background(confirmationChecked ? Color.green : Color.gray)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                    Button { onApprove() } label: {
+                        Text("Approve & Continue").font(.system(size: 15, weight: .semibold)).foregroundColor(.white).frame(maxWidth: .infinity).padding(.vertical, 14).background(confirmationChecked ? Color.green : Color.gray).clipShape(RoundedRectangle(cornerRadius: 12))
                     }
                     .disabled(!confirmationChecked)
                 }
@@ -542,29 +982,20 @@ struct ApprovalConfirmationSheet: View {
             .navigationTitle("Confirm Approval")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        onCancel()
-                    }
-                }
+                ToolbarItem(placement: .navigationBarLeading) { Button("Cancel") { onCancel() } }
             }
         }
     }
     
     private func summaryRow(label: String, value: String) -> some View {
         HStack {
-            Text(label)
-                .font(.system(size: 13))
-                .foregroundColor(textSecondary)
+            Text(label).font(.system(size: 13)).foregroundColor(textSecondary)
             Spacer()
-            Text(value)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(textPrimary)
+            Text(value).font(.system(size: 13, weight: .medium)).foregroundColor(textPrimary)
         }
     }
 }
 
-// MARK: - Reject Document Sheet
 struct RejectDocumentSheet: View {
     @Binding var reason: String
     let onReject: () -> Void
@@ -572,99 +1003,45 @@ struct RejectDocumentSheet: View {
     
     @Environment(\.colorScheme) private var colorScheme
     
-    private var textPrimary: Color {
-        colorScheme == .dark ? .white : .black
-    }
+    private var textPrimary: Color { colorScheme == .dark ? .white : .black }
+    private var textSecondary: Color { colorScheme == .dark ? .white.opacity(0.7) : .black.opacity(0.6) }
     
-    private var textSecondary: Color {
-        colorScheme == .dark ? .white.opacity(0.7) : .black.opacity(0.6)
-    }
-    
-    private let commonReasons = [
-        "Inaccurate information",
-        "Missing policy references",
-        "Inappropriate tone",
-        "Requires HR consultation",
-        "Additional evidence needed"
-    ]
+    private let commonReasons = ["Inaccurate information", "Missing policy references", "Inappropriate tone", "Requires HR consultation", "Additional evidence needed"]
     
     var body: some View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 24) {
-                    // Warning icon
                     ZStack {
-                        Circle()
-                            .fill(Color.red.opacity(0.15))
-                            .frame(width: 80, height: 80)
-                        
-                        Image(systemName: "xmark.seal.fill")
-                            .font(.system(size: 36))
-                            .foregroundColor(.red)
+                        Circle().fill(Color.red.opacity(0.15)).frame(width: 80, height: 80)
+                        Image(systemName: "xmark.seal.fill").font(.system(size: 36)).foregroundColor(.red)
                     }
                     
-                    // Title
                     VStack(spacing: 8) {
-                        Text("Reject Document")
-                            .font(.system(size: 20, weight: .bold))
-                            .foregroundColor(textPrimary)
-                        
-                        Text("This will return the document for regeneration")
-                            .font(.system(size: 14))
-                            .foregroundColor(textSecondary)
+                        Text("Reject Document").font(.system(size: 20, weight: .bold)).foregroundColor(textPrimary)
+                        Text("This will return the document for regeneration").font(.system(size: 14)).foregroundColor(textSecondary)
                     }
                     
-                    // Common reasons
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Common Reasons")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(textSecondary)
-                        
+                        Text("Common Reasons").font(.system(size: 13, weight: .medium)).foregroundColor(textSecondary)
                         EditorFlowLayout(spacing: 8) {
                             ForEach(commonReasons, id: \.self) { commonReason in
                                 Button {
-                                    if reason.isEmpty {
-                                        reason = commonReason
-                                    } else {
-                                        reason += ", \(commonReason)"
-                                    }
+                                    reason = reason.isEmpty ? commonReason : reason + ", " + commonReason
                                 } label: {
-                                    Text(commonReason)
-                                        .font(.system(size: 12))
-                                        .foregroundColor(.red)
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 6)
-                                        .background(Color.red.opacity(0.1))
-                                        .clipShape(Capsule())
+                                    Text(commonReason).font(.system(size: 12)).foregroundColor(.red).padding(.horizontal, 10).padding(.vertical, 6).background(Color.red.opacity(0.1)).clipShape(Capsule())
                                 }
                             }
                         }
                     }
                     
-                    // Reason text
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Rejection Reason")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(textSecondary)
-                        
-                        TextEditor(text: $reason)
-                            .frame(height: 120)
-                            .padding(8)
-                            .background(Color.gray.opacity(0.1))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                        Text("Rejection Reason").font(.system(size: 13, weight: .medium)).foregroundColor(textSecondary)
+                        TextEditor(text: $reason).frame(height: 120).padding(8).background(Color.gray.opacity(0.1)).clipShape(RoundedRectangle(cornerRadius: 8))
                     }
                     
-                    // Reject button
-                    Button {
-                        onReject()
-                    } label: {
-                        Text("Reject Document")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 14)
-                            .background(reason.isEmpty ? Color.gray : Color.red)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                    Button { onReject() } label: {
+                        Text("Reject Document").font(.system(size: 15, weight: .semibold)).foregroundColor(.white).frame(maxWidth: .infinity).padding(.vertical, 14).background(reason.isEmpty ? Color.gray : Color.red).clipShape(RoundedRectangle(cornerRadius: 12))
                     }
                     .disabled(reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
@@ -673,17 +1050,12 @@ struct RejectDocumentSheet: View {
             .navigationTitle("Reject")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        onCancel()
-                    }
-                }
+                ToolbarItem(placement: .navigationBarLeading) { Button("Cancel") { onCancel() } }
             }
         }
     }
 }
 
-// MARK: - Flow Layout
 struct EditorFlowLayout: Layout {
     var spacing: CGFloat = 8
     
@@ -695,9 +1067,7 @@ struct EditorFlowLayout: Layout {
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         let result = FlowResult(in: bounds.width, subviews: subviews, spacing: spacing)
         for (index, subview) in subviews.enumerated() {
-            subview.place(at: CGPoint(x: bounds.minX + result.positions[index].x,
-                                      y: bounds.minY + result.positions[index].y),
-                         proposal: .unspecified)
+            subview.place(at: CGPoint(x: bounds.minX + result.positions[index].x, y: bounds.minY + result.positions[index].y), proposal: .unspecified)
         }
     }
     
@@ -712,18 +1082,15 @@ struct EditorFlowLayout: Layout {
             
             for subview in subviews {
                 let size = subview.sizeThatFits(.unspecified)
-                
                 if x + size.width > maxWidth && x > 0 {
                     x = 0
                     y += rowHeight + spacing
                     rowHeight = 0
                 }
-                
                 positions.append(CGPoint(x: x, y: y))
                 rowHeight = max(rowHeight, size.height)
                 x += size.width + spacing
             }
-            
             self.size = CGSize(width: maxWidth, height: y + rowHeight)
         }
     }

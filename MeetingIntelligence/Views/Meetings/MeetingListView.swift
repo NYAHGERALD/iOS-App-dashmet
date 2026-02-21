@@ -6,43 +6,61 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct MeetingListView: View {
     @StateObject private var viewModel = MeetingViewModel()
     @EnvironmentObject var appState: AppState
     
     @State private var showNewMeeting = false
+    @State private var showNewMeetingWithAudio = false
     @State private var selectedMeeting: Meeting?
     @State private var showMeetingDetail = false
     @State private var showQuickRecord = false
+    @State private var showFilePicker = false
+    @State private var importedAudioURL: URL?
     @State private var searchText = ""
     @State private var showFilterMenu = false
     
-    // TODO: Replace with actual user context from AppState
-    private let testUserId = "84f500d4-eb06-456f-8972-f706d89a5828"
-    private let testOrganizationId = "a0f1ca04-ee78-439b-94df-95c4803ffbf7"
+    var onMenuTap: (() -> Void)?
     
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                // Search bar
-                searchBar
-                
-                // Content
-                if viewModel.isLoading && viewModel.meetings.isEmpty {
-                    loadingView
-                } else if viewModel.hasNoMeetings {
-                    emptyStateView
-                } else {
-                    meetingList
+            ZStack(alignment: .bottomTrailing) {
+                VStack(spacing: 0) {
+                    // Search bar
+                    searchBar
+                    
+                    // Content
+                    if viewModel.isLoading && viewModel.meetings.isEmpty {
+                        loadingView
+                    } else if viewModel.hasNoMeetings {
+                        emptyStateView
+                    } else {
+                        meetingList
+                    }
                 }
+                
+                // Floating Add Button
+                floatingAddButton
             }
             .background(AppColors.background)
             .navigationTitle("Meetings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                // Left: Filter Menu
+                // Left: Hamburger Menu
                 ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        onMenuTap?()
+                    } label: {
+                        Image(systemName: "line.3.horizontal")
+                            .font(.title2)
+                            .foregroundStyle(AppGradients.primary)
+                    }
+                }
+                
+                // Right: Filter Menu
+                ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         ForEach(MeetingFilter.allCases, id: \.self) { filter in
                             Button {
@@ -79,43 +97,27 @@ struct MeetingListView: View {
                         .foregroundColor(viewModel.selectedFilter == .all ? AppColors.textPrimary : AppColors.primary)
                     }
                 }
-                
-                // Right: Add Menu
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button {
-                            showNewMeeting = true
-                        } label: {
-                            Label("New Meeting", systemImage: "calendar.badge.plus")
-                        }
-                        
-                        Button {
-                            showQuickRecord = true
-                        } label: {
-                            Label("Quick Record", systemImage: "mic.fill")
-                        }
-                        
-                        Divider()
-                        
-                        Button {
-                            // Import recording
-                        } label: {
-                            Label("Import Recording", systemImage: "arrow.down.doc")
-                        }
-                    } label: {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.title2)
-                            .foregroundStyle(AppGradients.primary)
-                    }
-                }
             }
             .sheet(isPresented: $showNewMeeting) {
-                NewMeetingView(viewModel: viewModel) { meeting in
+                NewMeetingView(viewModel: viewModel, importedAudioURL: nil) { meeting in
                     selectedMeeting = meeting
+                }
+            }
+            .sheet(isPresented: $showNewMeetingWithAudio) {
+                NewMeetingView(viewModel: viewModel, importedAudioURL: importedAudioURL) { meeting in
+                    selectedMeeting = meeting
+                    importedAudioURL = nil
                 }
             }
             .fullScreenCover(isPresented: $showQuickRecord) {
                 QuickRecordView(meetingViewModel: viewModel)
+            }
+            .fileImporter(
+                isPresented: $showFilePicker,
+                allowedContentTypes: [.audio, .mp3, .wav, .aiff, UTType(filenameExtension: "m4a") ?? .audio],
+                allowsMultipleSelection: false
+            ) { result in
+                handleFileImport(result)
             }
             .sheet(item: $selectedMeeting) { meeting in
                 MeetingDetailTabbedView(meeting: meeting, meetingViewModel: viewModel)
@@ -124,8 +126,13 @@ struct MeetingListView: View {
                 await viewModel.refreshMeetings()
             }
             .task {
-                viewModel.configure(userId: testUserId, organizationId: testOrganizationId)
-                await viewModel.fetchMeetings()
+                // Configure view model with actual logged-in user
+                if let userId = appState.currentUserID {
+                    viewModel.configure(userId: userId, organizationId: appState.organizationId)
+                    await viewModel.fetchMeetings()
+                } else {
+                    print("⚠️ MeetingListView: No user ID available")
+                }
             }
             .alert("Error", isPresented: .constant(viewModel.errorMessage != nil)) {
                 Button("OK") {
@@ -162,23 +169,42 @@ struct MeetingListView: View {
         .padding(.vertical, AppSpacing.sm)
     }
     
-    // MARK: - Floating Action Button
-    private var floatingActionButton: some View {
-        Button {
-            showQuickRecord = true
+    // MARK: - Floating Add Button
+    private var floatingAddButton: some View {
+        Menu {
+            Button {
+                showNewMeeting = true
+            } label: {
+                Label("New Meeting", systemImage: "calendar.badge.plus")
+            }
+            
+            Button {
+                showQuickRecord = true
+            } label: {
+                Label("Quick Record", systemImage: "mic.fill")
+            }
+            
+            Divider()
+            
+            Button {
+                showFilePicker = true
+            } label: {
+                Label("Import Recording", systemImage: "arrow.down.doc")
+            }
         } label: {
-            Image(systemName: "mic.fill")
+            Image(systemName: "plus")
                 .font(.title2)
+                .fontWeight(.semibold)
                 .foregroundColor(.white)
-                .frame(width: 60, height: 60)
+                .frame(width: 56, height: 56)
                 .background(
                     Circle()
-                        .fill(AppColors.error)
-                        .shadow(color: AppColors.error.opacity(0.4), radius: 12, x: 0, y: 6)
+                        .fill(AppGradients.primary)
+                        .shadow(color: AppColors.primary.opacity(0.4), radius: 12, x: 0, y: 6)
                 )
         }
-        .padding(.trailing, AppSpacing.md)
-        .padding(.bottom, AppSpacing.md)
+        .padding(.trailing, AppSpacing.lg)
+        .padding(.bottom, AppSpacing.xl)
     }
     
     private func countForFilter(_ filter: MeetingFilter) -> Int {
@@ -188,6 +214,38 @@ struct MeetingListView: View {
         case .processing: return viewModel.processingCount
         case .ready: return viewModel.readyCount
         case .published: return viewModel.publishedCount
+        }
+    }
+    
+    // MARK: - File Import Handler
+    private func handleFileImport(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            guard let url = urls.first else { return }
+            
+            // Access security-scoped resource
+            guard url.startAccessingSecurityScopedResource() else {
+                viewModel.errorMessage = "Unable to access the selected file"
+                return
+            }
+            
+            defer { url.stopAccessingSecurityScopedResource() }
+            
+            // Copy file to temp directory
+            let tempURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension(url.pathExtension)
+            
+            do {
+                try FileManager.default.copyItem(at: url, to: tempURL)
+                importedAudioURL = tempURL
+                showNewMeetingWithAudio = true
+            } catch {
+                viewModel.errorMessage = "Failed to load file: \(error.localizedDescription)"
+            }
+            
+        case .failure(let error):
+            viewModel.errorMessage = "File selection failed: \(error.localizedDescription)"
         }
     }
     
@@ -269,7 +327,7 @@ struct MeetingListView: View {
                             Label("View Details", systemImage: "eye")
                         }
                         
-                        if meeting.status == .draft {
+                        if meeting.safeStatus == .draft {
                             Button {
                                 // Start recording
                             } label: {
@@ -304,15 +362,15 @@ struct EnterpriseMeetingRow: View {
         Button(action: onTap) {
             HStack(spacing: AppSpacing.md) {
                 // Meeting Type Icon
-                Image(systemName: meeting.meetingType.icon)
+                Image(systemName: meeting.safeMeetingType.icon)
                     .font(.title3)
                     .foregroundColor(.white)
                     .frame(width: 48, height: 48)
                     .background(
                         LinearGradient(
                             colors: [
-                                Color(hex: meeting.meetingType.color),
-                                Color(hex: meeting.meetingType.color).opacity(0.8)
+                                Color(hex: meeting.safeMeetingType.color),
+                                Color(hex: meeting.safeMeetingType.color).opacity(0.8)
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
@@ -331,7 +389,7 @@ struct EnterpriseMeetingRow: View {
                         Spacer()
                         
                         // Status badge
-                        MeetingStatusBadge(status: meeting.status)
+                        MeetingStatusBadge(status: meeting.safeStatus.rawValue)
                     }
                     
                     HStack(spacing: AppSpacing.md) {
@@ -485,7 +543,7 @@ struct MeetingRowView: View {
                 
                 HStack(spacing: 8) {
                     // Type
-                    Label(meeting.meetingType.displayName, systemImage: meeting.meetingType.icon)
+                    Label(meeting.safeMeetingType.displayName, systemImage: meeting.safeMeetingType.icon)
                         .font(.caption)
                         .foregroundColor(.secondary)
                     
@@ -528,27 +586,27 @@ struct MeetingRowView: View {
     }
     
     private var meetingTypeIcon: some View {
-        Image(systemName: meeting.meetingType.icon)
+        Image(systemName: meeting.safeMeetingType.icon)
             .font(.title3)
             .foregroundColor(.white)
             .frame(width: 44, height: 44)
-            .background(Color(hex: meeting.meetingType.color))
+            .background(Color(hex: meeting.safeMeetingType.color))
             .clipShape(RoundedRectangle(cornerRadius: 10))
     }
     
     private var statusBadge: some View {
         HStack(spacing: 4) {
-            Image(systemName: meeting.status.icon)
+            Image(systemName: meeting.safeStatus.icon)
                 .font(.caption2)
             
-            Text(meeting.status.displayName)
+            Text(meeting.safeStatus.displayName)
                 .font(.caption)
                 .fontWeight(.medium)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color(hex: meeting.status.color).opacity(0.15))
-        .foregroundColor(Color(hex: meeting.status.color))
+        .background(Color(hex: meeting.safeStatus.color).opacity(0.15))
+        .foregroundColor(Color(hex: meeting.safeStatus.color))
         .clipShape(Capsule())
     }
 }
@@ -567,9 +625,9 @@ struct MeetingDetailView: View {
                 // Header Section
                 Section {
                     VStack(alignment: .center, spacing: 16) {
-                        Image(systemName: meeting.meetingType.icon)
+                        Image(systemName: meeting.safeMeetingType.icon)
                             .font(.system(size: 48))
-                            .foregroundColor(Color(hex: meeting.meetingType.color))
+                            .foregroundColor(Color(hex: meeting.safeMeetingType.color))
                         
                         Text(meeting.displayTitle)
                             .font(.title2)
@@ -577,14 +635,14 @@ struct MeetingDetailView: View {
                             .multilineTextAlignment(.center)
                         
                         HStack(spacing: 4) {
-                            Image(systemName: meeting.status.icon)
-                            Text(meeting.status.displayName)
+                            Image(systemName: meeting.safeStatus.icon)
+                            Text(meeting.safeStatus.displayName)
                         }
                         .font(.subheadline)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
-                        .background(Color(hex: meeting.status.color).opacity(0.15))
-                        .foregroundColor(Color(hex: meeting.status.color))
+                        .background(Color(hex: meeting.safeStatus.color).opacity(0.15))
+                        .foregroundColor(Color(hex: meeting.safeStatus.color))
                         .clipShape(Capsule())
                     }
                     .frame(maxWidth: .infinity)
@@ -593,7 +651,7 @@ struct MeetingDetailView: View {
                 
                 // Details Section
                 Section("Details") {
-                    LabeledContent("Type", value: meeting.meetingType.displayName)
+                    LabeledContent("Type", value: meeting.safeMeetingType.displayName)
                     
                     if let location = meeting.location, !location.isEmpty {
                         LabeledContent("Location", value: location)
@@ -609,7 +667,7 @@ struct MeetingDetailView: View {
                         LabeledContent("Recorded", value: recordedDate)
                     }
                     
-                    if !meeting.tags.isEmpty {
+                    if !meeting.safeTags.isEmpty {
                         LabeledContent("Tags", value: meeting.tagsFormatted)
                     }
                 }
@@ -627,7 +685,7 @@ struct MeetingDetailView: View {
                 
                 // Actions Section
                 Section {
-                    if meeting.status.isEditable {
+                    if meeting.safeStatus.isEditable {
                         Button {
                             // TODO: Navigate to edit view
                         } label: {
@@ -635,12 +693,12 @@ struct MeetingDetailView: View {
                         }
                     }
                     
-                    if meeting.status == .draft || meeting.status == .recording {
+                    if meeting.safeStatus == .draft || meeting.safeStatus == .recording {
                         Button {
                             showRecording = true
                         } label: {
                             Label(
-                                meeting.status == .recording ? "Continue Recording" : "Start Recording",
+                                meeting.safeStatus == .recording ? "Continue Recording" : "Start Recording",
                                 systemImage: "mic.fill"
                             )
                             .foregroundColor(.red)

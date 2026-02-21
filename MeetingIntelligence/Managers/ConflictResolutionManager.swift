@@ -777,15 +777,57 @@ class ConflictResolutionManager: ObservableObject {
                        let json = try? JSONSerialization.jsonObject(with: data) {
                         updates["aiRecommendationsJson"] = json
                     }
+                    // Save full recommendation result for UI restoration
+                    if let recResult = caseToUpdate.recommendationResult,
+                       let data = try? JSONEncoder().encode(recResult),
+                       let json = try? JSONSerialization.jsonObject(with: data) {
+                        updates["recommendationResultJson"] = json
+                    }
                     if !caseToUpdate.policyMatches.isEmpty,
                        let data = try? JSONEncoder().encode(caseToUpdate.policyMatches),
                        let json = try? JSONSerialization.jsonObject(with: data) {
                         updates["policyMatchesJson"] = json
                     }
+                    // Save full policy matching result for UI restoration
+                    if let polResult = caseToUpdate.policyMatchingResult,
+                       let data = try? JSONEncoder().encode(polResult),
+                       let json = try? JSONSerialization.jsonObject(with: data) {
+                        updates["policyMatchingResultJson"] = json
+                    }
                     if let actionDoc = caseToUpdate.generatedDocument,
                        let data = try? JSONEncoder().encode(actionDoc),
                        let json = try? JSONSerialization.jsonObject(with: data) {
                         updates["generatedActionDocJson"] = json
+                    }
+                    // Save full generated document result for complete UI restoration
+                    if let fullResult = caseToUpdate.fullGeneratedDocumentResult,
+                       let data = try? JSONEncoder().encode(fullResult),
+                       let json = try? JSONSerialization.jsonObject(with: data) {
+                        updates["fullGeneratedDocumentResultJson"] = json
+                    }
+                    
+                    // Save target employee IDs for action
+                    if !caseToUpdate.selectedTargetEmployeeIds.isEmpty {
+                        updates["selectedTargetEmployeeIdsJson"] = caseToUpdate.selectedTargetEmployeeIds.map { $0.uuidString }
+                        print("🎯 Manager: sending selectedTargetEmployeeIdsJson: \(caseToUpdate.selectedTargetEmployeeIds.map { $0.uuidString })")
+                    }
+                    
+                    // Sync involved employees to backend
+                    if !caseToUpdate.involvedEmployees.isEmpty {
+                        let employeesData = caseToUpdate.involvedEmployees.map { emp -> [String: Any] in
+                            var empDict: [String: Any] = [
+                                "id": emp.id.uuidString,
+                                "name": emp.name,
+                                "role": emp.role,
+                                "department": emp.department,
+                                "isComplainant": emp.isComplainant
+                            ]
+                            if let employeeId = emp.employeeId {
+                                empDict["employeeId"] = employeeId
+                            }
+                            return empDict
+                        }
+                        updates["involvedEmployeesJson"] = employeesData
                     }
                     
                     _ = try await caseService.updateCase(id: backendId, updates: updates, userId: userId)

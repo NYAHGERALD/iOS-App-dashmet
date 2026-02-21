@@ -159,17 +159,22 @@ struct OverviewTab: View {
     @Binding var selectedTab: MeetingTab
     @Binding var shouldExtractActionItems: Bool
     
-    @State private var showAudioPlayer = false
-    @State private var showTranscriptReview = false
+    // Presentation states (passed from parent to prevent reset on view recreation)
+    @Binding var showTranscriptReview: Bool
+    @Binding var showAISummary: Bool
+    @Binding var showAudioPlayer: Bool
+    @Binding var showAISummaryAudioPlayer: Bool
+    
+    // Data synced to parent for presentation modifiers
+    @Binding var rawTranscript: String
+    @Binding var localRecordingURL: URL?
+    @Binding var savedAISummary: SavedAISummary?
+    var aiSummaryAudioPlayer: URLAudioPlayer
+    
     @State private var showRecording = false
-    @State private var showAISummary = false
-    @State private var rawTranscript: String = ""
-    @State private var localRecordingURL: URL?
-    @State private var savedAISummary: SavedAISummary?
+    @State private var showTranscriptGeneration = false
     @State private var isTranscriptFromDatabase: Bool = false
-    @State private var showAISummaryAudioPlayer = false
     @State private var scrollOffset: CGFloat = 0
-    @StateObject private var aiSummaryAudioPlayer = URLAudioPlayer()
     
     var body: some View {
         ScrollView {
@@ -193,6 +198,12 @@ struct OverviewTab: View {
                     // Meeting Details
                     compactDetailsSection
                     thinSeparator
+                    
+                    // Recording Actions (when recording exists but no transcript)
+                    if hasRecording && !hasTranscript {
+                        recordingActionsSection
+                        thinSeparator
+                    }
                     
                     // Transcript Section
                     if hasTranscript {
@@ -248,15 +259,11 @@ struct OverviewTab: View {
         .onChange(of: showTranscriptReview) { _, newValue in
             if !newValue { loadLocalData() }
         }
-        .onChange(of: showRecording) { _, newValue in
+        .onChange(of: showAISummary) { _, newValue in
             if !newValue { loadLocalData() }
         }
-        .fullScreenCover(isPresented: $showTranscriptReview) {
-            TranscriptReviewView(
-                meeting: viewModel.meeting,
-                rawTranscript: rawTranscript,
-                recordingURL: localRecordingURL ?? getLocalRecordingURL()
-            )
+        .onChange(of: showRecording) { _, newValue in
+            if !newValue { loadLocalData() }
         }
         .fullScreenCover(isPresented: $showRecording) {
             RecordingView(meeting: viewModel.meeting, meetingViewModel: meetingViewModel) { _ in
@@ -266,25 +273,24 @@ struct OverviewTab: View {
                 }
             }
         }
-        .sheet(isPresented: $showAudioPlayer) {
-            AudioPlayerSheet(
-                meeting: viewModel.meeting,
-                recordingURL: localRecordingURL ?? getLocalRecordingURL()
-            )
-        }
-        .fullScreenCover(isPresented: $showAISummary) {
-            AISummaryView(
-                meeting: viewModel.meeting,
-                transcript: rawTranscript,
-                onSummarySaved: { loadLocalData() }
-            )
-        }
-        .sheet(isPresented: $showAISummaryAudioPlayer) {
-            if let summary = savedAISummary, let audioUrl = summary.audioUrl, !audioUrl.isEmpty {
-                AISummaryAudioPlayerSheet(
-                    audioUrl: audioUrl,
-                    meetingTitle: viewModel.meeting.title ?? "Meeting",
-                    audioPlayer: aiSummaryAudioPlayer
+        .fullScreenCover(isPresented: $showTranscriptGeneration) {
+            if let recordingURL = localRecordingURL {
+                TranscriptGenerationView(
+                    audioURL: recordingURL,
+                    meeting: viewModel.meeting,
+                    onComplete: { generatedTranscript in
+                        // Save generated transcript and navigate to review
+                        rawTranscript = generatedTranscript.processedText.isEmpty ? generatedTranscript.rawText : generatedTranscript.processedText
+                        showTranscriptGeneration = false
+                        
+                        // Navigate to transcript review after a brief delay
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            showTranscriptReview = true
+                        }
+                    },
+                    onCancel: {
+                        showTranscriptGeneration = false
+                    }
                 )
             }
         }
@@ -305,7 +311,7 @@ struct OverviewTab: View {
             HStack(spacing: 6) {
                 Image(systemName: meetingTypeIcon)
                     .font(.system(size: 13))
-                Text(viewModel.meeting.meetingType.displayName)
+                Text(viewModel.meeting.safeMeetingType.displayName)
                     .font(.system(size: 14, weight: .medium))
             }
             .foregroundColor(AppColors.primary)
@@ -352,8 +358,8 @@ struct OverviewTab: View {
             
             Spacer()
             
-            // Quick actions
-            if hasRecording {
+            // Quick actions - only show play button if local file exists
+            if localRecordingURL != nil {
                 Button {
                     showAudioPlayer = true
                 } label: {
@@ -361,6 +367,7 @@ struct OverviewTab: View {
                         .font(.system(size: 24))
                         .foregroundColor(AppColors.primary)
                 }
+                .buttonStyle(.plain)
             }
         }
         .padding(16)
@@ -373,13 +380,13 @@ struct OverviewTab: View {
             sectionHeader(title: "Details", icon: "info.circle")
             
             VStack(spacing: 12) {
-                detailRow(icon: "globe", label: "Language", value: languageName(for: viewModel.meeting.language))
+                detailRow(icon: "globe", label: "Language", value: languageName(for: viewModel.meeting.safeLanguage))
                 
                 if let location = viewModel.meeting.location, !location.isEmpty {
                     detailRow(icon: "location", label: "Location", value: location)
                 }
                 
-                if !viewModel.meeting.tags.isEmpty {
+                if !viewModel.meeting.safeTags.isEmpty {
                     HStack(alignment: .top) {
                         Image(systemName: "tag")
                             .font(.system(size: 13))
@@ -392,7 +399,7 @@ struct OverviewTab: View {
                             .frame(width: 70, alignment: .leading)
                         
                         FlowLayout(spacing: 6) {
-                            ForEach(viewModel.meeting.tags, id: \.self) { tag in
+                            ForEach(viewModel.meeting.safeTags, id: \.self) { tag in
                                 Text(tag)
                                     .font(.system(size: 13))
                                     .foregroundColor(AppColors.primary)
@@ -402,6 +409,76 @@ struct OverviewTab: View {
                                     .clipShape(Capsule())
                             }
                         }
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
+        }
+    }
+    
+    // MARK: - Recording Actions Section (when recording exists but no transcript)
+    private var recordingActionsSection: some View {
+        VStack(spacing: 0) {
+            // Section Header
+            sectionHeader(title: "Recording", icon: "waveform")
+            
+            VStack(spacing: 12) {
+                // Info message
+                HStack(spacing: 10) {
+                    Image(systemName: "info.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(AppColors.info)
+                    
+                    Text("Your recording is saved. Generate a transcript to unlock AI features.")
+                        .font(.system(size: 14))
+                        .foregroundColor(AppColors.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(12)
+                .background(AppColors.info.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                
+                // Action buttons
+                HStack(spacing: 10) {
+                    // Play Recording button
+                    if localRecordingURL != nil {
+                        Button {
+                            showAudioPlayer = true
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "play.circle.fill")
+                                    .font(.system(size: 16))
+                                Text("Play Recording")
+                                    .font(.system(size: 15, weight: .medium))
+                            }
+                            .foregroundColor(AppColors.primary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(AppColors.primary.opacity(0.1))
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    
+                    // Generate Transcript button
+                    if let recordingURL = localRecordingURL {
+                        Button {
+                            showTranscriptGeneration = true
+                        } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "text.badge.plus")
+                                .font(.system(size: 16))
+                            Text("Generate Transcript")
+                                .font(.system(size: 15, weight: .medium))
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(AppColors.primary)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -467,6 +544,7 @@ struct OverviewTab: View {
                     .background(AppColors.primary)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
+                .buttonStyle(.plain)
                 
                 // AI Summary button
                 if let summary = savedAISummary, !summary.briefSummary.isEmpty {
@@ -491,48 +569,58 @@ struct OverviewTab: View {
                             Text("System Summary")
                                 .font(.system(size: 15, weight: .medium))
                         }
-                        .foregroundColor(AppColors.textPrimary)
+                        .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 12)
-                        .background(Color.white.opacity(0.08))
+                        .background(
+                            LinearGradient(
+                                colors: [Color.purple, Color.purple.opacity(0.7)],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
+                    .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal, 16)
             
-            // Actions - Second Row (Extract Action Items)
-            Button {
-                // Set flag to trigger AI extraction when navigating to Action Items tab
-                shouldExtractActionItems = true
-                withAnimation {
-                    selectedTab = .actionItems
-                }
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 14))
-                    Text("Extract Action Items")
-                        .font(.system(size: 15, weight: .medium))
-                    Spacer()
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 12))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(
-                    LinearGradient(
-                        colors: [Color(hex: "8B5CF6"), Color(hex: "6366F1")],
-                        startPoint: .leading,
-                        endPoint: .trailing
+            // Actions - Second Row (Extract Action Items) - only show if no action items exist
+            if viewModel.actionItems.isEmpty {
+                Button {
+                    // Set flag to trigger AI extraction when navigating to Action Items tab
+                    shouldExtractActionItems = true
+                    withAnimation {
+                        selectedTab = .actionItems
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 14))
+                        Text("Extract Action Items")
+                            .font(.system(size: 15, weight: .medium))
+                        Spacer()
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 12))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(
+                        LinearGradient(
+                            colors: [Color(hex: "8B5CF6"), Color(hex: "6366F1")],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
                     )
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 16)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 16)
         }
     }
     
@@ -594,6 +682,7 @@ struct OverviewTab: View {
                     .background(Color.purple.opacity(0.1))
                     .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
+                .buttonStyle(.plain)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 14)
             }
@@ -869,7 +958,7 @@ struct OverviewTab: View {
     }
     
     private var meetingTypeIcon: String {
-        viewModel.meeting.meetingType.icon
+        viewModel.meeting.safeMeetingType.icon
     }
     
     private var formattedDate: String {
@@ -883,7 +972,7 @@ struct OverviewTab: View {
         if hasRecording || hasTranscript {
             return AppColors.success
         }
-        switch viewModel.meeting.status {
+        switch viewModel.meeting.safeStatus {
         case .draft: return AppColors.textSecondary
         case .recording: return .red
         case .uploading, .uploaded: return AppColors.info
@@ -898,7 +987,7 @@ struct OverviewTab: View {
         if hasRecording || hasTranscript {
             return "Recording Complete"
         }
-        switch viewModel.meeting.status {
+        switch viewModel.meeting.safeStatus {
         case .draft: return "Draft"
         case .recording: return "Recording"
         case .uploading: return "Uploading"
@@ -928,12 +1017,25 @@ struct OverviewTab: View {
     private func getLocalRecordingURL() -> URL? {
         let fileManager = FileManager.default
         let documentsDirectory = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
-        let recordingsDirectory = documentsDirectory.appendingPathComponent("recordings")
-        let meetingRecordingURL = recordingsDirectory.appendingPathComponent("\(viewModel.meeting.id).m4a")
+        let recordingsDirectory = documentsDirectory.appendingPathComponent("Recordings")
         
-        if fileManager.fileExists(atPath: meetingRecordingURL.path) {
-            return meetingRecordingURL
+        // First check for exact match (legacy format): {meetingId}.m4a
+        let legacyURL = recordingsDirectory.appendingPathComponent("\(viewModel.meeting.id).m4a")
+        if fileManager.fileExists(atPath: legacyURL.path) {
+            return legacyURL
         }
+        
+        // Search for timestamped format: meeting_{meetingId}_{timestamp}.m4a
+        do {
+            let files = try fileManager.contentsOfDirectory(at: recordingsDirectory, includingPropertiesForKeys: nil)
+            let meetingPrefix = "meeting_\(viewModel.meeting.id)_"
+            if let recording = files.first(where: { $0.lastPathComponent.hasPrefix(meetingPrefix) && $0.pathExtension == "m4a" }) {
+                return recording
+            }
+        } catch {
+            print("⚠️ Error scanning recordings directory: \(error.localizedDescription)")
+        }
+        
         return nil
     }
     

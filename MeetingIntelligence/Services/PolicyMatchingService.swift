@@ -121,11 +121,16 @@ class PolicyMatchingService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
-        request.timeoutInterval = 90 // 1.5 minutes for policy matching
+        request.timeoutInterval = 120 // 2 minutes for policy matching (accounts for Render cold start + GPT-4o processing)
         
-        print("PolicyMatchingService: Starting policy matching...")
+        let startTime = Date()
+        print("PolicyMatchingService: Starting policy matching at \(startTime)")
+        print("PolicyMatchingService: Sending \(policySections.count) policy sections for analysis...")
         
         let (data, response) = try await URLSession.shared.data(for: request)
+        
+        let elapsed = Date().timeIntervalSince(startTime)
+        print("PolicyMatchingService: Response received in \(String(format: "%.1f", elapsed))s")
         
         guard let httpResponse = response as? HTTPURLResponse else {
             throw PolicyMatchingError.invalidResponse
@@ -220,7 +225,7 @@ enum PolicyMatchingError: Error, LocalizedError {
 // MARK: - Policy Matching Models
 
 /// Result of policy matching analysis
-struct PolicyMatchingResult {
+struct PolicyMatchingResult: Codable {
     let matches: [PolicyMatchResult]
     let overallGuidance: String
     let generatedAt: Date
@@ -239,14 +244,24 @@ struct PolicyMatchingResult {
 }
 
 /// Individual policy match result
-struct PolicyMatchResult: Identifiable {
-    let id = UUID()
+struct PolicyMatchResult: Identifiable, Codable {
+    let id: UUID
     let sectionId: UUID
     let sectionNumber: String
     let sectionTitle: String
     let relevanceExplanation: String
     let matchConfidence: Double
     let keyPhrases: [String]
+    
+    init(id: UUID = UUID(), sectionId: UUID, sectionNumber: String, sectionTitle: String, relevanceExplanation: String, matchConfidence: Double, keyPhrases: [String]) {
+        self.id = id
+        self.sectionId = sectionId
+        self.sectionNumber = sectionNumber
+        self.sectionTitle = sectionTitle
+        self.relevanceExplanation = relevanceExplanation
+        self.matchConfidence = matchConfidence
+        self.keyPhrases = keyPhrases
+    }
     
     /// Confidence level category
     var confidenceLevel: ConfidenceLevel {

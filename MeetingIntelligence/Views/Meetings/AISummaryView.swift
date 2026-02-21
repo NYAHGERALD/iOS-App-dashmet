@@ -29,6 +29,11 @@ struct AISummaryView: View {
     @State private var isSaved = false
     @State private var showSaveSuccess = false
     
+    // Voice preview state
+    @State private var previewingVoice: TTSVoice?
+    @State private var isLoadingPreview = false
+    @StateObject private var previewPlayer = SummaryAudioPlayer()
+    
     init(meeting: Meeting, transcript: String, onSummarySaved: (() -> Void)? = nil) {
         self.meeting = meeting
         self.transcript = transcript
@@ -657,42 +662,73 @@ struct AISummaryView: View {
             List {
                 Section {
                     ForEach(TTSVoice.allCases, id: \.self) { voice in
-                        Button {
-                            selectedVoice = voice
-                            showVoiceOptions = false
-                            
-                            // If already have audio, regenerate with new voice
-                            if generationPhase == .ready, let summary = localSummary {
-                                regenerateAudio(for: summary)
-                            }
-                        } label: {
-                            HStack {
-                                Image(systemName: voice.icon)
-                                    .foregroundColor(.purple)
-                                    .frame(width: 30)
+                        HStack {
+                            // Voice info (tap to select)
+                            Button {
+                                // Stop any playing preview
+                                previewPlayer.stop()
+                                previewingVoice = nil
                                 
-                                VStack(alignment: .leading) {
-                                    Text(voice.rawValue.capitalized)
-                                        .font(.headline)
-                                        .foregroundColor(.primary)
-                                    Text(voice.displayName)
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
+                                selectedVoice = voice
+                                showVoiceOptions = false
+                                
+                                // If already have audio, regenerate with new voice
+                                if generationPhase == .ready, let summary = localSummary {
+                                    regenerateAudio(for: summary)
                                 }
-                                
-                                Spacer()
-                                
-                                if selectedVoice == voice {
-                                    Image(systemName: "checkmark.circle.fill")
+                            } label: {
+                                HStack {
+                                    Image(systemName: voice.icon)
                                         .foregroundColor(.purple)
+                                        .frame(width: 30)
+                                    
+                                    VStack(alignment: .leading) {
+                                        Text(voice.rawValue.capitalized)
+                                            .font(.headline)
+                                            .foregroundColor(.primary)
+                                        Text(voice.displayName)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
                                 }
+                            }
+                            
+                            Spacer()
+                            
+                            // Preview button
+                            Button {
+                                playVoicePreview(voice: voice)
+                            } label: {
+                                Group {
+                                    if isLoadingPreview && previewingVoice == voice {
+                                        ProgressView()
+                                            .scaleEffect(0.8)
+                                    } else if previewingVoice == voice && previewPlayer.isPlaying {
+                                        Image(systemName: "stop.circle.fill")
+                                            .font(.system(size: 24))
+                                            .foregroundColor(.purple)
+                                    } else {
+                                        Image(systemName: "play.circle.fill")
+                                            .font(.system(size: 24))
+                                            .foregroundColor(.purple.opacity(0.7))
+                                    }
+                                }
+                                .frame(width: 36, height: 36)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isLoadingPreview && previewingVoice != voice)
+                            
+                            // Selection checkmark
+                            if selectedVoice == voice {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.purple)
                             }
                         }
                     }
                 } header: {
                     Text("Select Voice")
                 } footer: {
-                    Text("Onyx is recommended for professional meeting summaries.")
+                    Text("Tap the play button to preview each voice. Onyx is recommended for professional meeting summaries.")
                 }
             }
             .navigationTitle("Voice Options")
@@ -700,12 +736,70 @@ struct AISummaryView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
+                        // Stop preview when closing
+                        previewPlayer.stop()
+                        previewingVoice = nil
                         showVoiceOptions = false
                     }
                 }
             }
+            .onDisappear {
+                // Clean up preview when sheet closes
+                previewPlayer.stop()
+                previewingVoice = nil
+            }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.medium, .large])
+    }
+    
+    // MARK: - Voice Preview
+    
+    private func playVoicePreview(voice: TTSVoice) {
+        // If this voice is already playing, stop it
+        if previewingVoice == voice && previewPlayer.isPlaying {
+            previewPlayer.stop()
+            previewingVoice = nil
+            return
+        }
+        
+        // Stop any current preview
+        previewPlayer.stop()
+        previewingVoice = voice
+        isLoadingPreview = true
+        
+        Task {
+            do {
+                // Generate a short sample audio
+                let sampleText = "Hello! This is how I sound when reading your meeting summaries. I hope you enjoy this voice."
+                
+                let audioData = try await summaryService.generateAudio(
+                    text: sampleText,
+                    voice: voice,
+                    speed: 1.0
+                )
+                
+                // Load and play
+                previewPlayer.loadFromData(audioData)
+                previewPlayer.togglePlayPause()
+                isLoadingPreview = false
+                
+                // Auto-stop tracking when playback ends
+                Task {
+                    // Wait for playback to potentially finish (sample is ~5 seconds)
+                    try? await Task.sleep(nanoseconds: 6_000_000_000)
+                    if !previewPlayer.isPlaying {
+                        await MainActor.run {
+                            previewingVoice = nil
+                        }
+                    }
+                }
+                
+            } catch {
+                print("❌ Voice preview failed: \(error)")
+                isLoadingPreview = false
+                previewingVoice = nil
+            }
+        }
     }
     
     // MARK: - Actions
@@ -718,7 +812,7 @@ struct AISummaryView: View {
                 
                 let summary = try await summaryService.generateNarrativeSummary(
                     meetingTitle: meeting.title ?? "Meeting",
-                    meetingType: meeting.meetingType.displayName,
+                    meetingType: meeting.safeMeetingType.displayName,
                     meetingDate: meeting.createdAt,
                     duration: meeting.duration != nil ? Int(meeting.duration!) : nil,
                     transcript: transcript

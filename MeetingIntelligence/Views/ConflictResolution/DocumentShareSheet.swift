@@ -23,6 +23,9 @@ struct DocumentShareSheet: UIViewControllerRepresentable {
         case .pdf:
             fileExtension = "pdf"
             mimeType = "application/pdf"
+        case .docx:
+            fileExtension = "docx"
+            mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         case .html:
             fileExtension = "html"
             mimeType = "text/html"

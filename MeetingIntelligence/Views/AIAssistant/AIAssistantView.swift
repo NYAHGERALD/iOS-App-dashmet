@@ -9,6 +9,7 @@
 import SwiftUI
 import SceneKit
 import AVFoundation
+import GLTFKit2
 
 struct AIAssistantView: View {
     @EnvironmentObject var appState: AppState
@@ -677,7 +678,7 @@ struct AudioWaveformView: View {
     }
 }
 
-// MARK: - 3D Avatar Scene (SceneKit) — Realistic Female Avatar
+// MARK: - 3D Avatar Scene (SceneKit + GLTFKit2) — Realistic 3D Model with Blend Shapes
 
 struct AvatarSceneView: UIViewRepresentable {
     let state: AssistantState
@@ -694,9 +695,7 @@ struct AvatarSceneView: UIViewRepresentable {
         let scene = SCNScene()
         scnView.scene = scene
         
-        context.coordinator.setupScene(scene)
-        context.coordinator.scnView = scnView
-        context.coordinator.startIdleAnimations()
+        context.coordinator.setupScene(scene, scnView: scnView)
         
         return scnView
     }
@@ -710,82 +709,72 @@ struct AvatarSceneView: UIViewRepresentable {
     }
 }
 
-// MARK: - Avatar Coordinator — Realistic Female
+// MARK: - Avatar Coordinator — 3D Model with Blend Shape Lip Sync
 
 class AvatarCoordinator {
     var scnView: SCNView?
     private var scene: SCNScene?
     
-    // Body references
-    private var bodyNode: SCNNode?
-    private var shoulderNode: SCNNode?
-    private var headNode: SCNNode?
+    // Model references
+    private var avatarRootNode: SCNNode?
+    private var headBone: SCNNode?
+    private var neckBone: SCNNode?
     
-    // Face references
-    private var leftEyeNode: SCNNode?
-    private var rightEyeNode: SCNNode?
-    private var leftBrowNode: SCNNode?
-    private var rightBrowNode: SCNNode?
-    private var upperLipNode: SCNNode?
-    private var lowerLipNode: SCNNode?
-    private var mouthNode: SCNNode?       // Combined for backward compat
-    private var jawNode: SCNNode?
+    // Morph target system
+    // Maps blend shape name → list of (morpher, targetIndex) so we drive ALL meshes
+    private var blendShapeMap: [String: [(morpher: SCNMorpher, index: Int)]] = [:]
     
     // Effects
     private var glowNode: SCNNode?
-    private var hairNodes: [SCNNode] = []
     
     // State
     private var blinkTimer: Timer?
     private var currentState: AssistantState = .idle
+    private var isModelLoaded = false
     
-    // ─── Shared Materials ───────────────────────────────────
-    
-    private func makeSkinMaterial() -> SCNMaterial {
-        let m = SCNMaterial()
-        // Warm medium-brown skin tone
-        m.diffuse.contents = UIColor(red: 0.62, green: 0.44, blue: 0.34, alpha: 1.0)
-        m.specular.contents = UIColor(white: 0.18, alpha: 1.0)
-        m.roughness.contents = 0.75
-        // Subsurface scattering approximation — warm glow from within
-        m.emission.contents = UIColor(red: 0.12, green: 0.06, blue: 0.04, alpha: 1.0)
-        m.fresnelExponent = 2.0
-        m.lightingModel = .physicallyBased
-        return m
-    }
-    
-    private func makeHairMaterial() -> SCNMaterial {
-        let m = SCNMaterial()
-        // Rich dark brown/black hair
-        m.diffuse.contents = UIColor(red: 0.08, green: 0.06, blue: 0.05, alpha: 1.0)
-        m.specular.contents = UIColor(red: 0.4, green: 0.35, blue: 0.3, alpha: 1.0)
-        m.roughness.contents = 0.45
-        m.metalness.contents = 0.05
-        m.lightingModel = .physicallyBased
-        return m
-    }
+    // Known ARKit blend shape names (ReadyPlayerMe order) — fallback if names aren't set
+    private static let arkitBlendShapeOrder: [String] = [
+        "browDownLeft", "browDownRight", "browInnerUp", "browOuterUpLeft", "browOuterUpRight",
+        "cheekPuff", "cheekSquintLeft", "cheekSquintRight",
+        "eyeBlinkLeft", "eyeBlinkRight", "eyeLookDownLeft", "eyeLookDownRight",
+        "eyeLookInLeft", "eyeLookInRight", "eyeLookOutLeft", "eyeLookOutRight",
+        "eyeLookUpLeft", "eyeLookUpRight", "eyeSquintLeft", "eyeSquintRight",
+        "eyeWideLeft", "eyeWideRight",
+        "jawForward", "jawLeft", "jawOpen", "jawRight",
+        "mouthClose", "mouthDimpleLeft", "mouthDimpleRight",
+        "mouthFrownLeft", "mouthFrownRight", "mouthFunnel", "mouthLeft",
+        "mouthLowerDownLeft", "mouthLowerDownRight",
+        "mouthPressLeft", "mouthPressRight", "mouthPucker", "mouthRight",
+        "mouthRollLower", "mouthRollUpper", "mouthShrugLower", "mouthShrugUpper",
+        "mouthSmileLeft", "mouthSmileRight",
+        "mouthStretchLeft", "mouthStretchRight",
+        "mouthUpperUpLeft", "mouthUpperUpRight",
+        "noseSneerLeft", "noseSneerRight", "tongueOut"
+    ]
     
     // ─── Scene Setup ────────────────────────────────────────
     
-    func setupScene(_ scene: SCNScene) {
+    func setupScene(_ scene: SCNScene, scnView: SCNView) {
         self.scene = scene
+        self.scnView = scnView
         
-        // Camera — slightly closer, centered on face
+        // Camera — framing head/shoulders
         let cameraNode = SCNNode()
         cameraNode.camera = SCNCamera()
-        cameraNode.camera?.fieldOfView = 32
-        cameraNode.camera?.zNear = 0.1
+        cameraNode.camera?.fieldOfView = 30
+        cameraNode.camera?.zNear = 0.01
         cameraNode.camera?.zFar = 100
-        // Depth of field for portrait-like blur
         cameraNode.camera?.wantsDepthOfField = true
-        cameraNode.camera?.focusDistance = 3.2
+        cameraNode.camera?.focusDistance = 0.6
         cameraNode.camera?.fStop = 2.8
-        cameraNode.position = SCNVector3(0, 0.35, 3.2)
-        cameraNode.look(at: SCNVector3(0, 0.12, 0))
+        // Position adjusted after model loads; start centered at origin
+        cameraNode.position = SCNVector3(0, 0.55, 0.6)
+        cameraNode.look(at: SCNVector3(0, 0.52, 0))
+        cameraNode.name = "mainCamera"
         scene.rootNode.addChildNode(cameraNode)
         
         setupLighting(scene)
-        buildAvatar(scene)
+        loadAvatarModel(scene)
         buildBackground(scene)
     }
     
@@ -795,7 +784,7 @@ class AvatarCoordinator {
         ambient.light = SCNLight()
         ambient.light?.type = .ambient
         ambient.light?.color = UIColor(red: 0.25, green: 0.22, blue: 0.3, alpha: 1.0)
-        ambient.light?.intensity = 300
+        ambient.light?.intensity = 350
         scene.rootNode.addChildNode(ambient)
         
         // Key light — warm white, top-right, beauty lighting
@@ -803,12 +792,12 @@ class AvatarCoordinator {
         key.light = SCNLight()
         key.light?.type = .directional
         key.light?.color = UIColor(red: 0.95, green: 0.9, blue: 0.85, alpha: 1.0)
-        key.light?.intensity = 900
+        key.light?.intensity = 1000
         key.light?.castsShadow = true
         key.light?.shadowRadius = 4
         key.light?.shadowSampleCount = 8
         key.position = SCNVector3(1.5, 3.5, 3)
-        key.look(at: SCNVector3(0, 0.2, 0))
+        key.look(at: SCNVector3(0, 0.5, 0))
         scene.rootNode.addChildNode(key)
         
         // Fill light — soft purple, left side
@@ -816,9 +805,9 @@ class AvatarCoordinator {
         fill.light = SCNLight()
         fill.light?.type = .directional
         fill.light?.color = UIColor(red: 0.55, green: 0.45, blue: 0.75, alpha: 1.0)
-        fill.light?.intensity = 450
+        fill.light?.intensity = 500
         fill.position = SCNVector3(-2.5, 2, 2.5)
-        fill.look(at: SCNVector3(0, 0.1, 0))
+        fill.look(at: SCNVector3(0, 0.4, 0))
         scene.rootNode.addChildNode(fill)
         
         // Rim / hair light — cool blue, from behind
@@ -826,488 +815,199 @@ class AvatarCoordinator {
         rim.light = SCNLight()
         rim.light?.type = .directional
         rim.light?.color = UIColor(red: 0.5, green: 0.55, blue: 0.95, alpha: 1.0)
-        rim.light?.intensity = 600
+        rim.light?.intensity = 650
         rim.position = SCNVector3(0.5, 2.5, -2.5)
-        rim.look(at: SCNVector3(0, 0.3, 0))
+        rim.look(at: SCNVector3(0, 0.5, 0))
         scene.rootNode.addChildNode(rim)
         
-        // Under-chin bounce — very subtle warm fill to soften shadows
+        // Under-chin bounce — warm fill to soften shadows
         let bounce = SCNNode()
         bounce.light = SCNLight()
         bounce.light?.type = .directional
         bounce.light?.color = UIColor(red: 0.7, green: 0.6, blue: 0.5, alpha: 1.0)
-        bounce.light?.intensity = 200
+        bounce.light?.intensity = 250
         bounce.position = SCNVector3(0, -1, 2)
-        bounce.look(at: SCNVector3(0, 0.4, 0))
+        bounce.look(at: SCNVector3(0, 0.6, 0))
         scene.rootNode.addChildNode(bounce)
     }
     
-    // MARK: - Build Avatar
+    // MARK: - Load 3D Avatar Model
     
-    private func buildAvatar(_ scene: SCNScene) {
-        let skinMat = makeSkinMaterial()
-        let hairMat = makeHairMaterial()
-        
-        let rootNode = SCNNode()
-        rootNode.position = SCNVector3(0, -0.6, 0)
-        scene.rootNode.addChildNode(rootNode)
-        bodyNode = rootNode
-        
-        // ── Upper Body / Blouse ──────────────────────────
-        
-        // Shoulders — wider, feminine shape
-        let shoulderGeo = SCNCapsule(capRadius: 0.30, height: 0.55)
-        let blouseMat = SCNMaterial()
-        blouseMat.diffuse.contents = UIColor(red: 0.18, green: 0.22, blue: 0.38, alpha: 1.0)
-        blouseMat.specular.contents = UIColor(white: 0.15, alpha: 1.0)
-        blouseMat.roughness.contents = 0.8
-        blouseMat.lightingModel = .physicallyBased
-        shoulderGeo.materials = [blouseMat]
-        let shoulders = SCNNode(geometry: shoulderGeo)
-        shoulders.position = SCNVector3(0, -0.02, 0)
-        shoulders.scale = SCNVector3(1.0, 1.0, 0.85)
-        rootNode.addChildNode(shoulders)
-        shoulderNode = shoulders
-        
-        // V-neckline accent
-        let necklineGeo = SCNCapsule(capRadius: 0.04, height: 0.15)
-        let necklineAccentMat = SCNMaterial()
-        necklineAccentMat.diffuse.contents = UIColor(red: 0.22, green: 0.26, blue: 0.44, alpha: 1.0)
-        necklineAccentMat.roughness.contents = 0.7
-        necklineAccentMat.lightingModel = .physicallyBased
-        necklineGeo.materials = [necklineAccentMat]
-        
-        let necklineLeft = SCNNode(geometry: necklineGeo)
-        necklineLeft.position = SCNVector3(-0.06, 0.30, 0.18)
-        necklineLeft.eulerAngles = SCNVector3(0.3, 0, 0.25)
-        rootNode.addChildNode(necklineLeft)
-        
-        let necklineRight = SCNNode(geometry: necklineGeo)
-        necklineRight.position = SCNVector3(0.06, 0.30, 0.18)
-        necklineRight.eulerAngles = SCNVector3(0.3, 0, -0.25)
-        rootNode.addChildNode(necklineRight)
-        
-        // Visible collarbone / décolletage area
-        let chestSkinGeo = SCNSphere(radius: 0.14)
-        chestSkinGeo.materials = [skinMat]
-        let chestSkin = SCNNode(geometry: chestSkinGeo)
-        chestSkin.position = SCNVector3(0, 0.30, 0.12)
-        chestSkin.scale = SCNVector3(1.5, 0.5, 0.6)
-        rootNode.addChildNode(chestSkin)
-        
-        // ── Neck ─────────────────────────────────────────
-        
-        let neckGeo = SCNCylinder(radius: 0.065, height: 0.16)
-        neckGeo.materials = [skinMat]
-        let neck = SCNNode(geometry: neckGeo)
-        neck.position = SCNVector3(0, 0.42, 0.01)
-        rootNode.addChildNode(neck)
-        
-        // ── Head ─────────────────────────────────────────
-        
-        let headGeo = SCNSphere(radius: 0.22)
-        headGeo.segmentCount = 48
-        headGeo.materials = [skinMat]
-        let head = SCNNode(geometry: headGeo)
-        head.position = SCNVector3(0, 0.60, 0)
-        // Feminine proportions — slightly narrower, taller oval
-        head.scale = SCNVector3(0.95, 1.12, 0.92)
-        rootNode.addChildNode(head)
-        headNode = head
-        
-        // Chin definition (subtle sphere at bottom)
-        let chinGeo = SCNSphere(radius: 0.06)
-        chinGeo.materials = [skinMat]
-        let chin = SCNNode(geometry: chinGeo)
-        chin.position = SCNVector3(0, -0.17, 0.10)
-        chin.scale = SCNVector3(0.85, 0.6, 0.7)
-        head.addChildNode(chin)
-        
-        // Cheek highlights (subtle)
-        for side: Float in [-1, 1] {
-            let cheekGeo = SCNSphere(radius: 0.06)
-            let cheekMat = makeSkinMaterial()
-            // Slightly rosier cheeks
-            cheekMat.diffuse.contents = UIColor(red: 0.68, green: 0.46, blue: 0.38, alpha: 1.0)
-            cheekMat.emission.contents = UIColor(red: 0.08, green: 0.03, blue: 0.02, alpha: 1.0)
-            cheekGeo.materials = [cheekMat]
-            let cheek = SCNNode(geometry: cheekGeo)
-            cheek.position = SCNVector3(side * 0.12, -0.04, 0.14)
-            cheek.scale = SCNVector3(0.7, 0.5, 0.4)
-            head.addChildNode(cheek)
+    private func loadAvatarModel(_ scene: SCNScene) {
+        guard let url = Bundle.main.url(forResource: "avatar", withExtension: "glb") else {
+            print("⚠️ avatar.glb not found in bundle — showing empty scene")
+            return
         }
         
-        // ── Hair ─────────────────────────────────────────
-        buildHair(head, hairMat: hairMat)
-        
-        // ── Eyes ─────────────────────────────────────────
-        buildEyes(head)
-        
-        // ── Eyebrows ─────────────────────────────────────
-        buildEyebrows(head, hairMat: hairMat)
-        
-        // ── Nose ─────────────────────────────────────────
-        buildNose(head, skinMat: skinMat)
-        
-        // ── Mouth ────────────────────────────────────────
-        buildMouth(head)
-        
-        // ── Ears + Earrings ──────────────────────────────
-        buildEars(head, skinMat: skinMat)
-        
-        // ── Glow Indicator Ring ──────────────────────────
-        buildGlowRing(head)
-    }
-    
-    // MARK: - Hair (layered, flowing)
-    
-    private func buildHair(_ head: SCNNode, hairMat: SCNMaterial) {
-        hairNodes.removeAll()
-        
-        // Main hair cap (top of head)
-        let capGeo = SCNSphere(radius: 0.235)
-        capGeo.segmentCount = 36
-        capGeo.materials = [hairMat]
-        let cap = SCNNode(geometry: capGeo)
-        cap.position = SCNVector3(0, 0.04, -0.015)
-        cap.scale = SCNVector3(1.06, 0.58, 1.04)
-        head.addChildNode(cap)
-        hairNodes.append(cap)
-        
-        // Side hair — left
-        let sideLeftGeo = SCNCapsule(capRadius: 0.09, height: 0.42)
-        sideLeftGeo.materials = [hairMat]
-        let sideLeft = SCNNode(geometry: sideLeftGeo)
-        sideLeft.position = SCNVector3(-0.18, -0.06, -0.02)
-        sideLeft.eulerAngles = SCNVector3(0.08, 0, 0.12)
-        head.addChildNode(sideLeft)
-        hairNodes.append(sideLeft)
-        
-        // Side hair — right
-        let sideRightGeo = SCNCapsule(capRadius: 0.09, height: 0.42)
-        sideRightGeo.materials = [hairMat]
-        let sideRight = SCNNode(geometry: sideRightGeo)
-        sideRight.position = SCNVector3(0.18, -0.06, -0.02)
-        sideRight.eulerAngles = SCNVector3(0.08, 0, -0.12)
-        head.addChildNode(sideRight)
-        hairNodes.append(sideRight)
-        
-        // Back hair — long, flowing behind
-        let backGeo = SCNCapsule(capRadius: 0.15, height: 0.65)
-        backGeo.materials = [hairMat]
-        let back = SCNNode(geometry: backGeo)
-        back.position = SCNVector3(0, -0.18, -0.14)
-        back.eulerAngles = SCNVector3(0.15, 0, 0)
-        head.addChildNode(back)
-        hairNodes.append(back)
-        
-        // Hair highlight strands (subtle sheen)
-        let highlightMat = SCNMaterial()
-        highlightMat.diffuse.contents = UIColor(red: 0.18, green: 0.14, blue: 0.12, alpha: 0.6)
-        highlightMat.specular.contents = UIColor(red: 0.5, green: 0.4, blue: 0.35, alpha: 1.0)
-        highlightMat.roughness.contents = 0.35
-        highlightMat.lightingModel = .physicallyBased
-        
-        for i in 0..<3 {
-            let strandGeo = SCNCapsule(capRadius: 0.02, height: 0.28)
-            strandGeo.materials = [highlightMat]
-            let strand = SCNNode(geometry: strandGeo)
-            let xOff = Float(i - 1) * 0.08
-            strand.position = SCNVector3(xOff, 0.02 + Float(i) * 0.01, -0.06)
-            strand.eulerAngles = SCNVector3(Float.pi / 6, 0, Float(i - 1) * 0.05)
-            head.addChildNode(strand)
-            hairNodes.append(strand)
-        }
-        
-        // Bangs / fringe — softly swept to side
-        let bangGeo = SCNCapsule(capRadius: 0.04, height: 0.12)
-        let bangMat = makeHairMaterial()
-        bangGeo.materials = [bangMat]
-        
-        let bangLeft = SCNNode(geometry: bangGeo)
-        bangLeft.position = SCNVector3(-0.08, 0.10, 0.17)
-        bangLeft.eulerAngles = SCNVector3(0.2, 0, Float.pi / 2 + 0.3)
-        head.addChildNode(bangLeft)
-        hairNodes.append(bangLeft)
-        
-        let bangRight = SCNNode(geometry: bangGeo)
-        bangRight.position = SCNVector3(0.05, 0.11, 0.16)
-        bangRight.eulerAngles = SCNVector3(0.15, 0, Float.pi / 2 - 0.15)
-        head.addChildNode(bangRight)
-        hairNodes.append(bangRight)
-    }
-    
-    // MARK: - Eyes (detailed with iris, pupil, highlight)
-    
-    private func buildEyes(_ head: SCNNode) {
-        let eyeSpacing: Float = 0.078
-        let eyeY: Float = 0.02
-        let eyeZ: Float = 0.175
-        
-        for side: Float in [-1, 1] {
-            // Eye socket (subtle depth)
-            let socketGeo = SCNSphere(radius: 0.045)
-            let socketMat = makeSkinMaterial()
-            socketMat.diffuse.contents = UIColor(red: 0.55, green: 0.38, blue: 0.30, alpha: 1.0)
-            socketGeo.materials = [socketMat]
-            let socket = SCNNode(geometry: socketGeo)
-            socket.position = SCNVector3(side * eyeSpacing, eyeY, eyeZ - 0.01)
-            socket.scale = SCNVector3(1.2, 0.7, 0.5)
-            head.addChildNode(socket)
+        do {
+            let asset = try GLTFAsset(url: url)
+            let source = GLTFSCNSceneSource(asset: asset)
+            guard let avatarScene = source.defaultScene else {
+                print("⚠️ No default scene in GLB asset")
+                return
+            }
             
-            // Eyeball (white, almond-shaped)
-            let eyeGeo = SCNSphere(radius: 0.038)
-            eyeGeo.segmentCount = 32
-            let eyeWhiteMat = SCNMaterial()
-            eyeWhiteMat.diffuse.contents = UIColor(red: 0.97, green: 0.97, blue: 0.98, alpha: 1.0)
-            eyeWhiteMat.specular.contents = UIColor(white: 0.9, alpha: 1.0)
-            eyeWhiteMat.roughness.contents = 0.2
-            eyeWhiteMat.lightingModel = .physicallyBased
-            eyeGeo.materials = [eyeWhiteMat]
-            let eye = SCNNode(geometry: eyeGeo)
-            eye.position = SCNVector3(side * eyeSpacing, eyeY, eyeZ)
-            eye.scale = SCNVector3(1.1, 0.75, 0.5)
-            head.addChildNode(eye)
+            // Move all loaded nodes into a container
+            let rootNode = SCNNode()
+            rootNode.name = "avatarRoot"
+            let children = avatarScene.rootNode.childNodes
+            for child in children {
+                rootNode.addChildNode(child)
+            }
             
-            if side < 0 { leftEyeNode = eye } else { rightEyeNode = eye }
+            rootNode.position = SCNVector3(0, 0, 0)
+            scene.rootNode.addChildNode(rootNode)
+            avatarRootNode = rootNode
             
-            // Iris (dark brown with golden ring)
-            let irisGeo = SCNSphere(radius: 0.022)
-            irisGeo.segmentCount = 24
-            let irisMat = SCNMaterial()
-            irisMat.diffuse.contents = UIColor(red: 0.28, green: 0.18, blue: 0.10, alpha: 1.0)
-            irisMat.specular.contents = UIColor(white: 0.6, alpha: 1.0)
-            irisMat.roughness.contents = 0.3
-            irisMat.lightingModel = .physicallyBased
-            irisGeo.materials = [irisMat]
-            let iris = SCNNode(geometry: irisGeo)
-            iris.position = SCNVector3(0, 0, 0.018)
-            eye.addChildNode(iris)
+            // Find skeleton bones for head animation
+            headBone = rootNode.childNode(withName: "Head", recursively: true)
+            neckBone = rootNode.childNode(withName: "Neck", recursively: true)
             
-            // Pupil (deep black center)
-            let pupilGeo = SCNSphere(radius: 0.012)
-            let pupilMat = SCNMaterial()
-            pupilMat.diffuse.contents = UIColor(red: 0.05, green: 0.03, blue: 0.02, alpha: 1.0)
-            pupilMat.specular.contents = UIColor(white: 0.9, alpha: 1.0)
-            pupilMat.roughness.contents = 0.1
-            pupilGeo.materials = [pupilMat]
-            let pupil = SCNNode(geometry: pupilGeo)
-            pupil.position = SCNVector3(0, 0, 0.012)
-            iris.addChildNode(pupil)
+            // If standard bone names not found, try alternatives
+            if headBone == nil {
+                headBone = findNodeByPartialName("head", in: rootNode)
+            }
+            if neckBone == nil {
+                neckBone = findNodeByPartialName("neck", in: rootNode)
+            }
             
-            // Eye highlight (catch light — simulates window reflection)
-            let highlightGeo = SCNSphere(radius: 0.006)
-            let highlightMat = SCNMaterial()
-            highlightMat.diffuse.contents = UIColor.white
-            highlightMat.emission.contents = UIColor(white: 0.95, alpha: 1.0)
-            highlightGeo.materials = [highlightMat]
-            let highlight = SCNNode(geometry: highlightGeo)
-            highlight.position = SCNVector3(side * 0.008, 0.008, 0.02)
-            iris.addChildNode(highlight)
+            // Find and index all morph targets (blend shapes)
+            findAllMorphTargets(in: rootNode)
             
-            // Upper eyelid (skin-colored, creates almond shape)
-            let lidGeo = SCNCapsule(capRadius: 0.012, height: 0.05)
-            lidGeo.materials = [makeSkinMaterial()]
-            let lid = SCNNode(geometry: lidGeo)
-            lid.position = SCNVector3(side * eyeSpacing, eyeY + 0.028, eyeZ + 0.015)
-            lid.eulerAngles = SCNVector3(0, 0, Float.pi / 2)
-            lid.scale = SCNVector3(1.0, 1.0, 0.5)
-            head.addChildNode(lid)
+            // Auto-frame camera on the head
+            adjustCameraForModel(scene)
             
-            // Eyelashes (thin dark line on upper lid)
-            let lashGeo = SCNCapsule(capRadius: 0.005, height: 0.055)
-            let lashMat = SCNMaterial()
-            lashMat.diffuse.contents = UIColor(red: 0.06, green: 0.04, blue: 0.03, alpha: 1.0)
-            lashGeo.materials = [lashMat]
-            let lash = SCNNode(geometry: lashGeo)
-            lash.position = SCNVector3(side * eyeSpacing, eyeY + 0.032, eyeZ + 0.02)
-            lash.eulerAngles = SCNVector3(-0.15, 0, Float.pi / 2)
-            head.addChildNode(lash)
+            // Add glow ring around the head
+            if let head = headBone {
+                buildGlowRing(head)
+            } else {
+                // Fallback: add glow at estimated head position
+                let glowAnchor = SCNNode()
+                glowAnchor.position = SCNVector3(0, 0.55, 0)
+                rootNode.addChildNode(glowAnchor)
+                buildGlowRing(glowAnchor)
+            }
             
-            // Lower lash line (thinner)
-            let lowerLashGeo = SCNCapsule(capRadius: 0.003, height: 0.04)
-            lowerLashGeo.materials = [lashMat]
-            let lowerLash = SCNNode(geometry: lowerLashGeo)
-            lowerLash.position = SCNVector3(side * eyeSpacing, eyeY - 0.022, eyeZ + 0.018)
-            lowerLash.eulerAngles = SCNVector3(0.1, 0, Float.pi / 2)
-            head.addChildNode(lowerLash)
+            // Start idle animations
+            startIdleAnimations()
+            isModelLoaded = true
+            
+            print("✅ Avatar loaded successfully")
+            print("   Blend shapes found: \(blendShapeMap.count)")
+            print("   Head bone: \(headBone?.name ?? "not found")")
+            print("   Neck bone: \(neckBone?.name ?? "not found")")
+            
+        } catch {
+            print("⚠️ Failed to load GLB model: \(error.localizedDescription)")
         }
     }
     
-    // MARK: - Eyebrows (arched, feminine)
+    private func findNodeByPartialName(_ partial: String, in root: SCNNode) -> SCNNode? {
+        var found: SCNNode?
+        root.enumerateChildNodes { node, stop in
+            if let name = node.name, name.lowercased().contains(partial.lowercased()) {
+                found = node
+                stop.pointee = true
+            }
+        }
+        return found
+    }
     
-    private func buildEyebrows(_ head: SCNNode, hairMat: SCNMaterial) {
-        let browMat = SCNMaterial()
-        browMat.diffuse.contents = UIColor(red: 0.12, green: 0.08, blue: 0.06, alpha: 1.0)
-        browMat.roughness.contents = 0.6
-        browMat.lightingModel = .physicallyBased
+    // MARK: - Morph Target Discovery
+    
+    private func findAllMorphTargets(in rootNode: SCNNode) {
+        blendShapeMap.removeAll()
         
-        for side: Float in [-1, 1] {
-            // Main brow arc — thicker inner, tapered outer
-            let browInnerGeo = SCNCapsule(capRadius: 0.009, height: 0.035)
-            browInnerGeo.materials = [browMat]
-            let browInner = SCNNode(geometry: browInnerGeo)
-            browInner.position = SCNVector3(side * 0.055, 0.068, 0.19)
-            browInner.eulerAngles = SCNVector3(0, 0, Float.pi / 2 + side * 0.12)
-            head.addChildNode(browInner)
+        rootNode.enumerateChildNodes { [weak self] node, _ in
+            guard let self = self, let morpher = node.morpher else { return }
             
-            let browOuterGeo = SCNCapsule(capRadius: 0.006, height: 0.03)
-            browOuterGeo.materials = [browMat]
-            let browOuter = SCNNode(geometry: browOuterGeo)
-            browOuter.position = SCNVector3(side * 0.095, 0.065, 0.185)
-            browOuter.eulerAngles = SCNVector3(0, 0, Float.pi / 2 + side * 0.25)
-            head.addChildNode(browOuter)
+            let targetCount = morpher.targets.count
+            print("📐 Found morpher on '\(node.name ?? "unnamed")' with \(targetCount) targets")
             
-            // Combined reference node (invisible) for animation
-            let browRef = SCNNode()
-            browRef.position = SCNVector3(side * 0.075, 0.068, 0.19)
-            browRef.addChildNode({
-                let n = SCNNode()
-                browInner.removeFromParentNode()
-                browOuter.removeFromParentNode()
-                n.addChildNode(browInner)
-                n.addChildNode(browOuter)
-                browInner.position = SCNVector3(side * -0.02, 0, 0)
-                browOuter.position = SCNVector3(side * 0.02, -0.003, -0.005)
-                return n
-            }())
-            head.addChildNode(browRef)
+            // Set calculation mode for additive blending
+            morpher.calculationMode = .additive
+            morpher.unifiesNormals = true
             
-            if side < 0 { leftBrowNode = browRef } else { rightBrowNode = browRef }
+            // Try to map targets by name first
+            var hasNames = false
+            for (index, target) in morpher.targets.enumerated() {
+                if let name = target.name, !name.isEmpty {
+                    hasNames = true
+                    if self.blendShapeMap[name] == nil {
+                        self.blendShapeMap[name] = []
+                    }
+                    self.blendShapeMap[name]?.append((morpher: morpher, index: index))
+                }
+            }
+            
+            // Fallback: if no names, use ARKit order (ReadyPlayerMe standard)
+            if !hasNames && targetCount == Self.arkitBlendShapeOrder.count {
+                print("   Using ARKit blend shape order fallback (\(targetCount) targets)")
+                for (index, name) in Self.arkitBlendShapeOrder.enumerated() {
+                    if self.blendShapeMap[name] == nil {
+                        self.blendShapeMap[name] = []
+                    }
+                    self.blendShapeMap[name]?.append((morpher: morpher, index: index))
+                }
+            } else if !hasNames && targetCount > 0 {
+                // Last resort: map by index with generic names
+                print("   ⚠️ Unknown morph target layout (\(targetCount) targets, expected \(Self.arkitBlendShapeOrder.count))")
+                for index in 0..<min(targetCount, Self.arkitBlendShapeOrder.count) {
+                    let name = Self.arkitBlendShapeOrder[index]
+                    if self.blendShapeMap[name] == nil {
+                        self.blendShapeMap[name] = []
+                    }
+                    self.blendShapeMap[name]?.append((morpher: morpher, index: index))
+                }
+            }
         }
     }
     
-    // MARK: - Nose (delicate, feminine)
+    // MARK: - Camera Auto-Framing
     
-    private func buildNose(_ head: SCNNode, skinMat: SCNMaterial) {
-        // Nose bridge (very subtle)
-        let bridgeGeo = SCNCapsule(capRadius: 0.012, height: 0.06)
-        bridgeGeo.materials = [skinMat]
-        let bridge = SCNNode(geometry: bridgeGeo)
-        bridge.position = SCNVector3(0, 0.0, 0.19)
-        bridge.scale = SCNVector3(0.6, 1.0, 0.5)
-        head.addChildNode(bridge)
+    private func adjustCameraForModel(_ scene: SCNScene) {
+        guard let camera = scene.rootNode.childNode(withName: "mainCamera", recursively: false) else { return }
         
-        // Nose tip (small, slightly upturned)
-        let tipGeo = SCNSphere(radius: 0.022)
-        tipGeo.materials = [skinMat]
-        let tip = SCNNode(geometry: tipGeo)
-        tip.position = SCNVector3(0, -0.03, 0.20)
-        tip.scale = SCNVector3(0.8, 0.65, 0.7)
-        head.addChildNode(tip)
-        
-        // Nostrils (tiny)
-        for side: Float in [-1, 1] {
-            let nostrilGeo = SCNSphere(radius: 0.008)
-            let nostrilMat = makeSkinMaterial()
-            nostrilMat.diffuse.contents = UIColor(red: 0.52, green: 0.36, blue: 0.28, alpha: 1.0)
-            nostrilGeo.materials = [nostrilMat]
-            let nostril = SCNNode(geometry: nostrilGeo)
-            nostril.position = SCNVector3(side * 0.015, -0.04, 0.195)
-            head.addChildNode(nostril)
+        if let head = headBone {
+            // Get the head's world position
+            let headWorldPos = head.worldPosition
+            // Position camera in front of the head, slightly above
+            camera.position = SCNVector3(headWorldPos.x, headWorldPos.y + 0.03, headWorldPos.z + 0.55)
+            camera.look(at: SCNVector3(headWorldPos.x, headWorldPos.y - 0.02, headWorldPos.z))
+        } else if let root = avatarRootNode {
+            // Estimate from bounding box
+            let (minBound, maxBound) = root.boundingBox
+            let centerY = (minBound.y + maxBound.y) / 2.0
+            let topY = maxBound.y
+            let headEstimateY = topY - (topY - centerY) * 0.15
+            camera.position = SCNVector3(0, headEstimateY, 0.6)
+            camera.look(at: SCNVector3(0, headEstimateY - 0.03, 0))
         }
     }
     
-    // MARK: - Mouth (full lips, detailed)
+    // MARK: - Blend Shape Helpers
     
-    private func buildMouth(_ head: SCNNode) {
-        // Upper lip
-        let upperLipGeo = SCNCapsule(capRadius: 0.014, height: 0.055)
-        let upperLipMat = SCNMaterial()
-        upperLipMat.diffuse.contents = UIColor(red: 0.65, green: 0.35, blue: 0.32, alpha: 1.0)
-        upperLipMat.specular.contents = UIColor(white: 0.35, alpha: 1.0)
-        upperLipMat.roughness.contents = 0.4
-        upperLipMat.lightingModel = .physicallyBased
-        upperLipGeo.materials = [upperLipMat]
-        let upperLip = SCNNode(geometry: upperLipGeo)
-        upperLip.position = SCNVector3(0, -0.072, 0.19)
-        upperLip.eulerAngles = SCNVector3(0, 0, Float.pi / 2)
-        head.addChildNode(upperLip)
-        upperLipNode = upperLip
-        
-        // Lower lip (slightly fuller)
-        let lowerLipGeo = SCNCapsule(capRadius: 0.016, height: 0.05)
-        let lowerLipMat = SCNMaterial()
-        lowerLipMat.diffuse.contents = UIColor(red: 0.68, green: 0.38, blue: 0.35, alpha: 1.0)
-        lowerLipMat.specular.contents = UIColor(white: 0.4, alpha: 1.0)
-        lowerLipMat.roughness.contents = 0.35
-        lowerLipMat.lightingModel = .physicallyBased
-        // Subtle lip gloss shine
-        lowerLipMat.emission.contents = UIColor(red: 0.06, green: 0.02, blue: 0.02, alpha: 1.0)
-        lowerLipGeo.materials = [lowerLipMat]
-        let lowerLip = SCNNode(geometry: lowerLipGeo)
-        lowerLip.position = SCNVector3(0, -0.090, 0.185)
-        lowerLip.eulerAngles = SCNVector3(0, 0, Float.pi / 2)
-        head.addChildNode(lowerLip)
-        lowerLipNode = lowerLip
-        
-        // Combined mouth reference for lip-sync (backward compat)
-        mouthNode = lowerLip
-        
-        // Cupid's bow (tiny highlight on upper lip center)
-        let cupidGeo = SCNSphere(radius: 0.008)
-        let cupidMat = makeSkinMaterial()
-        cupidMat.diffuse.contents = UIColor(red: 0.60, green: 0.34, blue: 0.30, alpha: 1.0)
-        cupidGeo.materials = [cupidMat]
-        let cupid = SCNNode(geometry: cupidGeo)
-        cupid.position = SCNVector3(0, -0.065, 0.195)
-        cupid.scale = SCNVector3(1.0, 0.5, 0.5)
-        head.addChildNode(cupid)
-        
-        // Jaw anchor (invisible)
-        let jaw = SCNNode()
-        jaw.position = SCNVector3(0, -0.10, 0.16)
-        head.addChildNode(jaw)
-        jawNode = jaw
-    }
-    
-    // MARK: - Ears + Earrings
-    
-    private func buildEars(_ head: SCNNode, skinMat: SCNMaterial) {
-        for side: Float in [-1, 1] {
-            // Ear
-            let earGeo = SCNSphere(radius: 0.03)
-            earGeo.materials = [skinMat]
-            let ear = SCNNode(geometry: earGeo)
-            ear.position = SCNVector3(side * 0.20, -0.01, 0.02)
-            ear.scale = SCNVector3(0.35, 0.7, 0.5)
-            head.addChildNode(ear)
-            
-            // Small gold stud earring
-            let earringGeo = SCNSphere(radius: 0.008)
-            let earringMat = SCNMaterial()
-            earringMat.diffuse.contents = UIColor(red: 0.85, green: 0.72, blue: 0.35, alpha: 1.0)
-            earringMat.specular.contents = UIColor(white: 0.95, alpha: 1.0)
-            earringMat.metalness.contents = 0.9
-            earringMat.roughness.contents = 0.15
-            earringMat.lightingModel = .physicallyBased
-            earringGeo.materials = [earringMat]
-            let earring = SCNNode(geometry: earringGeo)
-            earring.position = SCNVector3(side * 0.205, -0.03, 0.04)
-            head.addChildNode(earring)
-            
-            // Drop pendant
-            let dropGeo = SCNSphere(radius: 0.006)
-            dropGeo.materials = [earringMat]
-            let drop = SCNNode(geometry: dropGeo)
-            drop.position = SCNVector3(side * 0.205, -0.045, 0.04)
-            head.addChildNode(drop)
+    /// Set a blend shape weight by ARKit name across all meshes that have it
+    private func setBlendShape(_ name: String, weight: CGFloat) {
+        guard let entries = blendShapeMap[name] else { return }
+        for entry in entries {
+            entry.morpher.setWeight(weight, forTargetAt: entry.index)
         }
     }
     
     // MARK: - Glow Status Ring
     
-    private func buildGlowRing(_ head: SCNNode) {
-        let glowGeo = SCNTorus(ringRadius: 0.30, pipeRadius: 0.006)
+    private func buildGlowRing(_ anchor: SCNNode) {
+        let glowGeo = SCNTorus(ringRadius: 0.18, pipeRadius: 0.005)
         let glowMat = SCNMaterial()
         glowMat.diffuse.contents = UIColor(red: 0.4, green: 0.35, blue: 0.95, alpha: 0.5)
         glowMat.emission.contents = UIColor(red: 0.4, green: 0.35, blue: 0.95, alpha: 0.7)
         glowMat.lightingModel = .constant
         glowGeo.materials = [glowMat]
         let glow = SCNNode(geometry: glowGeo)
-        glow.position = SCNVector3(0, 0.16, 0)
+        glow.position = SCNVector3(0, 0.12, 0)
         glow.eulerAngles = SCNVector3(Float.pi / 8, 0, 0)
-        head.addChildNode(glow)
+        anchor.addChildNode(glow)
         glowNode = glow
     }
     
@@ -1349,46 +1049,38 @@ class AvatarCoordinator {
     // ─── Idle Animations ────────────────────────────────────
     
     func startIdleAnimations() {
-        // Breathing — subtle rise/fall
-        if let body = bodyNode {
-            let up = SCNAction.moveBy(x: 0, y: 0.008, z: 0, duration: 2.8)
-            up.timingMode = .easeInEaseOut
-            let down = up.reversed()
-            body.runAction(.repeatForever(.sequence([up, down])), forKey: "breathe")
-        }
-        
-        // Gentle head sway
-        if let head = headNode {
-            let right = SCNAction.rotateTo(x: 0, y: 0.02, z: -0.03, duration: 3.5)
+        // Gentle head sway (on head bone or avatar root)
+        if let head = headBone ?? avatarRootNode {
+            let right = SCNAction.rotateTo(x: 0, y: 0.025, z: -0.03, duration: 3.5)
             right.timingMode = .easeInEaseOut
-            let left = SCNAction.rotateTo(x: 0, y: -0.02, z: 0.03, duration: 3.5)
+            let left = SCNAction.rotateTo(x: 0, y: -0.025, z: 0.03, duration: 3.5)
             left.timingMode = .easeInEaseOut
             let center = SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 2.5)
             center.timingMode = .easeInEaseOut
             head.runAction(.repeatForever(.sequence([right, center, left, center])), forKey: "headTilt")
         }
         
-        // Natural blinking
+        // Subtle breathing on the avatar root
+        if let root = avatarRootNode {
+            let up = SCNAction.moveBy(x: 0, y: 0.003, z: 0, duration: 2.8)
+            up.timingMode = .easeInEaseOut
+            let down = up.reversed()
+            root.runAction(.repeatForever(.sequence([up, down])), forKey: "breathe")
+        }
+        
+        // Natural blinking (via blend shapes)
         startBlinking()
         
-        // Glow ring gentle rotation
+        // Glow ring rotation
         if let glow = glowNode {
             let rotate = SCNAction.rotateBy(x: 0, y: CGFloat.pi * 2, z: 0, duration: 10.0)
             glow.runAction(.repeatForever(rotate), forKey: "glowRotate")
         }
         
-        // Subtle hair sway (flowing effect)
-        for (i, node) in hairNodes.enumerated() {
-            let delay = Double(i) * 0.3
-            let swayRight = SCNAction.rotateTo(x: 0, y: 0, z: -0.02, duration: 2.5 + Double(i) * 0.2)
-            swayRight.timingMode = .easeInEaseOut
-            let swayLeft = SCNAction.rotateTo(x: 0, y: 0, z: 0.02, duration: 2.5 + Double(i) * 0.2)
-            swayLeft.timingMode = .easeInEaseOut
-            let seq = SCNAction.sequence([
-                SCNAction.wait(duration: delay),
-                SCNAction.repeatForever(.sequence([swayRight, swayLeft]))
-            ])
-            node.runAction(seq, forKey: "hairSway")
+        // Idle facial expression — subtle, pleasant
+        if isModelLoaded {
+            setBlendShape("mouthSmileLeft", weight: 0.05)
+            setBlendShape("mouthSmileRight", weight: 0.05)
         }
     }
     
@@ -1403,12 +1095,21 @@ class AvatarCoordinator {
     }
     
     private func performBlink() {
-        guard let leftEye = leftEyeNode, let rightEye = rightEyeNode else { return }
-        let close = SCNAction.scaleY(to: 0.1, duration: 0.06)
-        let open = SCNAction.scaleY(to: 0.75, duration: 0.08) // Return to almond shape
-        let blink = SCNAction.sequence([close, open])
-        leftEye.runAction(blink)
-        rightEye.runAction(blink)
+        guard isModelLoaded else { return }
+        
+        SCNTransaction.begin()
+        SCNTransaction.animationDuration = 0.06
+        setBlendShape("eyeBlinkLeft", weight: 1.0)
+        setBlendShape("eyeBlinkRight", weight: 1.0)
+        SCNTransaction.commit()
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+            SCNTransaction.begin()
+            SCNTransaction.animationDuration = 0.08
+            self?.setBlendShape("eyeBlinkLeft", weight: 0.0)
+            self?.setBlendShape("eyeBlinkRight", weight: 0.0)
+            SCNTransaction.commit()
+        }
     }
     
     // ─── State Updates ──────────────────────────────────────
@@ -1430,18 +1131,45 @@ class AvatarCoordinator {
         }
     }
     
+    // MARK: - Lip Sync (Blend Shape Driven)
+    
     private func updateMouth(audioLevel: Float) {
-        guard let lower = lowerLipNode, let upper = upperLipNode else { return }
+        guard isModelLoaded else { return }
         
-        let openAmount = max(0.0, min(1.0, audioLevel * 1.2))
+        let level = max(0.0, min(1.0, audioLevel * 1.3))
+        
         SCNTransaction.begin()
         SCNTransaction.animationDuration = 0.05
-        // Lower lip drops down; upper lip rises slightly
-        lower.position.y = -0.090 - openAmount * 0.015
-        upper.position.y = -0.072 + openAmount * 0.005
-        // Slight width change for vowel shapes
-        lower.scale = SCNVector3(1.0 + openAmount * 0.15, 1.0, 1.0 + openAmount * 0.2)
-        upper.scale = SCNVector3(1.0 + openAmount * 0.1, 1.0, 1.0)
+        
+        // Primary jaw opening — most visible movement
+        setBlendShape("jawOpen", weight: CGFloat(level * 0.65))
+        
+        // Mouth interior opening
+        setBlendShape("mouthOpen", weight: CGFloat(level * 0.35))
+        
+        // Add variety for natural speech shapes
+        // Funnel shape (like "oh" sound)
+        let funnelAmount = sin(Double(audioLevel) * 7.0) * 0.5 + 0.5
+        setBlendShape("mouthFunnel", weight: CGFloat(level * Float(funnelAmount) * 0.2))
+        
+        // Pucker (like "oo" sound) — alternates with funnel
+        let puckerAmount = cos(Double(audioLevel) * 5.0) * 0.5 + 0.5
+        setBlendShape("mouthPucker", weight: CGFloat(level * Float(puckerAmount) * 0.12))
+        
+        // Lower lip drops more than upper
+        setBlendShape("mouthLowerDownLeft", weight: CGFloat(level * 0.25))
+        setBlendShape("mouthLowerDownRight", weight: CGFloat(level * 0.25))
+        setBlendShape("mouthUpperUpLeft", weight: CGFloat(level * 0.08))
+        setBlendShape("mouthUpperUpRight", weight: CGFloat(level * 0.08))
+        
+        // Subtle smile while speaking (friendly)
+        setBlendShape("mouthSmileLeft", weight: CGFloat(0.05 + level * 0.06))
+        setBlendShape("mouthSmileRight", weight: CGFloat(0.05 + level * 0.06))
+        
+        // Slight stretch for wider mouth shapes
+        setBlendShape("mouthStretchLeft", weight: CGFloat(level * 0.1))
+        setBlendShape("mouthStretchRight", weight: CGFloat(level * 0.1))
+        
         SCNTransaction.commit()
     }
     
@@ -1470,15 +1198,14 @@ class AvatarCoordinator {
     }
     
     private func updateHeadBehavior(state: AssistantState) {
-        guard let head = headNode else { return }
+        guard let head = headBone ?? avatarRootNode else { return }
         
         switch state {
         case .idle:
             head.removeAction(forKey: "nod")
-            // Restore gentle sway
-            let right = SCNAction.rotateTo(x: 0, y: 0.02, z: -0.03, duration: 3.5)
+            let right = SCNAction.rotateTo(x: 0, y: 0.025, z: -0.03, duration: 3.5)
             right.timingMode = .easeInEaseOut
-            let left = SCNAction.rotateTo(x: 0, y: -0.02, z: 0.03, duration: 3.5)
+            let left = SCNAction.rotateTo(x: 0, y: -0.025, z: 0.03, duration: 3.5)
             left.timingMode = .easeInEaseOut
             let center = SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 2.5)
             center.timingMode = .easeInEaseOut
@@ -1488,77 +1215,78 @@ class AvatarCoordinator {
             head.removeAction(forKey: "nod")
             SCNTransaction.begin()
             SCNTransaction.animationDuration = 0.5
-            head.eulerAngles = SCNVector3(0.04, 0, 0.025)
+            head.eulerAngles = SCNVector3(0.05, 0, 0.03)
             SCNTransaction.commit()
         case .thinking:
             head.removeAction(forKey: "headTilt")
             head.removeAction(forKey: "nod")
             SCNTransaction.begin()
             SCNTransaction.animationDuration = 0.4
-            head.eulerAngles = SCNVector3(0.06, -0.04, 0)
+            head.eulerAngles = SCNVector3(0.07, -0.05, 0)
             SCNTransaction.commit()
         case .speaking:
             head.removeAction(forKey: "headTilt")
-            let nodDown = SCNAction.rotateTo(x: 0.035, y: 0.01, z: 0, duration: 0.9)
+            let nodDown = SCNAction.rotateTo(x: 0.04, y: 0.015, z: 0, duration: 0.9)
             nodDown.timingMode = .easeInEaseOut
-            let nodUp = SCNAction.rotateTo(x: -0.015, y: -0.01, z: 0, duration: 0.9)
+            let nodUp = SCNAction.rotateTo(x: -0.02, y: -0.015, z: 0, duration: 0.9)
             nodUp.timingMode = .easeInEaseOut
             head.runAction(.repeatForever(.sequence([nodDown, nodUp])), forKey: "nod")
         }
     }
     
     private func updateBrowExpression(state: AssistantState) {
-        guard let leftBrow = leftBrowNode, let rightBrow = rightBrowNode else { return }
+        guard isModelLoaded else { return }
         
         SCNTransaction.begin()
         SCNTransaction.animationDuration = 0.3
         
         switch state {
         case .idle:
-            leftBrow.position.y = 0.068
-            rightBrow.position.y = 0.068
-            leftBrow.eulerAngles = SCNVector3.zero
-            rightBrow.eulerAngles = SCNVector3.zero
+            setBlendShape("browInnerUp", weight: 0)
+            setBlendShape("browDownLeft", weight: 0)
+            setBlendShape("browDownRight", weight: 0)
+            setBlendShape("browOuterUpLeft", weight: 0)
+            setBlendShape("browOuterUpRight", weight: 0)
         case .listening:
-            leftBrow.position.y = 0.074
-            rightBrow.position.y = 0.074
+            // Slightly raised brows — attentive
+            setBlendShape("browInnerUp", weight: 0.15)
+            setBlendShape("browOuterUpLeft", weight: 0.1)
+            setBlendShape("browOuterUpRight", weight: 0.1)
+            setBlendShape("browDownLeft", weight: 0)
+            setBlendShape("browDownRight", weight: 0)
         case .thinking:
-            leftBrow.position.y = 0.064
-            rightBrow.position.y = 0.064
-            leftBrow.eulerAngles = SCNVector3(0, 0, 0.1)
-            rightBrow.eulerAngles = SCNVector3(0, 0, -0.1)
+            // One brow up, slight furrow — contemplative
+            setBlendShape("browInnerUp", weight: 0.2)
+            setBlendShape("browDownLeft", weight: 0.15)
+            setBlendShape("browDownRight", weight: 0)
+            setBlendShape("browOuterUpRight", weight: 0.12)
         case .speaking:
-            leftBrow.position.y = 0.070
-            rightBrow.position.y = 0.070
-            leftBrow.eulerAngles = SCNVector3.zero
-            rightBrow.eulerAngles = SCNVector3.zero
+            // Natural, slightly animated
+            setBlendShape("browInnerUp", weight: 0.05)
+            setBlendShape("browDownLeft", weight: 0)
+            setBlendShape("browDownRight", weight: 0)
         }
         
         SCNTransaction.commit()
     }
     
     private func updateListeningAnimation(level: Float) {
-        guard let head = headNode else { return }
+        guard let head = headBone ?? avatarRootNode else { return }
         SCNTransaction.begin()
         SCNTransaction.animationDuration = 0.1
         let tilt = level * 0.025
-        head.eulerAngles = SCNVector3(0.04 + tilt, 0, 0.025 - tilt)
+        head.eulerAngles = SCNVector3(0.05 + tilt, 0, 0.03 - tilt)
         SCNTransaction.commit()
+        
+        // Subtle eye widening while listening (engagement)
+        if isModelLoaded {
+            let wide = CGFloat(level * 0.1)
+            setBlendShape("eyeWideLeft", weight: wide)
+            setBlendShape("eyeWideRight", weight: wide)
+        }
     }
     
     deinit {
         blinkTimer?.invalidate()
-    }
-}
-
-// MARK: - SCNAction Extensions
-
-extension SCNAction {
-    static func scaleY(to yScale: CGFloat, duration: TimeInterval) -> SCNAction {
-        return SCNAction.customAction(duration: duration) { node, elapsedTime in
-            let progress = elapsedTime / CGFloat(duration)
-            let currentY = 1.0 + (yScale - 1.0) * progress
-            node.scale = SCNVector3(node.scale.x, Float(currentY), node.scale.z)
-        }
     }
 }

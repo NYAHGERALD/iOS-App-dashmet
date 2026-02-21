@@ -217,11 +217,11 @@ struct TranscriptReviewView: View {
             // Meeting icon
             ZStack {
                 Circle()
-                    .fill(Color(hex: meeting.meetingType.color).opacity(0.2))
+                    .fill(Color(hex: meeting.safeMeetingType.color).opacity(0.2))
                     .frame(width: 44, height: 44)
                 
-                Image(systemName: meeting.meetingType.icon)
-                    .foregroundColor(Color(hex: meeting.meetingType.color))
+                Image(systemName: meeting.safeMeetingType.icon)
+                    .foregroundColor(Color(hex: meeting.safeMeetingType.color))
             }
             
             VStack(alignment: .leading, spacing: 4) {

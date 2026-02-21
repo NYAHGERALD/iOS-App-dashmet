@@ -915,7 +915,7 @@ Approves final version
 
 System logs:
 
-All edits
+All edits and store in the Database.
 
 Final selected action
 
@@ -937,40 +937,3 @@ Option to send to HR
 
 Case status = Closed
 
-🔁 Optional Enhancements (Later Phase)
-
-Push notification when case ready
-
-Supervisor reflection notes
-
-Risk scoring over time
-
-Pattern detection (repeat conflicts)
-
-🔄 Complete Flow Summary (Simple View)
-
-Upload policy
-
-Create case
-
-Scan complaint A
-
-Scan complaint B
-
-AI compare
-
-Add witnesses
-
-Add history
-
-Policy match
-
-AI suggests actions
-
-Supervisor selects action
-
-Draft generated
-
-Supervisor edits
-
-Finalize + export

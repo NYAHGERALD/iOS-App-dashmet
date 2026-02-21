@@ -10,6 +10,8 @@ struct ToDoView: View {
     @State private var showCategoryPicker = false
     @State private var showSortOptions = false
     
+    var onMenuTap: (() -> Void)?
+    
     // Adaptive colors
     private var textPrimary: Color {
         colorScheme == .dark ? .white : .black
@@ -73,6 +75,15 @@ struct ToDoView: View {
             .navigationTitle("To Do")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        onMenuTap?()
+                    } label: {
+                        Image(systemName: "line.3.horizontal")
+                            .font(.title2)
+                            .foregroundStyle(AppGradients.primary)
+                    }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
                         Button {
@@ -111,7 +122,7 @@ struct ToDoView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showAddTask) {
+            .fullScreenCover(isPresented: $showAddTask) {
                 AddTaskView(colorScheme: colorScheme)
             }
             .sheet(isPresented: $showFocusTimer) {

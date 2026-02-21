@@ -4,6 +4,8 @@
 //
 //  Phase 6: Policy Alignment
 //  Shows which policy sections may be relevant to the case
+//  NOTE: Full downstream analysis is orchestrated by CaseDetailView
+//        This view handles display + manual re-analyze only
 //
 
 import SwiftUI
@@ -12,9 +14,8 @@ struct PolicyAlignmentView: View {
     let conflictCase: ConflictCase
     let policy: WorkplacePolicy?
     let analysisResult: AIComparisonResult?
-    @Binding var autoRun: Bool
     let onPolicyMatched: ([PolicyMatchResult]) -> Void
-    let onRunPolicyMatch: () -> Void
+    let onSaveResult: (PolicyMatchingResult) -> Void  // Callback to save to database
     let onSkip: () -> Void
     
     @State private var policyMatchResult: PolicyMatchingResult?
@@ -23,6 +24,8 @@ struct PolicyAlignmentView: View {
     @State private var expandedMatchId: UUID?
     @State private var loadingProgress: CGFloat = 0
     @State private var loadingStage: String = "Initializing..."
+    @State private var showReanalyzeWarning = false  // Warning before re-analyzing
+    @State private var arrowPulse = false  // For blinking arrow animation
     
     @Environment(\.colorScheme) private var colorScheme
     
@@ -51,7 +54,7 @@ struct PolicyAlignmentView: View {
                 // No policy available
                 noPolicySection
             } else if isMatching {
-                // Loading state
+                // Loading state for manual re-analyze
                 matchingLoadingSection
             } else if let error = matchingError {
                 // Error state
@@ -73,17 +76,20 @@ struct PolicyAlignmentView: View {
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .onAppear {
-            // Auto-run if triggered by re-analysis
-            if autoRun && policy != nil && policyMatchResult == nil {
-                autoRun = false
-                runPolicyMatching()
+            // Restore saved policy matching result if available
+            if let savedResult = conflictCase.policyMatchingResult {
+                policyMatchResult = savedResult
+                onPolicyMatched(savedResult.matches)
             }
+            // NOTE: Auto-run is handled by CaseDetailView's centralized orchestration
         }
-        .onChange(of: autoRun) { newValue in
-            if newValue && policy != nil && !isMatching {
-                autoRun = false
+        .alert("Re-Analyze Policy Alignment?", isPresented: $showReanalyzeWarning) {
+            Button("Cancel", role: .cancel) { }
+            Button("Re-Analyze", role: .destructive) {
                 runPolicyMatching()
             }
+        } message: {
+            Text("This will re-analyze policy alignment. Continue?")
         }
     }
     
@@ -561,10 +567,9 @@ struct PolicyAlignmentView: View {
             }
             
             if policyMatchResult != nil {
-                // Re-run button
+                // Re-run button (shows warning)
                 Button {
-                    policyMatchResult = nil
-                    runPolicyMatching()
+                    showReanalyzeWarning = true
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "arrow.clockwise")
@@ -576,13 +581,24 @@ struct PolicyAlignmentView: View {
                 }
             }
             
-            // Skip button (always available)
+            // Continue arrow (blinking)
             Button {
                 onSkip()
             } label: {
-                Text(policyMatchResult != nil ? "Continue" : "Skip for Now")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(textSecondary)
+                Image(systemName: "chevron.down.circle.fill")
+                    .font(.system(size: 28))
+                    .foregroundColor(.green)
+                    .scaleEffect(arrowPulse ? 1.15 : 0.95)
+                    .opacity(arrowPulse ? 1.0 : 0.5)
+                    .shadow(color: .yellow.opacity(arrowPulse ? 0.7 : 0.2), radius: arrowPulse ? 10 : 4)
+            }
+            .onAppear {
+                withAnimation(
+                    Animation.easeInOut(duration: 0.8)
+                        .repeatForever(autoreverses: true)
+                ) {
+                    arrowPulse = true
+                }
             }
         }
     }
@@ -653,6 +669,8 @@ struct PolicyAlignmentView: View {
                     self.loadingProgress = 0
                     // Call callback with results
                     self.onPolicyMatched(result.matches)
+                    // Save result to database
+                    self.onSaveResult(result)
                 }
             } catch {
                 await MainActor.run {
@@ -723,8 +741,6 @@ struct PolicyFlowLayout: Layout {
 
 // MARK: - Preview
 #Preview {
-    @Previewable @State var autoRun = false
-    
     PolicyAlignmentView(
         conflictCase: ConflictCase(
             id: UUID(),
@@ -743,9 +759,8 @@ struct PolicyFlowLayout: Layout {
         ),
         policy: nil,
         analysisResult: nil,
-        autoRun: $autoRun,
         onPolicyMatched: { _ in },
-        onRunPolicyMatch: {},
+        onSaveResult: { _ in },
         onSkip: {}
     )
     .padding()

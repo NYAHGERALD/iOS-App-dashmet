@@ -39,11 +39,23 @@ enum SignatureType: String, CaseIterable, Identifiable {
 
 // MARK: - Captured Signature
 struct CapturedSignature: Identifiable {
-    let id = UUID()
+    let id: UUID
     let type: SignatureType
     let signerName: String
     let image: UIImage
     let capturedAt: Date
+    var firebaseURL: String?  // Firebase Storage URL - NOT stored locally
+    var isUploading: Bool = false
+    var uploadError: String?
+    
+    init(id: UUID = UUID(), type: SignatureType, signerName: String, image: UIImage, capturedAt: Date = Date(), firebaseURL: String? = nil) {
+        self.id = id
+        self.type = type
+        self.signerName = signerName
+        self.image = image
+        self.capturedAt = capturedAt
+        self.firebaseURL = firebaseURL
+    }
 }
 
 // MARK: - Signature Capture Sheet
@@ -52,6 +64,8 @@ struct SignatureCaptureSheet: View {
     let documentType: ActionType
     let employeeNames: [String]
     let supervisorName: String
+    let caseNumber: String      // Required for Firebase Storage path
+    let documentId: String      // Document ID for Firebase Storage path
     let onComplete: () -> Void
     let onCancel: () -> Void
     
@@ -59,6 +73,8 @@ struct SignatureCaptureSheet: View {
     @State private var currentSignerName: String = ""
     @State private var signatureImage: UIImage?
     @State private var showSignatureCanvas = false
+    @State private var isUploadingSignature = false
+    @State private var uploadError: String?
     
     @Environment(\.colorScheme) private var colorScheme
     
@@ -134,24 +150,93 @@ struct SignatureCaptureSheet: View {
                     signatureType: currentSignatureType,
                     signerName: currentSignerName,
                     onSign: { image in
-                        let signature = CapturedSignature(
+                        // Create signature with pending upload
+                        var signature = CapturedSignature(
                             type: currentSignatureType,
                             signerName: currentSignerName,
-                            image: image,
-                            capturedAt: Date()
+                            image: image
                         )
+                        signature.isUploading = true
                         capturedSignatures.append(signature)
                         showSignatureCanvas = false
                         
-                        // Log to audit trail
-                        // AuditTrailService.shared.logSignatureCaptured(...)
+                        // Upload to Firebase Storage in background
+                        Task {
+                            await uploadSignatureToFirebase(signature: signature, image: image)
+                        }
                     },
                     onCancel: {
                         showSignatureCanvas = false
                     }
                 )
             }
+            .alert("Upload Error", isPresented: .constant(uploadError != nil)) {
+                Button("OK") { uploadError = nil }
+            } message: {
+                Text(uploadError ?? "Unknown error")
+            }
         }
+    }
+    
+    // MARK: - Upload Signature to Firebase
+    private func uploadSignatureToFirebase(signature: CapturedSignature, image: UIImage) async {
+        guard let userId = ConflictResolutionManager.shared.currentUserId else {
+            await MainActor.run {
+                updateSignatureError(signature.id, error: "User not authenticated")
+            }
+            return
+        }
+        
+        guard let imageData = image.pngData() else {
+            await MainActor.run {
+                updateSignatureError(signature.id, error: "Failed to convert signature to data")
+            }
+            return
+        }
+        
+        do {
+            let signatureId = "\(signature.type.rawValue)_\(signature.id.uuidString)"
+            let firebaseURL = try await FirebaseStorageService.shared.uploadSignatureImage(
+                imageData,
+                caseNumber: caseNumber,
+                documentId: "\(documentId)_\(signatureId)",
+                userId: userId
+            )
+            
+            await MainActor.run {
+                updateSignatureURL(signature.id, url: firebaseURL)
+            }
+            
+            // Log to audit trail
+            AuditTrailService.shared.logSignatureCaptured(
+                caseId: UUID(uuidString: documentId) ?? UUID(),
+                caseNumber: caseNumber,
+                signatureType: signature.type.rawValue,
+                signerName: signature.signerName
+            )
+            
+            print("✅ Signature uploaded to Firebase: \(firebaseURL)")
+        } catch {
+            print("❌ Failed to upload signature: \(error)")
+            await MainActor.run {
+                updateSignatureError(signature.id, error: error.localizedDescription)
+            }
+        }
+    }
+    
+    private func updateSignatureURL(_ id: UUID, url: String) {
+        if let index = capturedSignatures.firstIndex(where: { $0.id == id }) {
+            capturedSignatures[index].firebaseURL = url
+            capturedSignatures[index].isUploading = false
+        }
+    }
+    
+    private func updateSignatureError(_ id: UUID, error: String) {
+        if let index = capturedSignatures.firstIndex(where: { $0.id == id }) {
+            capturedSignatures[index].isUploading = false
+            capturedSignatures[index].uploadError = error
+        }
+        uploadError = error
     }
     
     // MARK: - Header Section
@@ -363,19 +448,71 @@ struct SignatureCaptureSheet: View {
                 )
             
             VStack(alignment: .leading, spacing: 2) {
-                Text(signature.signerName)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(textPrimary)
+                HStack(spacing: 6) {
+                    Text(signature.signerName)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(textPrimary)
+                    
+                    // Upload status indicator
+                    if signature.isUploading {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                    } else if signature.firebaseURL != nil {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundColor(.green)
+                    } else if signature.uploadError != nil {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundColor(.red)
+                    }
+                }
                 
-                Text("\(signature.type.displayName) • \(signature.capturedAt.formatted(date: .abbreviated, time: .shortened))")
-                    .font(.system(size: 11))
-                    .foregroundColor(textSecondary)
+                HStack(spacing: 4) {
+                    Text("\(signature.type.displayName)")
+                        .font(.system(size: 11))
+                        .foregroundColor(textSecondary)
+                    
+                    if signature.firebaseURL != nil {
+                        Text("• Saved to cloud")
+                            .font(.system(size: 10))
+                            .foregroundColor(.green)
+                    } else if signature.isUploading {
+                        Text("• Uploading...")
+                            .font(.system(size: 10))
+                            .foregroundColor(.orange)
+                    } else if let error = signature.uploadError {
+                        Text("• \(error)")
+                            .font(.system(size: 10))
+                            .foregroundColor(.red)
+                            .lineLimit(1)
+                    }
+                }
             }
             
             Spacer()
             
+            // Retry button if upload failed
+            if signature.uploadError != nil {
+                Button {
+                    Task {
+                        await retryUpload(signature)
+                    }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 14))
+                        .foregroundColor(.blue)
+                }
+            }
+            
             // Delete Button
             Button {
+                // If uploaded to Firebase, also delete from storage
+                if let url = signature.firebaseURL {
+                    Task {
+                        await deleteFromFirebase(url: url)
+                    }
+                }
                 capturedSignatures.removeAll { $0.id == signature.id }
             } label: {
                 Image(systemName: "trash")
@@ -386,6 +523,22 @@ struct SignatureCaptureSheet: View {
         .padding()
         .background(innerCardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+    
+    private func retryUpload(_ signature: CapturedSignature) async {
+        if let index = capturedSignatures.firstIndex(where: { $0.id == signature.id }) {
+            await MainActor.run {
+                capturedSignatures[index].isUploading = true
+                capturedSignatures[index].uploadError = nil
+            }
+            await uploadSignatureToFirebase(signature: signature, image: signature.image)
+        }
+    }
+    
+    private func deleteFromFirebase(url: String) async {
+        // Firebase Storage deletion happens server-side or via URL reference
+        // For now, just log the deletion intent
+        print("🗑️ Signature deleted from app (Firebase URL: \(url))")
     }
 }
 
@@ -486,6 +639,8 @@ struct SignatureCanvasSheet: View {
         documentType: .warning,
         employeeNames: ["John Smith", "Jane Doe"],
         supervisorName: "Mike Johnson",
+        caseNumber: "CASE-2026-001",
+        documentId: "doc-123",
         onComplete: {},
         onCancel: {}
     )

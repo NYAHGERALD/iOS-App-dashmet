@@ -47,9 +47,13 @@ struct ConflictCaseAPIData: Codable {
     // AI fields - match backend database field names
     let comparisonResult: String?      // Was aiComparisonResultJson
     let recommendations: String?        // Was aiRecommendationsJson
+    let recommendationResult: String?   // Full recommendation result for UI
     let selectedAction: String?         // Was selectedActionType
+    let selectedTargetEmployeeIds: String?  // JSON array of target employee IDs
     let generatedDocument: String?      // Was generatedActionDocJson
+    let fullGeneratedDocumentResult: String?  // Full generated document result for UI display
     let policyMatches: String?          // Was policyMatchesJson
+    let policyMatchingResult: String?   // Full policy matching result for UI
     let supervisorNotes: String?
     let createdBy: String?              // Changed from creatorId to match backend
     let organizationId: String
@@ -73,10 +77,18 @@ struct ConflictCaseAPIData: Codable {
         let created = dateFormatter.date(from: createdAt) ?? Date()
         let updated = dateFormatter.date(from: updatedAt) ?? Date()
         
-        // Parse employees
-        let parsedEmployees = involvedEmployees?.map { emp in
+        // Parse employees and deduplicate by ID
+        let rawEmployees = involvedEmployees?.map { emp in
             emp.toInvolvedEmployee()
         } ?? []
+        var seenIds = Set<UUID>()
+        let parsedEmployees = rawEmployees.filter { emp in
+            if seenIds.contains(emp.id) {
+                return false
+            }
+            seenIds.insert(emp.id)
+            return true
+        }
         
         // Parse documents
         let caseDocuments = documents?.map { doc in
@@ -109,11 +121,32 @@ struct ConflictCaseAPIData: Codable {
             matches = (try? JSONDecoder().decode([PolicyMatch].self, from: data)) ?? []
         }
         
+        // Parse full policy matching result (for UI restoration)
+        var fullPolicyMatchingResult: PolicyMatchingResult?
+        if let jsonString = policyMatchingResult,
+           let data = jsonString.data(using: .utf8) {
+            fullPolicyMatchingResult = try? JSONDecoder().decode(PolicyMatchingResult.self, from: data)
+        }
+        
+        // Parse full recommendation result (for UI restoration)
+        var fullRecommendationResult: RecommendationResult?
+        if let jsonString = recommendationResult,
+           let data = jsonString.data(using: .utf8) {
+            fullRecommendationResult = try? JSONDecoder().decode(RecommendationResult.self, from: data)
+        }
+        
         // Parse generated action document
         var actionDoc: GeneratedActionDocument?
         if let jsonString = generatedDocument,
            let data = jsonString.data(using: .utf8) {
             actionDoc = try? JSONDecoder().decode(GeneratedActionDocument.self, from: data)
+        }
+        
+        // Parse full generated document result (for complete UI restoration)
+        var fullDocumentResult: GeneratedDocumentResult?
+        if let jsonString = fullGeneratedDocumentResult,
+           let data = jsonString.data(using: .utf8) {
+            fullDocumentResult = try? JSONDecoder().decode(GeneratedDocumentResult.self, from: data)
         }
         
         // Parse action type
@@ -143,10 +176,33 @@ struct ConflictCaseAPIData: Codable {
         conflictCase.comparisonResult = aiComparison
         conflictCase.recommendations = aiRecs
         conflictCase.policyMatches = matches
+        conflictCase.policyMatchingResult = fullPolicyMatchingResult
+        conflictCase.recommendationResult = fullRecommendationResult
         conflictCase.selectedAction = action
         conflictCase.generatedDocument = actionDoc
+        conflictCase.fullGeneratedDocumentResult = fullDocumentResult
+        
+        // Parse target employee IDs
+        print("🎯 Parsing selectedTargetEmployeeIds from API: \(String(describing: selectedTargetEmployeeIds))")
+        if let idsJson = selectedTargetEmployeeIds,
+           let data = idsJson.data(using: .utf8),
+           let idStrings = try? JSONDecoder().decode([String].self, from: data) {
+            conflictCase.selectedTargetEmployeeIds = idStrings.compactMap { UUID(uuidString: $0) }
+            print("🎯 Parsed target employee IDs: \(conflictCase.selectedTargetEmployeeIds)")
+        } else {
+            print("🎯 No selectedTargetEmployeeIds found or parsing failed")
+        }
+        
         conflictCase.supervisorNotes = supervisorNotes
         // Note: supervisorDecision is stored locally only, not in database
+        
+        // Set creator and facility names from API response
+        if let user = createdByUser {
+            let firstName = user.firstName ?? ""
+            let lastName = user.lastName ?? ""
+            conflictCase.creatorName = [firstName, lastName].filter { !$0.isEmpty }.joined(separator: " ")
+        }
+        conflictCase.facilityName = facility?.name
         
         return conflictCase
     }
@@ -157,16 +213,17 @@ struct ConflictEmployeeAPIData: Codable {
     let name: String
     let role: String?
     let department: String?
-    let employeeId: String?
+    let employeeFileNo: String?  // Backend sends employeeFileNo, not employeeId
     let isComplainant: Bool
     let statement: String?
     
     func toInvolvedEmployee() -> InvolvedEmployee {
         InvolvedEmployee(
+            id: UUID(uuidString: id) ?? UUID(),
             name: name,
             role: role ?? "",
             department: department ?? "",
-            employeeId: employeeId,
+            employeeId: employeeFileNo,  // Map to iOS model's employeeId
             isComplainant: isComplainant
         )
     }
@@ -234,6 +291,14 @@ struct ConflictDocumentAPIData: Codable {
         let reviewTime = employeeReviewTimestamp.flatMap { dateFormatter.date(from: $0) }
         let signTime = employeeSignatureTimestamp.flatMap { dateFormatter.date(from: $0) }
         let certTime = supervisorCertificationTimestamp.flatMap { dateFormatter.date(from: $0) }
+        
+        // Debug logging for image/signature data from backend
+        print("🔍 Document API Data [\(type)]:")
+        print("   - originalImageUrls from API: \(originalImageUrls ?? "nil")")
+        print("   - processedImageUrls from API: \(processedImageUrls ?? "nil")")
+        print("   - signatureImageData from API: \(signatureImageData != nil ? "\(signatureImageData!.prefix(80))..." : "nil")")
+        print("   - Parsed originalURLs: \(originalURLs)")
+        print("   - Parsed processedURLs: \(processedURLs)")
         
         return CaseDocument(
             id: UUID(uuidString: id) ?? UUID(),
@@ -412,6 +477,20 @@ class ConflictCaseService: ObservableObject {
         if let actionDoc = conflictCase.generatedDocument,
            let data = try? JSONEncoder().encode(actionDoc) {
             body["generatedActionDocJson"] = try? JSONSerialization.jsonObject(with: data)
+        }
+        
+        // Send full generated document result for complete UI restoration
+        if let fullResult = conflictCase.fullGeneratedDocumentResult,
+           let data = try? JSONEncoder().encode(fullResult) {
+            body["fullGeneratedDocumentResultJson"] = try? JSONSerialization.jsonObject(with: data)
+        }
+        
+        // Send target employee IDs for action
+        if !conflictCase.selectedTargetEmployeeIds.isEmpty {
+            body["selectedTargetEmployeeIdsJson"] = conflictCase.selectedTargetEmployeeIds.map { $0.uuidString }
+            print("🎯 Sending selectedTargetEmployeeIdsJson: \(conflictCase.selectedTargetEmployeeIds.map { $0.uuidString })")
+        } else {
+            print("🎯 No selectedTargetEmployeeIds to send")
         }
         
         if let notes = conflictCase.supervisorNotes {

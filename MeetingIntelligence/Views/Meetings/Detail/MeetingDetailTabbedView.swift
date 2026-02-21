@@ -26,6 +26,18 @@ struct MeetingDetailTabbedView: View {
     @State private var showMenu = false
     @State private var shouldAutoExtractActionItems = false
     
+    // OverviewTab presentation states (moved here to prevent reset on view recreation)
+    @State private var showTranscriptReview = false
+    @State private var showAISummary = false
+    @State private var showAudioPlayer = false
+    @State private var showAISummaryAudioPlayer = false
+    
+    // Data needed by presentation modifiers (synced from OverviewTab)
+    @State private var rawTranscript: String = ""
+    @State private var localRecordingURL: URL?
+    @State private var savedAISummary: SavedAISummary?
+    @StateObject private var aiSummaryAudioPlayer = URLAudioPlayer()
+    
     init(meeting: Meeting, meetingViewModel: MeetingViewModel) {
         _viewModel = StateObject(wrappedValue: MeetingDetailViewModel(
             meeting: meeting,
@@ -48,7 +60,20 @@ struct MeetingDetailTabbedView: View {
                 
                 // Tab Content
                 TabView(selection: $selectedTab) {
-                    OverviewTab(viewModel: viewModel, meetingViewModel: meetingViewModel, selectedTab: $selectedTab, shouldExtractActionItems: $shouldAutoExtractActionItems)
+                    OverviewTab(
+                        viewModel: viewModel,
+                        meetingViewModel: meetingViewModel,
+                        selectedTab: $selectedTab,
+                        shouldExtractActionItems: $shouldAutoExtractActionItems,
+                        showTranscriptReview: $showTranscriptReview,
+                        showAISummary: $showAISummary,
+                        showAudioPlayer: $showAudioPlayer,
+                        showAISummaryAudioPlayer: $showAISummaryAudioPlayer,
+                        rawTranscript: $rawTranscript,
+                        localRecordingURL: $localRecordingURL,
+                        savedAISummary: $savedAISummary,
+                        aiSummaryAudioPlayer: aiSummaryAudioPlayer
+                    )
                         .tag(MeetingTab.overview)
                     
                     TranscriptTab(viewModel: viewModel)
@@ -93,13 +118,13 @@ struct MeetingDetailTabbedView: View {
             )
         }
         .confirmationDialog("Meeting Options", isPresented: $showMenu, titleVisibility: .hidden) {
-            if viewModel.meeting.status == .ready || viewModel.meeting.status == .needsReview {
+            if viewModel.meeting.safeStatus == .ready || viewModel.meeting.safeStatus == .needsReview {
                 Button("Publish") {
                     showPublishConfirmation = true
                 }
             }
             
-            if viewModel.meeting.status == .draft {
+            if viewModel.meeting.safeStatus == .draft {
                 Button("Record") {
                     showConsentModal = true
                 }
@@ -130,6 +155,36 @@ struct MeetingDetailTabbedView: View {
         }
         .task {
             await viewModel.loadFullDetails()
+        }
+        // OverviewTab presentation modifiers (moved here to prevent reset on view recreation)
+        .fullScreenCover(isPresented: $showTranscriptReview) {
+            TranscriptReviewView(
+                meeting: viewModel.meeting,
+                rawTranscript: rawTranscript,
+                recordingURL: localRecordingURL
+            )
+        }
+        .sheet(isPresented: $showAudioPlayer) {
+            AudioPlayerSheet(
+                meeting: viewModel.meeting,
+                recordingURL: localRecordingURL
+            )
+        }
+        .fullScreenCover(isPresented: $showAISummary) {
+            AISummaryView(
+                meeting: viewModel.meeting,
+                transcript: rawTranscript,
+                onSummarySaved: { }
+            )
+        }
+        .sheet(isPresented: $showAISummaryAudioPlayer) {
+            if let summary = savedAISummary, let audioUrl = summary.audioUrl, !audioUrl.isEmpty {
+                AISummaryAudioPlayerSheet(
+                    audioUrl: audioUrl,
+                    meetingTitle: viewModel.meeting.title ?? "Meeting",
+                    audioPlayer: aiSummaryAudioPlayer
+                )
+            }
         }
     }
     

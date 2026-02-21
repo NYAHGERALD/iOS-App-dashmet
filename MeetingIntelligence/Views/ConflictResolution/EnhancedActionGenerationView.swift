@@ -297,6 +297,8 @@ struct EnhancedActionGenerationView: View {
                     documentType: mapRecommendationToActionType(),
                     employeeNames: conflictCase.involvedEmployees.map { $0.name },
                     supervisorName: supervisorName,
+                    caseNumber: conflictCase.caseNumber,
+                    documentId: conflictCase.id.uuidString,
                     onComplete: {
                         showSignatureSheet = false
                         currentPhase = .finalized
@@ -858,6 +860,11 @@ struct EnhancedActionGenerationView: View {
         errorMessage = nil
         currentPhase = .generating
         
+        // Convert targetEmployeeIds to names
+        let targetNames = selectedRecommendation.targetEmployeeIds.compactMap { id in
+            conflictCase.involvedEmployees.first(where: { $0.id == id })?.name
+        }
+        
         Task {
             do {
                 let result = try await ActionGenerationService.shared.generateDocument(
@@ -867,6 +874,7 @@ struct EnhancedActionGenerationView: View {
                     complaintAEmployee: employees[0],
                     complaintB: docB,
                     complaintBEmployee: employees[1],
+                    targetEmployeeNames: targetNames,
                     analysisResult: analysisResult,
                     policyMatches: policyMatches,
                     recommendationRationale: selectedRecommendation.rationale,

@@ -4,6 +4,8 @@
 //
 //  Phase 7: Decision Support
 //  AI-powered recommendations for resolving workplace conflicts
+//  NOTE: Full downstream analysis is orchestrated by CaseDetailView
+//        This view handles display + manual re-analyze only
 //
 
 import SwiftUI
@@ -12,7 +14,7 @@ struct DecisionSupportView: View {
     let conflictCase: ConflictCase
     let analysisResult: AIComparisonResult?
     let policyMatches: [PolicyMatchResult]?
-    @Binding var autoRun: Bool
+    let onSaveResult: (RecommendationResult) -> Void  // Callback to save to database
     let onSelectRecommendation: (RecommendationOption) -> Void
     let onSkip: () -> Void
     
@@ -24,6 +26,8 @@ struct DecisionSupportView: View {
     @State private var showConfirmation = false
     @State private var loadingProgress: CGFloat = 0
     @State private var loadingStage: String = "Initializing..."
+    @State private var showReanalyzeWarning = false  // Warning before re-analyzing
+    @State private var arrowPulse = false  // For blinking arrow animation
     
     @Environment(\.colorScheme) private var colorScheme
     
@@ -49,6 +53,7 @@ struct DecisionSupportView: View {
             headerSection
             
             if isLoading {
+                // Loading state for manual re-analyze
                 loadingSection
             } else if let error = errorMessage {
                 errorSection(error)
@@ -72,17 +77,20 @@ struct DecisionSupportView: View {
             }
         }
         .onAppear {
-            // Auto-run if triggered after re-analysis/policy matching
-            if autoRun && recommendationResult == nil && !isLoading {
-                autoRun = false
-                generateRecommendations()
+            // Restore saved recommendation result if available
+            if let savedResult = conflictCase.recommendationResult {
+                recommendationResult = savedResult
+                expandedOptionId = savedResult.primaryRecommendationId
             }
+            // NOTE: Auto-run is handled by CaseDetailView's centralized orchestration
         }
-        .onChange(of: autoRun) { newValue in
-            if newValue && recommendationResult == nil && !isLoading {
-                autoRun = false
+        .alert("Re-Generate Recommendations?", isPresented: $showReanalyzeWarning) {
+            Button("Cancel", role: .cancel) { }
+            Button("Re-Generate", role: .destructive) {
                 generateRecommendations()
             }
+        } message: {
+            Text("This will regenerate the recommendations. Continue?")
         }
     }
     
@@ -493,6 +501,7 @@ struct DecisionSupportView: View {
                         .padding(.vertical, 12)
                         .background(typeColor(for: option.type))
                         .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .shadow(color: .yellow.opacity(0.6), radius: 8, x: 0, y: 4)
                     }
                 }
             }
@@ -567,6 +576,7 @@ struct DecisionSupportView: View {
                             .padding(.vertical, 14)
                             .background(typeColor(for: option.type))
                             .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .shadow(color: .yellow.opacity(0.6), radius: 8, x: 0, y: 4)
                     }
                     
                     Button {
@@ -627,14 +637,14 @@ struct DecisionSupportView: View {
                     .padding(.vertical, 14)
                     .background(Color.indigo)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .shadow(color: .yellow.opacity(0.6), radius: 8, x: 0, y: 4)
                 }
             }
             
             if recommendationResult != nil {
-                // Regenerate button
+                // Regenerate button (shows warning)
                 Button {
-                    recommendationResult = nil
-                    generateRecommendations()
+                    showReanalyzeWarning = true
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "arrow.clockwise")
@@ -646,13 +656,24 @@ struct DecisionSupportView: View {
                 }
             }
             
-            // Skip button
+            // Decide Later button (blue with yellow shadow)
             Button {
                 onSkip()
             } label: {
-                Text(recommendationResult != nil ? "Decide Later" : "Skip for Now")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(textSecondary)
+                Text("Decide Later")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(
+                        LinearGradient(
+                            colors: [Color.blue, Color.blue.opacity(0.8)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .shadow(color: .yellow.opacity(0.6), radius: 8, x: 0, y: 4)
             }
         }
     }
@@ -775,6 +796,8 @@ struct DecisionSupportView: View {
                     self.loadingProgress = 0
                     // Auto-expand primary recommendation
                     self.expandedOptionId = result.primaryRecommendationId
+                    // Save result to database
+                    self.onSaveResult(result)
                 }
             } catch {
                 await MainActor.run {
@@ -789,8 +812,6 @@ struct DecisionSupportView: View {
 
 // MARK: - Preview
 #Preview {
-    @Previewable @State var autoRun = false
-    
     DecisionSupportView(
         conflictCase: ConflictCase(
             id: UUID(),
@@ -805,7 +826,7 @@ struct DecisionSupportView: View {
         ),
         analysisResult: nil,
         policyMatches: nil,
-        autoRun: $autoRun,
+        onSaveResult: { _ in },
         onSelectRecommendation: { _ in },
         onSkip: {}
     )

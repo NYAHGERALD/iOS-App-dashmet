@@ -11,6 +11,11 @@ struct PhoneInputView: View {
     @ObservedObject var viewModel: AuthViewModel
     @FocusState private var isPhoneFocused: Bool
     
+    /// Resolved country from the selected code
+    private var currentCountry: CountryCode {
+        CountryCode.from(code: viewModel.countryCode)
+    }
+    
     var body: some View {
         ZStack {
             // Background gradient
@@ -95,16 +100,28 @@ struct PhoneInputView: View {
                             
                             // Phone Number Field
                             HStack {
-                                TextField("000 000 0000", text: $viewModel.phoneNumber)
+                                TextField(currentCountry.placeholder, text: $viewModel.phoneNumber)
                                     .keyboardType(.phonePad)
                                     .textContentType(.telephoneNumber)
                                     .font(.title3)
                                     .fontWeight(.medium)
                                     .focused($isPhoneFocused)
                                     .onChange(of: viewModel.phoneNumber) { _, newValue in
-                                        let digits = newValue.filter { $0.isNumber }
-                                        if digits.count > 10 {
-                                            viewModel.phoneNumber = String(digits.prefix(10))
+                                        var digits = newValue.filter { $0.isNumber }
+                                        let country = currentCountry
+                                        
+                                        // Strip area code if user accidentally typed it
+                                        digits = country.stripAreaCode(from: digits)
+                                        
+                                        // Enforce max digit count for this country
+                                        if digits.count > country.digitCount {
+                                            digits = String(digits.prefix(country.digitCount))
+                                        }
+                                        
+                                        // Format the number for display
+                                        let formatted = digits.isEmpty ? "" : country.formatPhone(digits)
+                                        if viewModel.phoneNumber != formatted {
+                                            viewModel.phoneNumber = formatted
                                         }
                                     }
                                 
@@ -204,6 +221,10 @@ struct PhoneInputView: View {
         .onTapGesture {
             isPhoneFocused = false
         }
+        .onChange(of: viewModel.countryCode) { _, _ in
+            // Clear phone number when user switches country
+            viewModel.phoneNumber = ""
+        }
     }
 }
 
@@ -223,6 +244,42 @@ enum CountryCode: CaseIterable {
         case .canada: return "+1"
         case .germany: return "+49"
         case .france: return "+33"
+        }
+    }
+    
+    /// The area code digits without the "+" prefix (used to strip accidental entry)
+    var areaCodeDigits: String {
+        String(code.dropFirst()) // e.g. "+1" → "1", "+44" → "44"
+    }
+    
+    /// Expected number of local digits (without country code)
+    var digitCount: Int {
+        switch self {
+        case .us:        return 10  // (XXX) XXX-XXXX
+        case .uk:        return 10  // XXXX XXX XXXX
+        case .india:     return 10  // XXXXX XXXXX
+        case .china:     return 11  // XXX XXXX XXXX
+        case .japan:     return 10  // XX XXXX XXXX
+        case .singapore: return 8   // XXXX XXXX
+        case .australia: return 9   // XXX XXX XXX
+        case .canada:    return 10  // (XXX) XXX-XXXX
+        case .germany:   return 11  // XXXX XXXXXXX
+        case .france:    return 9   // X XX XX XX XX
+        }
+    }
+    
+    /// Placeholder showing the expected format
+    var placeholder: String {
+        switch self {
+        case .us, .canada: return "(000) 000-0000"
+        case .uk:          return "0000 000 0000"
+        case .india:       return "00000 00000"
+        case .china:       return "000 0000 0000"
+        case .japan:       return "00 0000 0000"
+        case .singapore:   return "0000 0000"
+        case .australia:   return "000 000 000"
+        case .germany:     return "0000 0000000"
+        case .france:      return "0 00 00 00 00"
         }
     }
     
@@ -258,6 +315,125 @@ enum CountryCode: CaseIterable {
     
     static func flag(for code: String) -> String {
         allCases.first { $0.code == code }?.flag ?? "🌍"
+    }
+    
+    /// Resolve enum case from a code string like "+1", "+44"
+    /// For "+1" defaults to .us (not .canada) since they share the code
+    static func from(code: String) -> CountryCode {
+        switch code {
+        case "+1":  return .us
+        case "+44": return .uk
+        case "+91": return .india
+        case "+86": return .china
+        case "+81": return .japan
+        case "+65": return .singapore
+        case "+61": return .australia
+        case "+49": return .germany
+        case "+33": return .france
+        default:     return .us
+        }
+    }
+    
+    /// Format raw digits into a human-readable phone number
+    func formatPhone(_ digits: String) -> String {
+        let d = digits
+        let c = d.count
+        switch self {
+        case .us, .canada:
+            // (XXX) XXX-XXXX
+            if c <= 3 {
+                return "(\(d)"
+            } else if c <= 6 {
+                return "(\(d.prefix(3))) \(d.dropFirst(3))"
+            } else {
+                return "(\(d.prefix(3))) \(d.dropFirst(3).prefix(3))-\(d.dropFirst(6))"
+            }
+        case .uk:
+            // XXXX XXX XXXX
+            if c <= 4 {
+                return d
+            } else if c <= 7 {
+                return "\(d.prefix(4)) \(d.dropFirst(4))"
+            } else {
+                return "\(d.prefix(4)) \(d.dropFirst(4).prefix(3)) \(d.dropFirst(7))"
+            }
+        case .india:
+            // XXXXX XXXXX
+            if c <= 5 {
+                return d
+            } else {
+                return "\(d.prefix(5)) \(d.dropFirst(5))"
+            }
+        case .china:
+            // XXX XXXX XXXX
+            if c <= 3 {
+                return d
+            } else if c <= 7 {
+                return "\(d.prefix(3)) \(d.dropFirst(3))"
+            } else {
+                return "\(d.prefix(3)) \(d.dropFirst(3).prefix(4)) \(d.dropFirst(7))"
+            }
+        case .japan:
+            // XX XXXX XXXX
+            if c <= 2 {
+                return d
+            } else if c <= 6 {
+                return "\(d.prefix(2)) \(d.dropFirst(2))"
+            } else {
+                return "\(d.prefix(2)) \(d.dropFirst(2).prefix(4)) \(d.dropFirst(6))"
+            }
+        case .singapore:
+            // XXXX XXXX
+            if c <= 4 {
+                return d
+            } else {
+                return "\(d.prefix(4)) \(d.dropFirst(4))"
+            }
+        case .australia:
+            // XXX XXX XXX
+            if c <= 3 {
+                return d
+            } else if c <= 6 {
+                return "\(d.prefix(3)) \(d.dropFirst(3))"
+            } else {
+                return "\(d.prefix(3)) \(d.dropFirst(3).prefix(3)) \(d.dropFirst(6))"
+            }
+        case .germany:
+            // XXXX XXXXXXX
+            if c <= 4 {
+                return d
+            } else {
+                return "\(d.prefix(4)) \(d.dropFirst(4))"
+            }
+        case .france:
+            // X XX XX XX XX
+            if c <= 1 {
+                return d
+            } else if c <= 3 {
+                return "\(d.prefix(1)) \(d.dropFirst(1))"
+            } else if c <= 5 {
+                return "\(d.prefix(1)) \(d.dropFirst(1).prefix(2)) \(d.dropFirst(3))"
+            } else if c <= 7 {
+                return "\(d.prefix(1)) \(d.dropFirst(1).prefix(2)) \(d.dropFirst(3).prefix(2)) \(d.dropFirst(5))"
+            } else {
+                return "\(d.prefix(1)) \(d.dropFirst(1).prefix(2)) \(d.dropFirst(3).prefix(2)) \(d.dropFirst(5).prefix(2)) \(d.dropFirst(7))"
+            }
+        }
+    }
+    
+    /// Strip area code digits if the user accidentally typed them at the start
+    func stripAreaCode(from digits: String) -> String {
+        let ac = areaCodeDigits
+        // Only strip if the resulting digit count would match expected length
+        // For "+1" countries: if user types 11 digits starting with "1", strip the leading "1"
+        // For "+44" countries: if user types 12 digits starting with "44", strip "44"
+        if digits.count > digitCount && digits.hasPrefix(ac) {
+            let stripped = String(digits.dropFirst(ac.count))
+            if stripped.count == digitCount {
+                return stripped
+            }
+        }
+        return digits
     }
 }
 

@@ -233,8 +233,8 @@ struct TranscriptBlock: Codable, Identifiable, Hashable {
 
 // MARK: - Meeting Summary
 struct MeetingSummary: Codable, Identifiable, Hashable {
-    let id: String
-    let meetingId: String
+    let id: String?
+    let meetingId: String?
     let executiveSummary: String?  // Full AI-generated summary text
     let keyPoints: [String]?       // Array of key points from JSON
     let decisions: [String]?       // Array of decisions from JSON
@@ -252,6 +252,11 @@ struct MeetingSummary: Codable, Identifiable, Hashable {
     let engagementScore: Double?
     let speakerStats: String?
     let createdAt: Date?
+    
+    // Identifiable conformance with fallback
+    var identifiableId: String {
+        id ?? meetingId ?? UUID().uuidString
+    }
     
     /// Display summary - uses executiveSummary or overview
     var displaySummary: String {
@@ -305,13 +310,13 @@ struct MeetingCount: Codable, Hashable {
 struct Meeting: Codable, Identifiable, Hashable {
     let id: String
     let title: String?
-    let meetingType: MeetingType
-    let status: MeetingStatus
+    let meetingType: MeetingType?
+    let status: MeetingStatus?
     
     // Location & Context
     let location: String?
-    let tags: [String]
-    let language: String
+    let tags: [String]?
+    let language: String?
     
     // Recording info
     let recordingUrl: String?
@@ -352,7 +357,24 @@ struct Meeting: Codable, Identifiable, Hashable {
         if let title = title, !title.isEmpty {
             return title
         }
-        return "\(meetingType.displayName) Meeting"
+        return "\(meetingType?.displayName ?? "General") Meeting"
+    }
+    
+    /// Safe accessors for optional fields
+    var safeStatus: MeetingStatus {
+        status ?? .draft
+    }
+    
+    var safeMeetingType: MeetingType {
+        meetingType ?? .general
+    }
+    
+    var safeTags: [String] {
+        tags ?? []
+    }
+    
+    var safeLanguage: String {
+        language ?? "en"
     }
     
     /// Formatted duration string (e.g., "1h 23m" or "45m")
@@ -428,7 +450,7 @@ struct Meeting: Codable, Identifiable, Hashable {
     
     /// Tags formatted as a comma-separated string
     var tagsFormatted: String {
-        tags.joined(separator: ", ")
+        safeTags.joined(separator: ", ")
     }
     
     // MARK: - Preview Support
@@ -478,10 +500,15 @@ struct MeetingResponse: Codable {
 /// Response for list of meetings
 struct MeetingsResponse: Codable {
     let success: Bool
-    let meetings: [Meeting]
-    let count: Int
-    let totalCount: Int
+    let meetings: [Meeting]?
+    let count: Int?
+    let totalCount: Int?
     let error: String?
+    
+    // Provide default values for safe access
+    var meetingsList: [Meeting] {
+        meetings ?? []
+    }
 }
 
 /// Response for meeting bookmark creation

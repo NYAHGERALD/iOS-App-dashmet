@@ -94,6 +94,8 @@ class ConflictAnalysisService {
         request.timeoutInterval = 120 // 2 minutes for AI analysis
         
         print("ConflictAnalysisService: Starting comparison...")
+        print("  - Witness statements in request: \(witnessStatements.count)")
+        print("  - Prior history docs in request: \(priorHistory.count)")
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
@@ -138,6 +140,10 @@ class ConflictAnalysisService {
         let partyAName = data["partyAName"] as? String ?? "Party A"
         let partyBName = data["partyBName"] as? String ?? "Party B"
         
+        // Parse optional witness and prior history analysis
+        let witnessAnalysis = data["witnessAnalysis"] as? [String]
+        let priorHistoryAnalysis = data["priorHistoryAnalysis"] as? [String]
+        
         // Parse generated date
         var generatedAt = Date()
         if let dateString = data["generatedAt"] as? String {
@@ -179,7 +185,9 @@ class ConflictAnalysisService {
             sideBySideComparison: sideBySideComparison,
             partyAName: partyAName,
             partyBName: partyBName,
-            generatedAt: generatedAt
+            generatedAt: generatedAt,
+            witnessAnalysis: witnessAnalysis,
+            priorHistoryAnalysis: priorHistoryAnalysis
         )
     }
     

@@ -343,6 +343,28 @@ struct CaseAnalysisView: View {
                 )
             }
             
+            // Witness Analysis (if available)
+            if let witnessItems = analysisResult.witnessAnalysis, !witnessItems.isEmpty {
+                analysisSection(
+                    title: "Witness Analysis",
+                    icon: "person.2.fill",
+                    iconColor: .teal,
+                    items: witnessItems,
+                    itemColor: .teal
+                )
+            }
+            
+            // Prior History Analysis (if available)
+            if let priorItems = analysisResult.priorHistoryAnalysis, !priorItems.isEmpty {
+                analysisSection(
+                    title: "Prior History Analysis",
+                    icon: "doc.text.magnifyingglass",
+                    iconColor: .indigo,
+                    items: priorItems,
+                    itemColor: .indigo
+                )
+            }
+            
             // Disclaimer
             disclaimerCard
         }

@@ -1351,9 +1351,8 @@ struct DocumentProcessingView: View {
             
             let documentId = UUID()
             var originalImageURLs: [String] = []
-            var localImageBase64: String? = nil
             
-            // Upload images to Firebase Storage
+            // Upload images to Firebase Storage (REQUIRED - no local storage)
             do {
                 currentStep = "Uploading \(scannedImages.count) image(s) to cloud storage..."
                 
@@ -1367,15 +1366,12 @@ struct DocumentProcessingView: View {
                 
                 print("✅ Document images uploaded to Firebase: \(originalImageURLs.count) URLs")
             } catch {
-                print("⚠️ Failed to upload to Firebase, keeping local copy: \(error)")
-                // Fallback to base64 for local storage
-                if let firstImage = scannedImages.first,
-                   let data = firstImage.jpegData(compressionQuality: 0.7) {
-                    localImageBase64 = data.base64EncodedString()
-                }
+                print("❌ Failed to upload to Firebase: \(error)")
+                processingState = .error("Failed to upload document", hint: "Please check your internet connection and try again. Documents must be stored securely in the cloud.")
+                return
             }
             
-            // Create document with Firebase URLs
+            // Create document with Firebase URLs (no local base64)
             let document = CaseDocument(
                 id: documentId,
                 type: documentType,
@@ -1383,7 +1379,7 @@ struct DocumentProcessingView: View {
                 originalText: extractedText,
                 translatedText: translatedText,
                 cleanedText: cleanedText,
-                originalImageBase64: localImageBase64,
+                originalImageBase64: nil,  // Never store locally
                 detectedLanguage: detectedLanguage,
                 isHandwritten: nil,
                 employeeId: submittedBy?.id,
@@ -1413,10 +1409,9 @@ struct DocumentProcessingView: View {
             }
             
             var originalImageURLs: [String] = []
-            var localImageBase64: String? = nil
             var signatureURL: String? = nil
             
-            // Upload images to Firebase Storage
+            // Upload images to Firebase Storage (REQUIRED - no local storage)
             do {
                 currentStep = "Uploading \(scannedImages.count) image(s) to cloud storage..."
                 
@@ -1442,15 +1437,12 @@ struct DocumentProcessingView: View {
                 
                 print("✅ Document images uploaded to Firebase: \(originalImageURLs.count) URLs")
             } catch {
-                print("⚠️ Failed to upload to Firebase, keeping local copy: \(error)")
-                // Fallback to base64 for local storage
-                if let firstImage = scannedImages.first,
-                   let data = firstImage.jpegData(compressionQuality: 0.7) {
-                    localImageBase64 = data.base64EncodedString()
-                }
+                print("❌ Failed to upload to Firebase: \(error)")
+                processingState = .error("Failed to upload document", hint: "Please check your internet connection and try again. Documents must be stored securely in the cloud.")
+                return
             }
             
-            // Create document with Firebase URLs and full audit trail
+            // Create document with Firebase URLs and full audit trail (no local base64)
             let document = CaseDocument(
                 id: auditLog.documentId,
                 type: documentType,
@@ -1458,13 +1450,13 @@ struct DocumentProcessingView: View {
                 originalText: extractedText,
                 translatedText: translatedText,
                 cleanedText: cleanedText,
-                originalImageBase64: localImageBase64,
+                originalImageBase64: nil,  // Never store locally
                 detectedLanguage: detectedLanguage,
                 isHandwritten: nil,
                 employeeId: submittedBy?.id,
                 submittedBy: submittedBy?.name,
-                // Audit log fields - use URL if uploaded, otherwise base64
-                signatureImageBase64: signatureURL ?? auditLog.signatureImageBase64,
+                // Audit log fields - signatures stored as Firebase URLs
+                signatureImageBase64: signatureURL,  // Firebase URL, not base64
                 employeeReviewTimestamp: auditLog.employeeReviewTimestamp,
                 employeeSignatureTimestamp: auditLog.employeeSignatureTimestamp,
                 supervisorCertificationTimestamp: auditLog.supervisorCertificationTimestamp,
