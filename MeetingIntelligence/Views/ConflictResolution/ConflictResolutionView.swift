@@ -117,7 +117,17 @@ struct ConflictResolutionView: View {
             }
             .fullScreenCover(item: $showCaseDetail) { conflictCase in
                 CaseDetailView(caseId: conflictCase.id)
+                    .onDisappear {
+                        // Refresh cases from database when returning from case detail
+                        Task {
+                            await manager.loadCasesFromDatabase()
+                        }
+                    }
             }
+        }
+        .task {
+            // Always refresh cases from the database when this view appears
+            await manager.loadCasesFromDatabase()
         }
     }
     
@@ -171,6 +181,9 @@ struct ConflictResolutionView: View {
                 casesListSection
             }
             .padding()
+        }
+        .refreshable {
+            await manager.loadCasesFromDatabase()
         }
     }
     
@@ -539,65 +552,79 @@ struct CaseRowView: View {
         colorScheme == .dark ? Color.white.opacity(0.08) : Color.white
     }
     
+    /// Days open since creation (or until closed)
+    private var daysOpen: Int {
+        let end = conflictCase.closedAt ?? Date()
+        return max(0, Calendar.current.dateComponents([.day], from: conflictCase.createdAt, to: end).day ?? 0)
+    }
+    
     var body: some View {
-        HStack(spacing: 14) {
-            // Type Icon
-            ZStack {
-                Circle()
-                    .fill(conflictCase.type.color.opacity(0.15))
-                    .frame(width: 44, height: 44)
+        VStack(alignment: .leading, spacing: 12) {
+            // ── Row 1: Icon + Case number/type + Status badge ──
+            HStack(spacing: 10) {
+                // Type icon in rounded box
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(conflictCase.type.color.opacity(0.15))
+                        .frame(width: 40, height: 40)
+                    
+                    Image(systemName: conflictCase.type.icon)
+                        .font(.system(size: 18))
+                        .foregroundColor(conflictCase.type.color)
+                }
                 
-                Image(systemName: conflictCase.type.icon)
-                    .font(.system(size: 18))
-                    .foregroundColor(conflictCase.type.color)
-            }
-            
-            VStack(alignment: .leading, spacing: 4) {
-                Text(conflictCase.displayTitle)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(textPrimary)
-                
-                HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(conflictCase.caseNumber)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(textPrimary)
+                        .lineLimit(1)
+                    
                     Text(conflictCase.type.displayName)
                         .font(.system(size: 12))
                         .foregroundColor(textSecondary)
-                    
-                    Text("•")
-                        .foregroundColor(textSecondary)
-                    
-                    Text(conflictCase.formattedIncidentDate)
-                        .font(.system(size: 12))
-                        .foregroundColor(textSecondary)
                 }
-            }
-            
-            Spacer()
-            
-            // Status Badge
-            Text(conflictCase.status.displayName)
-                .font(.system(size: 11, weight: .semibold))
+                
+                Spacer()
+                
+                // Status badge with icon
+                HStack(spacing: 4) {
+                    Image(systemName: conflictCase.status.icon)
+                        .font(.system(size: 10))
+                    Text(conflictCase.status.displayName)
+                        .font(.system(size: 11, weight: .semibold))
+                }
                 .foregroundColor(conflictCase.status.color)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(conflictCase.status.color.opacity(0.15))
+                .background(conflictCase.status.color.opacity(0.12))
                 .clipShape(Capsule())
+            }
             
-            Image(systemName: "chevron.right")
-                .font(.system(size: 12))
-                .foregroundColor(textSecondary)
-        }
-        .padding(14)
-        .background(cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            if onDelete != nil {
-                Button(role: .destructive) {
-                    showDeleteConfirmation = true
-                } label: {
-                    Label("Delete", systemImage: "trash")
+            // ── Row 2: Date, Location, Department chips ──
+            HStack(spacing: 12) {
+                DetailChipView(icon: "calendar", text: conflictCase.formattedIncidentDate)
+                
+                if !conflictCase.location.isEmpty {
+                    DetailChipView(icon: "mappin.and.ellipse", text: conflictCase.location)
+                }
+                
+                if let facility = conflictCase.facilityName, !facility.isEmpty {
+                    DetailChipView(icon: "building.2", text: facility)
+                } else if !conflictCase.department.isEmpty {
+                    DetailChipView(icon: "building.2", text: conflictCase.department)
                 }
             }
+            
+            // ── Row 3: Documents, People, Days Open stats ──
+            HStack(spacing: 16) {
+                BottomStatView(icon: "doc.text", value: "\(conflictCase.documents.count)", label: "Documents")
+                BottomStatView(icon: "person.2", value: "\(conflictCase.involvedEmployees.count)", label: "People")
+                BottomStatView(icon: "clock", value: "\(daysOpen)d", label: "Open")
+            }
         }
+        .padding(16)
+        .background(cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
         .contextMenu {
             if onDelete != nil {
                 Button(role: .destructive) {
@@ -614,6 +641,44 @@ struct CaseRowView: View {
             }
         } message: {
             Text("Are you sure you want to delete \(conflictCase.caseNumber)? This action cannot be undone.")
+        }
+    }
+}
+
+// MARK: - Detail Chip (date / location / department)
+private struct DetailChipView: View {
+    let icon: String
+    let text: String
+    
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 10))
+            Text(text)
+                .font(.system(size: 11))
+                .lineLimit(1)
+        }
+        .foregroundColor(.gray)
+    }
+}
+
+// MARK: - Bottom Stat (documents / people / days open)
+private struct BottomStatView: View {
+    let icon: String
+    let value: String
+    let label: String
+    
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 11))
+                .foregroundColor(.gray)
+            Text(value)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.primary)
+            Text(label)
+                .font(.system(size: 11))
+                .foregroundColor(.gray)
         }
     }
 }

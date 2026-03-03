@@ -60,11 +60,14 @@ struct PolicyAPIData: Codable {
         // Parse status
         let policyStatus = PolicyStatus(rawValue: status) ?? .draft
         
-        // Parse sections from JSON string
+        // Parse sections from JSON string using backend section model
         var policySections: [PolicySection] = []
         if let sectionsString = sections,
            let data = sectionsString.data(using: .utf8) {
-            policySections = (try? JSONDecoder().decode([PolicySection].self, from: data)) ?? []
+            let decoder = JSONDecoder()
+            if let apiSections = try? decoder.decode([PolicySectionAPIData].self, from: data) {
+                policySections = apiSections.map { $0.toPolicySection() }
+            }
         }
         
         // Create document source if available
@@ -105,6 +108,56 @@ struct PolicyUserBasicInfo: Codable {
 struct PolicyOrgBasicInfo: Codable {
     let id: String
     let name: String
+}
+
+// MARK: - Section API Data (matches backend JSON with 4 progression fields)
+
+struct PolicySectionAPIData: Codable {
+    let id: String?
+    let sectionNumber: String?
+    let title: String?
+    let content: String?
+    let type: String?
+    let orderIndex: Int?
+    let firstProgression: String?
+    let secondProgression: String?
+    let thirdProgression: String?
+    let fourthProgression: String?
+    
+    func toPolicySection() -> PolicySection {
+        PolicySection(
+            id: UUID(uuidString: id ?? "") ?? UUID(),
+            sectionNumber: sectionNumber ?? "",
+            title: title ?? "",
+            content: content ?? "",
+            type: PolicySectionType(rawValue: type ?? "OTHER") ?? .other,
+            orderIndex: orderIndex ?? 0,
+            firstProgression: firstProgression,
+            secondProgression: secondProgression,
+            thirdProgression: thirdProgression,
+            fourthProgression: fourthProgression
+        )
+    }
+}
+
+// MARK: - AI Parse Response Models
+
+struct AiParseSectionsResponse: Codable {
+    let success: Bool
+    let data: AiParsedData?
+    let error: String?
+}
+
+struct AiParsedData: Codable {
+    let sections: [PolicySectionAPIData]?
+    let summary: AiParsedSummary?
+    let parsedAt: String?
+}
+
+struct AiParsedSummary: Codable {
+    let totalSections: Int?
+    let sectionsWithDiscipline: Int?
+    let policyType: String?
 }
 
 // MARK: - Workplace Policy Service
@@ -179,12 +232,24 @@ class WorkplacePolicyService: ObservableObject {
             }
         }
         
-        // Add sections as JSON
+        // Add sections with progression fields
         if !policy.sections.isEmpty {
-            if let sectionsData = try? JSONEncoder().encode(policy.sections),
-               let sectionsArray = try? JSONSerialization.jsonObject(with: sectionsData) {
-                body["sections"] = sectionsArray
+            let sectionsArray = policy.sections.map { section -> [String: Any] in
+                var dict: [String: Any] = [
+                    "id": section.id.uuidString,
+                    "sectionNumber": section.sectionNumber,
+                    "title": section.title,
+                    "content": section.content,
+                    "type": section.type.rawValue,
+                    "orderIndex": section.orderIndex
+                ]
+                if let v = section.firstProgression { dict["firstProgression"] = v }
+                if let v = section.secondProgression { dict["secondProgression"] = v }
+                if let v = section.thirdProgression { dict["thirdProgression"] = v }
+                if let v = section.fourthProgression { dict["fourthProgression"] = v }
+                return dict
             }
+            body["sections"] = sectionsArray
         }
         
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -376,7 +441,6 @@ class WorkplacePolicyService: ObservableObject {
     
     func syncPolicy(_ policy: WorkplacePolicy, creatorId: String, organizationId: String, facilityId: String?, backendId: String?) async throws -> PolicyAPIData {
         if let id = backendId {
-            // Update existing policy
             var updates: [String: Any] = [
                 "name": policy.name,
                 "version": policy.version,
@@ -396,17 +460,70 @@ class WorkplacePolicyService: ObservableObject {
             }
             
             if !policy.sections.isEmpty {
-                if let sectionsData = try? JSONEncoder().encode(policy.sections),
-                   let sectionsArray = try? JSONSerialization.jsonObject(with: sectionsData) {
-                    updates["sections"] = sectionsArray
+                let sectionsArray = policy.sections.map { section -> [String: Any] in
+                    var dict: [String: Any] = [
+                        "id": section.id.uuidString,
+                        "sectionNumber": section.sectionNumber,
+                        "title": section.title,
+                        "content": section.content,
+                        "type": section.type.rawValue,
+                        "orderIndex": section.orderIndex
+                    ]
+                    if let v = section.firstProgression { dict["firstProgression"] = v }
+                    if let v = section.secondProgression { dict["secondProgression"] = v }
+                    if let v = section.thirdProgression { dict["thirdProgression"] = v }
+                    if let v = section.fourthProgression { dict["fourthProgression"] = v }
+                    return dict
                 }
+                updates["sections"] = sectionsArray
             }
             
             return try await updatePolicy(id: id, updates: updates)
         } else {
-            // Create new policy
             return try await createPolicy(policy, creatorId: creatorId, organizationId: organizationId, facilityId: facilityId)
         }
+    }
+    
+    // MARK: - AI Parse Sections
+    
+    /// Call backend AI to parse policy text into structured sections with progressive discipline
+    func aiParseSections(text: String, policyName: String) async throws -> [PolicySection] {
+        guard let url = URL(string: "\(baseURL)/policy-parsing/parse-sections") else {
+            throw PolicyServiceError.invalidURL
+        }
+        
+        let token = try await getAuthToken()
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        
+        let body: [String: Any] = [
+            "extractedText": text,
+            "policyName": policyName
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw PolicyServiceError.invalidResponse
+        }
+        
+        if httpResponse.statusCode != 200 {
+            let errorResponse = try? JSONDecoder().decode(AiParseSectionsResponse.self, from: data)
+            throw PolicyServiceError.serverError(errorResponse?.error ?? "AI parsing failed")
+        }
+        
+        let apiResponse = try JSONDecoder().decode(AiParseSectionsResponse.self, from: data)
+        
+        guard let parsedData = apiResponse.data,
+              let apiSections = parsedData.sections, !apiSections.isEmpty else {
+            return []
+        }
+        
+        return apiSections.map { $0.toPolicySection() }
     }
 }
 

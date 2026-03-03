@@ -954,7 +954,7 @@ struct ApprovalConfirmationSheet: View {
                     VStack(alignment: .leading, spacing: 12) {
                         summaryRow(label: "Edits Made", value: "\(editCount)")
                         summaryRow(label: "Status", value: "Ready for Finalization")
-                        summaryRow(label: "Next Step", value: "Phase 10 - Case Finalization")
+                        summaryRow(label: "Next Step", value: "Case Finalization")
                     }
                     .padding()
                     .background(Color.gray.opacity(0.1))

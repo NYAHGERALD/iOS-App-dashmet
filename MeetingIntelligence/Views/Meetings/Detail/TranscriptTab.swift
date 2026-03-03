@@ -9,20 +9,182 @@ import SwiftUI
 
 struct TranscriptTab: View {
     @ObservedObject var viewModel: MeetingDetailViewModel
-    @State private var selectedSpeaker: String?
-    @State private var showSpeakerFilter = false
+    @Binding var rawTranscript: String
+    
+    // Action Items Extraction
+    @StateObject private var taskViewModel = TaskViewModel()
+    @State private var isExtracting = false
+    @State private var extractionMessage: String?
+    @State private var showExtractionResult = false
+    @State private var extractedCount: Int = 0
+    
+    /// Whether transcript content is available for extraction
+    private var hasTranscriptContent: Bool {
+        !viewModel.transcript.isEmpty || !rawTranscript.isEmpty
+    }
+    
+    /// Best available transcript text for AI extraction
+    private var transcriptForExtraction: String {
+        if !viewModel.transcript.isEmpty {
+            return viewModel.transcript
+                .sorted { $0.startTime < $1.startTime }
+                .map { "\($0.speakerLabel): \($0.content)" }
+                .joined(separator: "\n")
+        }
+        return rawTranscript
+    }
     
     var body: some View {
-        VStack(spacing: 0) {
-            // Search and Filter Bar
-            searchBar
+        ZStack(alignment: .bottom) {
+            VStack(spacing: 0) {
+                // Search and Filter Bar
+                searchBar
+                
+                if !viewModel.transcript.isEmpty {
+                    transcriptList
+                } else if !rawTranscript.isEmpty {
+                    rawTranscriptView
+                } else {
+                    emptyState
+                }
+            }
             
-            if viewModel.transcript.isEmpty {
-                emptyState
-            } else {
-                transcriptList
+            // Floating Extract Action Items Button
+            if hasTranscriptContent {
+                extractActionItemsButton
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
             }
         }
+        .onAppear {
+            taskViewModel.configure(
+                userId: viewModel.userId ?? "",
+                organizationId: viewModel.meeting.organizationId
+            )
+        }
+        .alert("Action Items Extracted", isPresented: $showExtractionResult) {
+            Button("OK") {
+                showExtractionResult = false
+            }
+        } message: {
+            Text(extractionMessage ?? "")
+        }
+    }
+    
+    /// Whether action items have already been extracted for this meeting
+    private var hasExistingActionItems: Bool {
+        !viewModel.actionItems.isEmpty
+    }
+    
+    // MARK: - Extract Action Items FAB
+    private var extractActionItemsButton: some View {
+        Button {
+            if !hasExistingActionItems {
+                Task { await extractActionItems() }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                if isExtracting {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                        .scaleEffect(0.8)
+                } else if hasExistingActionItems {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 14))
+                } else {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 14))
+                }
+                Text(isExtracting ? "Extracting Action Items..." : hasExistingActionItems ? "Action Items Extracted" : "Extract Action Items")
+                    .font(.system(size: 15, weight: .medium))
+                Spacer()
+                if !isExtracting && !hasExistingActionItems {
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 12))
+                }
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(
+                LinearGradient(
+                    colors: hasExistingActionItems
+                        ? [Color(hex: "6B7280"), Color(hex: "4B5563")]
+                        : [Color(hex: "8B5CF6"), Color(hex: "6366F1")],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .shadow(color: hasExistingActionItems ? Color.clear : Color(hex: "8B5CF6").opacity(0.3), radius: 8, x: 0, y: 4)
+        }
+        .buttonStyle(.plain)
+        .allowsHitTesting(!isExtracting && !hasExistingActionItems)
+    }
+    
+    // MARK: - Extraction Logic
+    private func extractActionItems() async {
+        let transcriptText = transcriptForExtraction
+        guard !transcriptText.isEmpty else { return }
+        
+        isExtracting = true
+        
+        let extracted = await taskViewModel.extractActionItems(
+            meetingId: viewModel.meeting.id,
+            transcript: transcriptText
+        )
+        
+        isExtracting = false
+        
+        if let tasks = extracted, !tasks.isEmpty {
+            extractedCount = tasks.count
+            extractionMessage = "Successfully extracted \(tasks.count) action item\(tasks.count == 1 ? "" : "s") from the transcript."
+            await viewModel.refreshMeeting()
+        } else {
+            extractionMessage = "No action items could be identified from this transcript."
+        }
+        showExtractionResult = true
+    }
+    
+    // MARK: - Raw Transcript View (fallback when no structured blocks)
+    private var rawTranscriptView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: AppSpacing.md) {
+                // Header
+                HStack(spacing: 8) {
+                    Image(systemName: "doc.text.fill")
+                        .foregroundColor(AppColors.primary)
+                    Text("Full Transcript")
+                        .font(AppTypography.headline)
+                        .foregroundColor(AppColors.textPrimary)
+                    Spacer()
+                    Text("\(rawTranscript.split(separator: " ").count) words")
+                        .font(AppTypography.caption)
+                        .foregroundColor(AppColors.textTertiary)
+                }
+                .padding(.bottom, 4)
+                
+                // Transcript text
+                Text(filteredRawTranscript)
+                    .font(.system(size: 16))
+                    .foregroundColor(AppColors.textPrimary)
+                    .lineSpacing(6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            .padding(AppSpacing.md)
+        }
+        .background(AppColors.background)
+    }
+    
+    private var filteredRawTranscript: String {
+        if viewModel.transcriptSearchText.isEmpty {
+            return rawTranscript
+        }
+        return rawTranscript
+            .components(separatedBy: "\n")
+            .filter { $0.localizedCaseInsensitiveContains(viewModel.transcriptSearchText) }
+            .joined(separator: "\n")
     }
     
     // MARK: - Search Bar
@@ -49,32 +211,6 @@ struct TranscriptTab: View {
             .padding(AppSpacing.sm)
             .background(AppColors.surfaceSecondary)
             .clipShape(RoundedRectangle(cornerRadius: AppCornerRadius.medium))
-            
-            // Filter Pills
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: AppSpacing.sm) {
-                    // All Speakers Pill
-                    TranscriptFilterPill(
-                        title: "All",
-                        isSelected: selectedSpeaker == nil,
-                        count: viewModel.transcript.count
-                    ) {
-                        selectedSpeaker = nil
-                    }
-                    
-                    // Speaker Pills
-                    ForEach(viewModel.uniqueSpeakers, id: \.self) { speaker in
-                        let count = viewModel.transcript.filter { $0.speakerLabel == speaker }.count
-                        TranscriptFilterPill(
-                            title: speaker,
-                            isSelected: selectedSpeaker == speaker,
-                            count: count
-                        ) {
-                            selectedSpeaker = speaker
-                        }
-                    }
-                }
-            }
             
             // Search Results Info
             if !viewModel.transcriptSearchText.isEmpty {
@@ -147,13 +283,7 @@ struct TranscriptTab: View {
     
     // MARK: - Computed Properties
     private var filteredBlocks: [TranscriptBlock] {
-        var blocks = viewModel.filteredTranscript
-        
-        if let speaker = selectedSpeaker {
-            blocks = blocks.filter { $0.speakerLabel == speaker }
-        }
-        
-        return blocks
+        return viewModel.filteredTranscript
     }
 }
 
@@ -223,56 +353,29 @@ struct TranscriptBlockView: View {
     }
     
     var body: some View {
-        HStack(alignment: .top, spacing: AppSpacing.md) {
-            // Speaker Avatar
-            speakerAvatar
+        VStack(alignment: .leading, spacing: AppSpacing.xs) {
+            // Speaker Label
+            Text(block.speakerLabel)
+                .font(AppTypography.subheadline)
+                .fontWeight(.semibold)
+                .foregroundColor(speakerColor)
             
-            VStack(alignment: .leading, spacing: AppSpacing.xs) {
-                // Header Row
-                HStack(alignment: .center, spacing: AppSpacing.sm) {
-                    Text(block.speakerLabel)
-                        .font(AppTypography.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(speakerColor)
-                    
-                    Spacer()
-                    
-                    // Timestamp
-                    Button {
-                        onTimestampTap?()
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "play.fill")
-                                .font(.caption2)
-                            Text(block.formattedStartTime)
-                                .font(AppTypography.caption)
-                        }
-                        .foregroundColor(AppColors.primary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(AppColors.primary.opacity(0.1))
-                        .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
+            // Content
+            highlightedText(block.content, searchText: searchText)
+                .font(AppTypography.body)
+                .foregroundColor(AppColors.textPrimary)
+                .lineSpacing(4)
+            
+            // Confidence Badge (if low)
+            if let confidence = block.confidence, confidence < 0.8 {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                    Text("Low confidence (\(Int(confidence * 100))%)")
+                        .font(AppTypography.caption2)
                 }
-                
-                // Content
-                highlightedText(block.content, searchText: searchText)
-                    .font(AppTypography.body)
-                    .foregroundColor(AppColors.textPrimary)
-                    .lineSpacing(4)
-                
-                // Confidence Badge (if low)
-                if let confidence = block.confidence, confidence < 0.8 {
-                    HStack(spacing: 4) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.caption2)
-                        Text("Low confidence (\(Int(confidence * 100))%)")
-                            .font(AppTypography.caption2)
-                    }
-                    .foregroundColor(AppColors.warning)
-                    .padding(.top, 4)
-                }
+                .foregroundColor(AppColors.warning)
+                .padding(.top, 4)
             }
         }
         .padding(AppSpacing.md)

@@ -314,9 +314,68 @@ struct DecisionSupportView: View {
     // MARK: - Recommendations Section
     private func recommendationsSection(_ result: RecommendationResult) -> some View {
         VStack(spacing: 16) {
-            // Options
-            ForEach(result.recommendations) { option in
-                recommendationCard(option, isPrimary: option.id == result.primaryRecommendationId)
+            // Use per-employee groups if available, otherwise fallback to flat list
+            if !result.employeeRecommendations.isEmpty {
+                ForEach(Array(result.employeeRecommendations.enumerated()), id: \.element.id) { groupIdx, group in
+                    VStack(spacing: 10) {
+                        // Employee header
+                        HStack(spacing: 10) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color.indigo.opacity(0.2))
+                                    .frame(width: 32, height: 32)
+                                Image(systemName: "person.fill")
+                                    .font(.system(size: 15))
+                                    .foregroundColor(.indigo)
+                            }
+                            
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(group.employeeName)
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundColor(textPrimary)
+                                
+                                if !group.assessment.isEmpty {
+                                    Text(group.assessment)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(textSecondary)
+                                        .lineLimit(2)
+                                }
+                            }
+                            
+                            Spacer()
+                            
+                            // Options count badge
+                            Text("\(group.recommendations.count) options")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(.indigo)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.indigo.opacity(0.12))
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
+                        .padding(12)
+                        .background(Color.indigo.opacity(0.06))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        
+                        // Recommendation cards for this employee
+                        ForEach(group.recommendations) { option in
+                            recommendationCard(
+                                option,
+                                isPrimary: option.id == group.primaryRecommendation || option.id == result.primaryRecommendationId
+                            )
+                        }
+                    }
+                    
+                    if groupIdx < result.employeeRecommendations.count - 1 {
+                        Divider()
+                            .padding(.vertical, 4)
+                    }
+                }
+            } else {
+                // Fallback: flat list (backward compatibility)
+                ForEach(result.recommendations) { option in
+                    recommendationCard(option, isPrimary: option.id == result.primaryRecommendationId)
+                }
             }
             
             // Supervisor Guidance

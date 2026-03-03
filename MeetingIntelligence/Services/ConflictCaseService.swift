@@ -52,9 +52,12 @@ struct ConflictCaseAPIData: Codable {
     let selectedTargetEmployeeIds: String?  // JSON array of target employee IDs
     let generatedDocument: String?      // Was generatedActionDocJson
     let fullGeneratedDocumentResult: String?  // Full generated document result for UI display
+    let employeeGeneratedDocuments: String?   // Per-employee generated documents JSON
+    let approvedEmployeeNames: String?        // JSON array of approved employee names
     let policyMatches: String?          // Was policyMatchesJson
     let policyMatchingResult: String?   // Full policy matching result for UI
     let supervisorNotes: String?
+    let companyLogoUrl: String?
     let createdBy: String?              // Changed from creatorId to match backend
     let organizationId: String
     let facilityId: String?
@@ -182,6 +185,18 @@ struct ConflictCaseAPIData: Codable {
         conflictCase.generatedDocument = actionDoc
         conflictCase.fullGeneratedDocumentResult = fullDocumentResult
         
+        // Parse per-employee generated documents
+        if let jsonString = employeeGeneratedDocuments,
+           let data = jsonString.data(using: .utf8) {
+            conflictCase.employeeGeneratedDocuments = try? JSONDecoder().decode([String: GeneratedDocumentResult].self, from: data)
+        }
+        
+        // Parse approved employee names
+        if let jsonString = approvedEmployeeNames,
+           let data = jsonString.data(using: .utf8) {
+            conflictCase.approvedEmployeeNames = (try? JSONDecoder().decode([String].self, from: data)) ?? []
+        }
+        
         // Parse target employee IDs
         print("🎯 Parsing selectedTargetEmployeeIds from API: \(String(describing: selectedTargetEmployeeIds))")
         if let idsJson = selectedTargetEmployeeIds,
@@ -195,6 +210,7 @@ struct ConflictCaseAPIData: Codable {
         
         conflictCase.supervisorNotes = supervisorNotes
         // Note: supervisorDecision is stored locally only, not in database
+        conflictCase.companyLogoUrl = companyLogoUrl
         
         // Set creator and facility names from API response
         if let user = createdByUser {
@@ -485,6 +501,17 @@ class ConflictCaseService: ObservableObject {
             body["fullGeneratedDocumentResultJson"] = try? JSONSerialization.jsonObject(with: data)
         }
         
+        // Send per-employee generated documents
+        if let empDocs = conflictCase.employeeGeneratedDocuments, !empDocs.isEmpty,
+           let data = try? JSONEncoder().encode(empDocs) {
+            body["employeeGeneratedDocumentsJson"] = try? JSONSerialization.jsonObject(with: data)
+        }
+        
+        // Send approved employee names
+        if !conflictCase.approvedEmployeeNames.isEmpty {
+            body["approvedEmployeeNamesJson"] = conflictCase.approvedEmployeeNames
+        }
+        
         // Send target employee IDs for action
         if !conflictCase.selectedTargetEmployeeIds.isEmpty {
             body["selectedTargetEmployeeIdsJson"] = conflictCase.selectedTargetEmployeeIds.map { $0.uuidString }
@@ -540,8 +567,11 @@ class ConflictCaseService: ObservableObject {
     // MARK: - Fetch Cases
     
     /// Fetch all cases for an organization
-    func fetchCases(organizationId: String, status: CaseStatus? = nil, limit: Int = 50) async throws -> [ConflictCaseAPIData] {
+    func fetchCases(organizationId: String, createdBy: String? = nil, status: CaseStatus? = nil, limit: Int = 50) async throws -> [ConflictCaseAPIData] {
         var urlString = "\(baseURL)/conflict-cases?organizationId=\(organizationId)&limit=\(limit)"
+        if let createdBy = createdBy {
+            urlString += "&createdBy=\(createdBy)"
+        }
         if let status = status {
             urlString += "&status=\(status.rawValue)"
         }
@@ -873,6 +903,40 @@ class ConflictCaseService: ObservableObject {
               httpResponse.statusCode == 200 else {
             throw URLError(.badServerResponse)
         }
+    }
+    
+    // MARK: - Reopen Case
+    
+    /// Re-open a closed/locked case
+    func reopenCase(id: String, reopenedBy: String, reason: String? = nil) async throws -> ConflictCaseAPIData {
+        guard let token = await getAuthToken() else {
+            throw URLError(.userAuthenticationRequired)
+        }
+        
+        let url = URL(string: "\(baseURL)/conflict-cases/\(id)/reopen")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        
+        var body: [String: Any] = ["reopenedBy": reopenedBy]
+        if let reason = reason {
+            body["reason"] = reason
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        
+        let apiResponse = try JSONDecoder().decode(ConflictCaseAPIResponse.self, from: data)
+        guard let caseData = apiResponse.data else {
+            throw URLError(.cannotParseResponse)
+        }
+        return caseData
     }
     
     // MARK: - Sync All Cases

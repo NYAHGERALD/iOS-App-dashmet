@@ -129,8 +129,6 @@ struct MainTabView: View {
         case meetings = "Meetings"
         case actionItems = "Action Items"
         case hrConflict = "HR"
-        case aiVision = "System Vision"
-        case aiAssistant = "AI Assistant"
         case toDo = "To Do"
         
         var icon: String {
@@ -139,8 +137,6 @@ struct MainTabView: View {
             case .meetings: return "mic.fill"
             case .actionItems: return "checklist"
             case .hrConflict: return "person.2.badge.gearshape"
-            case .aiVision: return "eye"
-            case .aiAssistant: return "person.crop.circle.badge.questionmark"
             case .toDo: return "checkmark.circle"
             }
         }
@@ -151,8 +147,6 @@ struct MainTabView: View {
             case .meetings: return "mic.fill"
             case .actionItems: return "checklist"
             case .hrConflict: return "person.2.badge.gearshape.fill"
-            case .aiVision: return "eye.fill"
-            case .aiAssistant: return "person.crop.circle.badge.questionmark.fill"
             case .toDo: return "checkmark.circle.fill"
             }
         }
@@ -174,10 +168,6 @@ struct MainTabView: View {
                     TaskListView(onMenuTap: { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { showMenu = true } })
                 case .hrConflict:
                     ConflictResolutionView(onMenuTap: { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { showMenu = true } })
-                case .aiVision:
-                    AIVisionAssistantView(onMenuTap: { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { showMenu = true } })
-                case .aiAssistant:
-                    AIAssistantView(onMenuTap: { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { showMenu = true } })
                 case .toDo:
                     ToDoView(onMenuTap: { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { showMenu = true } })
                 }
@@ -374,8 +364,6 @@ struct MenuNavigationItem: View {
         case .meetings: return Color(hex: "EF4444")
         case .actionItems: return Color(hex: "10B981")
         case .hrConflict: return Color(hex: "8B5CF6")
-        case .aiVision: return Color(hex: "3B82F6")
-        case .aiAssistant: return Color(hex: "7C3AED")
         case .toDo: return Color(hex: "F59E0B")
         }
     }
@@ -489,8 +477,6 @@ struct TabBarButton: View {
         case .meetings: return Color(hex: "EF4444")  // Red
         case .actionItems: return Color(hex: "10B981") // Emerald
         case .hrConflict: return Color(hex: "8B5CF6") // Purple
-        case .aiVision: return Color(hex: "3B82F6")  // Blue
-        case .aiAssistant: return Color(hex: "7C3AED")  // Violet
         case .toDo: return Color(hex: "F59E0B")  // Amber
         }
     }
@@ -1241,177 +1227,6 @@ struct StepRow: View {
             Text(text)
                 .font(AppTypography.caption)
                 .foregroundColor(AppColors.textSecondary)
-        }
-    }
-}
-
-// MARK: - AI Vision Placeholder View
-struct AIVisionPlaceholderView: View {
-    let onOpenCamera: () -> Void
-    @StateObject private var sessionManager = VisionSessionManager.shared
-    @State private var showAllSessions = false
-    
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: AppSpacing.lg) {
-                    // Hero Section
-                    VStack(spacing: AppSpacing.md) {
-                        ZStack {
-                            Circle()
-                                .fill(
-                                    LinearGradient(
-                                        colors: [Color(hex: "8B5CF6").opacity(0.2), Color(hex: "8B5CF6").opacity(0.05)],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    )
-                                )
-                                .frame(width: 140, height: 140)
-                            
-                            Image(systemName: "eye.circle.fill")
-                                .font(.system(size: 60))
-                                .foregroundStyle(
-                                    LinearGradient(
-                                        colors: [Color(hex: "8B5CF6"), Color(hex: "A855F7")],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    )
-                                )
-                        }
-                        
-                        Text("System Vision Assistant")
-                            .font(AppTypography.title2)
-                            .foregroundColor(AppColors.textPrimary)
-                        
-                        Text("Point your camera at equipment, workspaces, or safety concerns and ask questions using your voice")
-                            .font(AppTypography.subheadline)
-                            .foregroundColor(AppColors.textSecondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, AppSpacing.lg)
-                    }
-                    .padding(.vertical, AppSpacing.xl)
-                    
-                    // Start Button
-                    Button(action: onOpenCamera) {
-                        HStack(spacing: AppSpacing.sm) {
-                            Image(systemName: "camera.fill")
-                                .font(.title3)
-                            Text("Start System Inspection")
-                                .font(.headline)
-                        }
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(
-                            LinearGradient(
-                                colors: [Color(hex: "8B5CF6"), Color(hex: "7C3AED")],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: 16))
-                        .shadow(color: Color(hex: "8B5CF6").opacity(0.4), radius: 12, y: 6)
-                    }
-                    .padding(.horizontal, AppSpacing.lg)
-                    
-                    // Previous Sessions Section
-                    if !sessionManager.savedSessions.isEmpty {
-                        VStack(alignment: .leading, spacing: AppSpacing.md) {
-                            HStack {
-                                Text("Previous Sessions")
-                                    .font(AppTypography.headline)
-                                    .foregroundColor(AppColors.textPrimary)
-                                
-                                Spacer()
-                                
-                                Button {
-                                    showAllSessions = true
-                                } label: {
-                                    Text("See All")
-                                        .font(AppTypography.caption)
-                                        .foregroundColor(Color(hex: "8B5CF6"))
-                                }
-                            }
-                            .padding(.horizontal, AppSpacing.lg)
-                            
-                            // Show last 3 sessions
-                            ForEach(sessionManager.savedSessions.prefix(3)) { session in
-                                VisionSessionRowView(session: session)
-                                    .padding(.horizontal, AppSpacing.lg)
-                            }
-                        }
-                        .padding(.top, AppSpacing.md)
-                    }
-                }
-                .padding(.bottom, AppSpacing.xxl)
-            }
-            .background(AppColors.background.ignoresSafeArea())
-            .navigationTitle("System Vision")
-            .navigationBarTitleDisplayMode(.inline)
-            .sheet(isPresented: $showAllSessions) {
-                VisionSessionsView()
-            }
-        }
-    }
-}
-
-// MARK: - Vision Session Row View (for placeholder screen)
-struct VisionSessionRowView: View {
-    let session: VisionSession
-    @State private var showDetail = false
-    
-    var body: some View {
-        Button {
-            showDetail = true
-        } label: {
-            HStack(spacing: 12) {
-                // Topic icon
-                Image(systemName: session.topicIcon)
-                    .font(.title3)
-                    .foregroundColor(topicColor)
-                    .frame(width: 44, height: 44)
-                    .background(Circle().fill(topicColor.opacity(0.15)))
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(session.topic)
-                        .font(AppTypography.subheadline)
-                        .fontWeight(.medium)
-                        .foregroundColor(AppColors.textPrimary)
-                    
-                    Text("\(session.messageCount) messages • \(session.formattedDate)")
-                        .font(AppTypography.caption)
-                        .foregroundColor(AppColors.textSecondary)
-                }
-                
-                Spacer()
-                
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundColor(AppColors.textSecondary)
-            }
-            .padding(12)
-            .background(AppColors.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-        }
-        .sheet(isPresented: $showDetail) {
-            VisionSessionDetailView(session: session)
-        }
-    }
-    
-    private var topicColor: Color {
-        switch session.topic {
-        case "Workplace Safety", "Fire Safety", "Electrical Safety":
-            return .red
-        case "Food Safety & Hygiene", "Sanitation & Cleanliness":
-            return .orange
-        case "Quality Control", "PPE Compliance":
-            return .blue
-        case "Environmental Compliance", "Agriculture & Farming":
-            return .green
-        case "Nursing & Healthcare", "Pharmacy & Medication":
-            return .teal
-        default:
-            return Color(hex: "8B5CF6")
         }
     }
 }

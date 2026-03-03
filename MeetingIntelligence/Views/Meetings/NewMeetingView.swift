@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AVFoundation
+import FirebaseAuth
 
 struct NewMeetingView: View {
     @Environment(\.dismiss) private var dismiss
@@ -36,6 +37,8 @@ struct NewMeetingView: View {
     // Participants
     @State private var participants: [ParticipantEntry] = []
     @State private var showAddParticipant: Bool = false
+    @State private var orgUsers: [OrganizationUser] = []
+    @State private var isLoadingOrgUsers: Bool = false
     
     // AI Settings (collapsed by default)
     @State private var showAISettings: Bool = false
@@ -51,6 +54,8 @@ struct NewMeetingView: View {
     @State private var errorMessage: String = ""
     @State private var showRecording: Bool = false
     @State private var createdMeeting: Meeting?
+    @State private var showConsentModal: Bool = false
+    @State private var pendingMeetingForConsent: Meeting?
     
     // Post-recording flow state (for imported audio)
     @State private var showPostRecording: Bool = false
@@ -171,6 +176,23 @@ struct NewMeetingView: View {
                     }
                 }
             }
+            .sheet(isPresented: $showConsentModal) {
+                if let meeting = pendingMeetingForConsent {
+                    RecordingConsentView(
+                        meetingId: meeting.id,
+                        userInfo: getCurrentUserInfo(),
+                        onConsent: {
+                            showConsentModal = false
+                            createdMeeting = meeting
+                            showRecording = true
+                        },
+                        onDecline: {
+                            showConsentModal = false
+                            pendingMeetingForConsent = nil
+                        }
+                    )
+                }
+            }
             .fullScreenCover(isPresented: $showPostRecording) {
                 if let meeting = uploadedMeeting, let audioURL = localAudioURL {
                     PostRecordingView(
@@ -197,10 +219,11 @@ struct NewMeetingView: View {
                 }
             }
             .sheet(isPresented: $showAddParticipant) {
-                AddParticipantSheet(participants: $participants)
+                AddParticipantSheet(participants: $participants, orgUsers: orgUsers, isLoadingOrgUsers: isLoadingOrgUsers)
             }
             .task {
                 await loadDepartments()
+                await loadOrgUsers()
             }
         }
     }
@@ -219,6 +242,20 @@ struct NewMeetingView: View {
             // Departments will remain empty, UI will show "No departments"
         }
         isLoadingDepartments = false
+    }
+    
+    // MARK: - Load Organization Users from API
+    private func loadOrgUsers() async {
+        guard let orgId = viewModel.organizationId else { return }
+        isLoadingOrgUsers = true
+        do {
+            let response = try await APIService.shared.getOrganizationUsers(organizationId: orgId)
+            let currentUserId = viewModel.userId
+            orgUsers = (response.users ?? []).filter { $0.id != currentUserId }
+        } catch {
+            print("\u{26A0}\u{FE0F} Failed to load org users: \(error.localizedDescription)")
+        }
+        isLoadingOrgUsers = false
     }
     
     // MARK: - Section 1: Meeting Type
@@ -392,24 +429,49 @@ struct NewMeetingView: View {
                 // Added participants
                 ForEach(participants.indices, id: \.self) { index in
                     HStack(spacing: 12) {
-                        Circle()
-                            .fill(AppGradients.primary)
+                        // Avatar with profile picture support
+                        if let pic = participants[index].profilePicture, let url = URL(string: pic) {
+                            AsyncImage(url: url) { image in
+                                image.resizable().scaledToFill()
+                            } placeholder: {
+                                Circle()
+                                    .fill(AppGradients.primary)
+                                    .overlay(
+                                        Text(participants[index].initials)
+                                            .font(.caption)
+                                            .fontWeight(.bold)
+                                            .foregroundColor(.white)
+                                    )
+                            }
                             .frame(width: 36, height: 36)
-                            .overlay(
-                                Text(participants[index].initials)
-                                    .font(.caption)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(.white)
-                            )
+                            .clipShape(Circle())
+                        } else {
+                            Circle()
+                                .fill(AppGradients.primary)
+                                .frame(width: 36, height: 36)
+                                .overlay(
+                                    Text(participants[index].initials)
+                                        .font(.caption)
+                                        .fontWeight(.bold)
+                                        .foregroundColor(.white)
+                                )
+                        }
                         
                         VStack(alignment: .leading, spacing: 2) {
                             Text(participants[index].name)
                                 .font(.subheadline)
                                 .foregroundColor(AppColors.textPrimary)
-                            if let role = participants[index].role {
-                                Text(role)
-                                    .font(.caption)
-                                    .foregroundColor(AppColors.textTertiary)
+                            HStack(spacing: 4) {
+                                if let email = participants[index].email {
+                                    Text(email)
+                                        .font(.caption)
+                                        .foregroundColor(AppColors.textTertiary)
+                                }
+                                if let phone = participants[index].phone {
+                                    Text("\u{00B7} \(phone)")
+                                        .font(.caption)
+                                        .foregroundColor(AppColors.textTertiary)
+                                }
                             }
                         }
                         
@@ -861,14 +923,27 @@ struct NewMeetingView: View {
             confidentialityLevel: confidentialityLevel.rawValue,
             participants: buildParticipantsRequest()
         ) {
-            createdMeeting = meeting
             isCreating = false
-            showRecording = true
+            // Show consent modal before recording
+            pendingMeetingForConsent = meeting
+            showConsentModal = true
         } else {
             errorMessage = viewModel.errorMessage ?? "Failed to create meeting"
             showError = true
             isCreating = false
         }
+    }
+    
+    // MARK: - User Info for Consent
+    private func getCurrentUserInfo() -> ConsentUserInfo {
+        let authService = FirebaseAuthService.shared
+        return ConsentUserInfo(
+            uid: authService.currentUser?.uid ?? "",
+            email: authService.currentUser?.email ?? "",
+            firstName: "",
+            lastName: "",
+            phoneNumber: authService.currentUser?.phoneNumber
+        )
     }
 }
 
@@ -896,9 +971,12 @@ enum ConfidentialityLevel: String, CaseIterable {
 
 struct ParticipantEntry: Identifiable {
     let id = UUID()
+    var userId: String?
     var name: String
     var role: String?
     var email: String?
+    var profilePicture: String?
+    var phone: String?
     
     var initials: String {
         let parts = name.split(separator: " ")
@@ -933,44 +1011,147 @@ struct FormTextField: View {
 struct AddParticipantSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var participants: [ParticipantEntry]
+    let orgUsers: [OrganizationUser]
+    let isLoadingOrgUsers: Bool
     
-    @State private var name: String = ""
-    @State private var role: String = ""
-    @State private var email: String = ""
+    @State private var searchText: String = ""
+    
+    private var filteredUsers: [OrganizationUser] {
+        let alreadyAdded = Set(participants.compactMap { $0.userId })
+        let available = orgUsers.filter { !alreadyAdded.contains($0.id) }
+        if searchText.trimmingCharacters(in: .whitespaces).isEmpty { return available }
+        let q = searchText.lowercased()
+        return available.filter {
+            $0.fullName.lowercased().contains(q) ||
+            $0.email.lowercased().contains(q) ||
+            ($0.phone ?? "").contains(q)
+        }
+    }
     
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Participant Details") {
-                    TextField("Full Name", text: $name)
-                    TextField("Role (Optional)", text: $role)
-                    TextField("Email (Optional)", text: $email)
-                        .keyboardType(.emailAddress)
-                        .autocapitalization(.none)
+            VStack(spacing: 0) {
+                // Search bar
+                HStack(spacing: 10) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(AppColors.textTertiary)
+                    TextField("Search team members...", text: $searchText)
+                        .font(.subheadline)
+                        .autocorrectionDisabled()
+                }
+                .padding(12)
+                .background(AppColors.surfaceSecondary)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .padding(.horizontal)
+                .padding(.top, 8)
+                
+                if isLoadingOrgUsers {
+                    Spacer()
+                    ProgressView()
+                        .padding()
+                    Text("Loading team members...")
+                        .font(.caption)
+                        .foregroundColor(AppColors.textTertiary)
+                    Spacer()
+                } else if filteredUsers.isEmpty {
+                    Spacer()
+                    VStack(spacing: 8) {
+                        Image(systemName: "person.3")
+                            .font(.largeTitle)
+                            .foregroundColor(AppColors.textTertiary)
+                        Text(searchText.isEmpty ? "No team members available" : "No matching team members")
+                            .font(.subheadline)
+                            .foregroundColor(AppColors.textTertiary)
+                    }
+                    Spacer()
+                } else {
+                    List {
+                        ForEach(filteredUsers) { user in
+                            Button {
+                                let entry = ParticipantEntry(
+                                    userId: user.id,
+                                    name: user.fullName,
+                                    role: user.role,
+                                    email: user.email,
+                                    profilePicture: user.profilePicture,
+                                    phone: user.phone
+                                )
+                                participants.append(entry)
+                                dismiss()
+                            } label: {
+                                HStack(spacing: 12) {
+                                    // Avatar
+                                    if let pic = user.profilePicture, let url = URL(string: pic) {
+                                        AsyncImage(url: url) { image in
+                                            image.resizable().scaledToFill()
+                                        } placeholder: {
+                                            initialsCircle(user.initials)
+                                        }
+                                        .frame(width: 40, height: 40)
+                                        .clipShape(Circle())
+                                    } else {
+                                        initialsCircle(user.initials)
+                                    }
+                                    
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(user.fullName)
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                            .foregroundColor(AppColors.textPrimary)
+                                        HStack(spacing: 4) {
+                                            Text(user.email)
+                                                .font(.caption)
+                                                .foregroundColor(AppColors.textTertiary)
+                                            if let phone = user.phone {
+                                                Text("\u{00B7} \(phone)")
+                                                    .font(.caption)
+                                                    .foregroundColor(AppColors.textTertiary)
+                                            }
+                                        }
+                                    }
+                                    
+                                    Spacer()
+                                    
+                                    if let role = user.role {
+                                        Text(role)
+                                            .font(.caption2)
+                                            .fontWeight(.medium)
+                                            .foregroundColor(AppColors.primary)
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 3)
+                                            .background(AppColors.primary.opacity(0.1))
+                                            .clipShape(Capsule())
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .listStyle(.plain)
                 }
             }
             .navigationTitle("Add Participant")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") {
-                        let participant = ParticipantEntry(
-                            name: name,
-                            role: role.isEmpty ? nil : role,
-                            email: email.isEmpty ? nil : email
-                        )
-                        participants.append(participant)
-                        dismiss()
-                    }
-                    .disabled(name.isEmpty)
+                    Button("Cancel") { dismiss() }
                 }
             }
         }
+    }
+    
+    @ViewBuilder
+    private func initialsCircle(_ initials: String) -> some View {
+        Circle()
+            .fill(AppGradients.primary)
+            .frame(width: 40, height: 40)
+            .overlay(
+                Text(initials)
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundColor(.white)
+            )
     }
 }
 

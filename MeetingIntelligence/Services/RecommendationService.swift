@@ -184,55 +184,88 @@ class RecommendationService {
         let supervisorGuidance = data["supervisorGuidance"] as? String ?? ""
         let generatedAt = data["generatedAt"] as? String ?? ISO8601DateFormatter().string(from: Date())
         
+        // Parse per-employee recommendation groups
+        let employeeRecommendationGroups: [EmployeeRecommendationGroup]
+        if let empRecsData = data["employeeRecommendations"] as? [[String: Any]], !empRecsData.isEmpty {
+            employeeRecommendationGroups = empRecsData.compactMap { groupData in
+                guard let employeeName = groupData["employeeName"] as? String,
+                      let recsData = groupData["recommendations"] as? [[String: Any]] else {
+                    return nil
+                }
+                let assessment = groupData["assessment"] as? String ?? ""
+                let groupPrimary = groupData["primaryRecommendation"] as? String ?? ""
+                
+                let recs: [RecommendationOption] = recsData.compactMap { recData in
+                    self.parseRecommendationOption(recData, employees: employees)
+                }
+                
+                guard !recs.isEmpty else { return nil }
+                
+                return EmployeeRecommendationGroup(
+                    employeeName: employeeName,
+                    assessment: assessment,
+                    recommendations: recs,
+                    primaryRecommendation: groupPrimary
+                )
+            }
+        } else {
+            employeeRecommendationGroups = []
+        }
+        
+        // Parse flat recommendations (backward compat)
         let recommendations: [RecommendationOption] = recommendationsData.compactMap { recData in
-            guard let id = recData["id"] as? String,
-                  let typeString = recData["type"] as? String,
-                  let title = recData["title"] as? String,
-                  let description = recData["description"] as? String,
-                  let rationale = recData["rationale"] as? String,
-                  let riskLevelString = recData["riskLevel"] as? String,
-                  let riskExplanation = recData["riskExplanation"] as? String,
-                  let nextSteps = recData["nextSteps"] as? [String],
-                  let timeframe = recData["timeframe"] as? String,
-                  let confidence = recData["confidence"] as? Double else {
-                return nil
-            }
-            
-            // Parse type and risk level - skip this recommendation if values are invalid
-            guard let type = RecommendationType(fromAPI: typeString) else {
-                print("[RecommendationService] Warning: Skipping recommendation with unrecognized type: \(typeString)")
-                return nil
-            }
-            
-            guard let riskLevel = RiskLevel(fromAPI: riskLevelString) else {
-                print("[RecommendationService] Warning: Skipping recommendation with unrecognized risk level: \(riskLevelString)")
-                return nil
-            }
-            
-            // Parse target employee names and match to IDs
-            let targetEmployeeNames = recData["targetEmployeeNames"] as? [String] ?? []
-            let targetEmployeeIds: [UUID] = matchEmployeeNamesToIds(names: targetEmployeeNames, employees: employees)
-            
-            return RecommendationOption(
-                id: id,
-                type: type,
-                title: title,
-                description: description,
-                rationale: rationale,
-                riskLevel: riskLevel,
-                riskExplanation: riskExplanation,
-                nextSteps: nextSteps,
-                timeframe: timeframe,
-                confidence: confidence,
-                targetEmployeeIds: targetEmployeeIds
-            )
+            self.parseRecommendationOption(recData, employees: employees)
         }
         
         return RecommendationResult(
             recommendations: recommendations,
+            employeeRecommendations: employeeRecommendationGroups,
             primaryRecommendationId: primaryRecommendation,
             supervisorGuidance: supervisorGuidance,
             generatedAt: ISO8601DateFormatter().date(from: generatedAt) ?? Date()
+        )
+    }
+    
+    /// Parse a single recommendation option from JSON
+    private func parseRecommendationOption(_ recData: [String: Any], employees: [InvolvedEmployee]) -> RecommendationOption? {
+        guard let id = recData["id"] as? String,
+              let typeString = recData["type"] as? String,
+              let title = recData["title"] as? String,
+              let description = recData["description"] as? String,
+              let rationale = recData["rationale"] as? String,
+              let riskLevelString = recData["riskLevel"] as? String,
+              let riskExplanation = recData["riskExplanation"] as? String,
+              let nextSteps = recData["nextSteps"] as? [String],
+              let timeframe = recData["timeframe"] as? String,
+              let confidence = recData["confidence"] as? Double else {
+            return nil
+        }
+        
+        guard let type = RecommendationType(fromAPI: typeString) else {
+            print("[RecommendationService] Warning: Skipping recommendation with unrecognized type: \(typeString)")
+            return nil
+        }
+        
+        guard let riskLevel = RiskLevel(fromAPI: riskLevelString) else {
+            print("[RecommendationService] Warning: Skipping recommendation with unrecognized risk level: \(riskLevelString)")
+            return nil
+        }
+        
+        let targetEmployeeNames = recData["targetEmployeeNames"] as? [String] ?? []
+        let targetEmployeeIds: [UUID] = matchEmployeeNamesToIds(names: targetEmployeeNames, employees: employees)
+        
+        return RecommendationOption(
+            id: id,
+            type: type,
+            title: title,
+            description: description,
+            rationale: rationale,
+            riskLevel: riskLevel,
+            riskExplanation: riskExplanation,
+            nextSteps: nextSteps,
+            timeframe: timeframe,
+            confidence: confidence,
+            targetEmployeeIds: targetEmployeeIds
         )
     }
     
@@ -330,19 +363,47 @@ struct PriorHistoryInfo {
     }
 }
 
+/// Per-employee recommendation group
+struct EmployeeRecommendationGroup: Codable, Identifiable {
+    var id: String { employeeName }
+    let employeeName: String
+    let assessment: String
+    let recommendations: [RecommendationOption]
+    let primaryRecommendation: String
+}
+
 /// Result containing all recommendations
 struct RecommendationResult: Codable {
     let recommendations: [RecommendationOption]
+    let employeeRecommendations: [EmployeeRecommendationGroup]
     let primaryRecommendationId: String
     let supervisorGuidance: String
     let generatedAt: Date
     
     var hasRecommendations: Bool {
-        !recommendations.isEmpty
+        !recommendations.isEmpty || !employeeRecommendations.isEmpty
     }
     
     var primaryRecommendation: RecommendationOption? {
         recommendations.first { $0.id == primaryRecommendationId }
+    }
+    
+    // Custom decoder to handle backward compat (old data without employeeRecommendations)
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        recommendations = try container.decode([RecommendationOption].self, forKey: .recommendations)
+        employeeRecommendations = try container.decodeIfPresent([EmployeeRecommendationGroup].self, forKey: .employeeRecommendations) ?? []
+        primaryRecommendationId = try container.decode(String.self, forKey: .primaryRecommendationId)
+        supervisorGuidance = try container.decode(String.self, forKey: .supervisorGuidance)
+        generatedAt = try container.decode(Date.self, forKey: .generatedAt)
+    }
+    
+    init(recommendations: [RecommendationOption], employeeRecommendations: [EmployeeRecommendationGroup] = [], primaryRecommendationId: String, supervisorGuidance: String, generatedAt: Date) {
+        self.recommendations = recommendations
+        self.employeeRecommendations = employeeRecommendations
+        self.primaryRecommendationId = primaryRecommendationId
+        self.supervisorGuidance = supervisorGuidance
+        self.generatedAt = generatedAt
     }
 }
 

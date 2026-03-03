@@ -502,6 +502,31 @@ class FirebaseStorageService: ObservableObject {
         print("✅ [Compliance] All meeting audio deleted from Firebase Storage")
     }
     
+    // MARK: - Company Logo Upload
+    
+    /// Upload a company logo image to Firebase Storage for a conflict case
+    /// Returns the download URL for the uploaded logo
+    func uploadCompanyLogo(_ image: UIImage, caseNumber: String, userId: String) async throws -> String {
+        guard let imageData = image.jpegData(compressionQuality: 0.85) else {
+            throw UploadError.invalidFile
+        }
+        
+        let storagePath = "conflict-cases/\(userId)/\(caseNumber)/company-logo.jpg"
+        
+        print("📤 Uploading company logo to Firebase...")
+        print("   Path: \(storagePath)")
+        
+        let storageRef = storage.reference().child(storagePath)
+        let metadata = StorageMetadata()
+        metadata.contentType = "image/jpeg"
+        
+        _ = try await storageRef.putDataAsync(imageData, metadata: metadata)
+        let downloadURL = try await storageRef.downloadURL()
+        
+        print("✅ Company logo uploaded: \(downloadURL.absoluteString)")
+        return downloadURL.absoluteString
+    }
+    
     // MARK: - Document Image Uploads
     
     /// Upload a document image to Firebase Storage for conflict resolution

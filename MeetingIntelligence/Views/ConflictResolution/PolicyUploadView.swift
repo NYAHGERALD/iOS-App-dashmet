@@ -330,78 +330,12 @@ struct PolicyUploadView: View {
     
     // MARK: - Processing View
     private var processingView: some View {
-        VStack(spacing: 32) {
-            Spacer()
-            
-            // Animated Processing Icon
-            ZStack {
-                Circle()
-                    .stroke(AppColors.primary.opacity(0.2), lineWidth: 4)
-                    .frame(width: 120, height: 120)
-                
-                Circle()
-                    .trim(from: 0, to: manager.processingProgress)
-                    .stroke(AppColors.primary, style: StrokeStyle(lineWidth: 4, lineCap: .round))
-                    .frame(width: 120, height: 120)
-                    .rotationEffect(.degrees(-90))
-                    .animation(.easeInOut(duration: 0.3), value: manager.processingProgress)
-                
-                Image(systemName: "doc.text.magnifyingglass")
-                    .font(.system(size: 40))
-                    .foregroundColor(AppColors.primary)
-            }
-            
-            VStack(spacing: 12) {
-                Text("Processing Document")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundColor(textPrimary)
-                
-                Text(manager.processingStatus)
-                    .font(.system(size: 15))
-                    .foregroundColor(textSecondary)
-                
-                Text("\(Int(manager.processingProgress * 100))%")
-                    .font(.system(size: 32, weight: .bold))
-                    .foregroundColor(AppColors.primary)
-            }
-            
-            // Processing Steps
-            VStack(alignment: .leading, spacing: 16) {
-                ProcessingStepRow(
-                    title: "Reading document",
-                    isComplete: manager.processingProgress > 0.2,
-                    isActive: manager.processingProgress <= 0.2 && manager.processingProgress > 0
-                )
-                
-                ProcessingStepRow(
-                    title: "Extracting text",
-                    isComplete: manager.processingProgress > 0.4,
-                    isActive: manager.processingProgress > 0.2 && manager.processingProgress <= 0.4
-                )
-                
-                ProcessingStepRow(
-                    title: "Analyzing structure",
-                    isComplete: manager.processingProgress > 0.6,
-                    isActive: manager.processingProgress > 0.4 && manager.processingProgress <= 0.6
-                )
-                
-                ProcessingStepRow(
-                    title: "Creating sections",
-                    isComplete: manager.processingProgress > 0.8,
-                    isActive: manager.processingProgress > 0.6 && manager.processingProgress <= 0.8
-                )
-                
-                ProcessingStepRow(
-                    title: "Saving policy",
-                    isComplete: manager.processingProgress >= 1.0,
-                    isActive: manager.processingProgress > 0.8 && manager.processingProgress < 1.0
-                )
-            }
-            .padding(.horizontal, 40)
-            
-            Spacer()
-        }
-        .padding()
+        ProcessingAnimationView(
+            progress: manager.processingProgress,
+            statusText: manager.processingStatus,
+            textPrimary: textPrimary,
+            textSecondary: textSecondary
+        )
     }
     
     // MARK: - Success View
@@ -574,11 +508,140 @@ struct PolicyUploadView: View {
     }
 }
 
-// MARK: - Processing Step Row
-struct ProcessingStepRow: View {
+// MARK: - Processing Animation View (matching Android ProcessingContent)
+struct ProcessingAnimationView: View {
+    let progress: Double
+    let statusText: String
+    let textPrimary: Color
+    let textSecondary: Color
+    
+    // Spinning animation for the icon
+    @State private var iconRotation: Double = 0
+    // Pulsing animation for the ring glow
+    @State private var ringPulse: Bool = false
+    // Shimmer for active step
+    @State private var shimmerOffset: CGFloat = -1
+    
+    private let steps: [(String, Double)] = [
+        ("Reading document", 0.15),
+        ("Extracting text", 0.35),
+        ("AI analyzing policy structure", 0.7),
+        ("Saving policy", 0.95)
+    ]
+    
+    var body: some View {
+        VStack(spacing: 28) {
+            Spacer()
+            
+            // Animated circular progress with spinning icon
+            ZStack {
+                // Background track
+                Circle()
+                    .stroke(AppColors.primary.opacity(0.12), lineWidth: 5)
+                    .frame(width: 130, height: 130)
+                
+                // Glow ring (pulses)
+                Circle()
+                    .stroke(AppColors.primary.opacity(ringPulse ? 0.25 : 0.08), lineWidth: 8)
+                    .frame(width: 130, height: 130)
+                    .blur(radius: 4)
+                
+                // Progress arc
+                Circle()
+                    .trim(from: 0, to: CGFloat(progress))
+                    .stroke(
+                        AngularGradient(
+                            gradient: Gradient(colors: [
+                                AppColors.primary.opacity(0.4),
+                                AppColors.primary
+                            ]),
+                            center: .center,
+                            startAngle: .degrees(0),
+                            endAngle: .degrees(360 * progress)
+                        ),
+                        style: StrokeStyle(lineWidth: 5, lineCap: .round)
+                    )
+                    .frame(width: 130, height: 130)
+                    .rotationEffect(.degrees(-90))
+                    .animation(.easeInOut(duration: 0.6), value: progress)
+                
+                // Inner icon container
+                ZStack {
+                    Circle()
+                        .fill(AppColors.primary.opacity(0.1))
+                        .frame(width: 64, height: 64)
+                    
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.system(size: 28, weight: .medium))
+                        .foregroundColor(AppColors.primary)
+                        .rotationEffect(.degrees(iconRotation))
+                }
+            }
+            
+            VStack(spacing: 10) {
+                Text("Processing Document")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundColor(textPrimary)
+                
+                Text(statusText)
+                    .font(.system(size: 15))
+                    .foregroundColor(textSecondary)
+                    .animation(.easeInOut(duration: 0.3), value: statusText)
+                
+                // Percentage with animated counting effect
+                Text("\(Int(progress * 100))%")
+                    .font(.system(size: 36, weight: .bold, design: .rounded))
+                    .foregroundColor(AppColors.primary)
+                    .contentTransition(.numericText())
+                    .animation(.easeInOut(duration: 0.3), value: Int(progress * 100))
+            }
+            
+            // Processing step rows
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                    let isComplete = progress > step.1
+                    let prevThreshold = index > 0 ? steps[index - 1].1 : 0.0
+                    let isActive = progress > prevThreshold && progress <= step.1
+                    
+                    AnimatedProcessingStepRow(
+                        title: step.0,
+                        isComplete: isComplete,
+                        isActive: isActive
+                    )
+                    .transition(.opacity.combined(with: .move(edge: .leading)))
+                }
+            }
+            .padding(.horizontal, 36)
+            
+            Spacer()
+        }
+        .padding()
+        .onAppear {
+            // Start spinning icon animation
+            withAnimation(.linear(duration: 3).repeatForever(autoreverses: false)) {
+                iconRotation = 360
+            }
+            // Start pulse animation
+            withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) {
+                ringPulse = true
+            }
+            // Start shimmer
+            withAnimation(.linear(duration: 2).repeatForever(autoreverses: false)) {
+                shimmerOffset = 2
+            }
+        }
+    }
+}
+
+// MARK: - Animated Processing Step Row
+struct AnimatedProcessingStepRow: View {
     let title: String
     let isComplete: Bool
     let isActive: Bool
+    
+    @State private var spinnerRotation: Double = 0
+    @State private var checkScale: CGFloat = 0
+    @State private var appeared = false
     
     @Environment(\.colorScheme) private var colorScheme
     
@@ -591,35 +654,80 @@ struct ProcessingStepRow: View {
     }
     
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
             ZStack {
                 if isComplete {
+                    // Green checkmark with pop-in animation
                     Circle()
                         .fill(AppColors.success)
-                        .frame(width: 24, height: 24)
+                        .frame(width: 26, height: 26)
                     
                     Image(systemName: "checkmark")
                         .font(.system(size: 12, weight: .bold))
                         .foregroundColor(.white)
+                        .scaleEffect(checkScale)
                 } else if isActive {
+                    // Spinning ring indicator
                     Circle()
-                        .stroke(AppColors.primary, lineWidth: 2)
-                        .frame(width: 24, height: 24)
+                        .stroke(AppColors.primary.opacity(0.2), lineWidth: 2.5)
+                        .frame(width: 26, height: 26)
+                    
+                    Circle()
+                        .trim(from: 0, to: 0.3)
+                        .stroke(AppColors.primary, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                        .frame(width: 26, height: 26)
+                        .rotationEffect(.degrees(spinnerRotation))
                     
                     Circle()
                         .fill(AppColors.primary)
-                        .frame(width: 8, height: 8)
+                        .frame(width: 6, height: 6)
                 } else {
+                    // Empty circle
                     Circle()
-                        .stroke(textSecondary, lineWidth: 1)
-                        .frame(width: 24, height: 24)
+                        .stroke(textSecondary.opacity(0.4), lineWidth: 1.5)
+                        .frame(width: 26, height: 26)
                 }
             }
+            .frame(width: 26, height: 26)
             
             Text(title)
-                .font(.system(size: 15, weight: isActive ? .medium : .regular))
-                .foregroundColor(isComplete || isActive ? textPrimary : textSecondary)
+                .font(.system(size: 15, weight: isActive ? .semibold : .regular))
+                .foregroundColor(isComplete ? AppColors.success : (isActive ? textPrimary : textSecondary))
+                .animation(.easeInOut(duration: 0.3), value: isActive)
+                .animation(.easeInOut(duration: 0.3), value: isComplete)
         }
+        .opacity(appeared ? 1 : 0.5)
+        .offset(x: appeared ? 0 : -10)
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.4)) {
+                appeared = true
+            }
+        }
+        .onChange(of: isComplete) { _, newValue in
+            if newValue {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.5)) {
+                    checkScale = 1.0
+                }
+            }
+        }
+        .onChange(of: isActive) { _, newValue in
+            if newValue {
+                withAnimation(.linear(duration: 1).repeatForever(autoreverses: false)) {
+                    spinnerRotation = 360
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Processing Step Row (legacy - kept for compatibility)
+struct ProcessingStepRow: View {
+    let title: String
+    let isComplete: Bool
+    let isActive: Bool
+    
+    var body: some View {
+        AnimatedProcessingStepRow(title: title, isComplete: isComplete, isActive: isActive)
     }
 }
 

@@ -8,6 +8,7 @@
 
 import SwiftUI
 import AVFoundation
+import FirebaseAuth
 
 struct PostRecordingView: View {
     let meeting: Meeting
@@ -352,6 +353,22 @@ struct PostRecordingView: View {
                             .foregroundColor(.white.opacity(0.5))
                     }
                     
+                    // Speaker diarization info
+                    if transcript.isDiarized && transcript.speakerCount > 0 {
+                        HStack(spacing: 6) {
+                            Image(systemName: "person.2.wave.2")
+                                .foregroundColor(.orange)
+                            Text("\(transcript.speakerCount) speakers identified")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                            Text("•")
+                                .foregroundColor(.white.opacity(0.3))
+                            Text("\(transcript.speakerBlocks.count) segments")
+                                .font(.caption)
+                                .foregroundColor(.white.opacity(0.5))
+                        }
+                    }
+                    
                     // Show processing status
                     if transcriptState.isProcessedTranscriptSaved {
                         HStack(spacing: 6) {
@@ -611,19 +628,59 @@ struct PostRecordingView: View {
     private func uploadRecording() {
         isUploading = true
         
-        // Upload the recording to Firebase Storage
         Task {
-            // Save the final transcript (processed version)
-            if let transcript = transcriptState.currentTranscript {
-                await saveTranscript(transcript, type: "final")
+            do {
+                // Save the final transcript (processed version)
+                if let transcript = transcriptState.currentTranscript {
+                    await saveTranscript(transcript, type: "final")
+                }
+                
+                // 1. Set meeting status to uploading
+                let _ = await meetingViewModel.updateMeeting(meetingId: meeting.id, status: .uploading)
+                
+                // 2. Get current user ID for storage path
+                guard let userId = Auth.auth().currentUser?.uid else {
+                    throw NSError(domain: "PostRecording", code: 401, userInfo: [NSLocalizedDescriptionKey: "Not signed in — cannot upload recording"])
+                }
+                
+                // 3. Upload audio to Firebase Storage
+                print("📤 Uploading audio to Firebase Storage...")
+                let downloadUrl = try await FirebaseStorageService.shared.uploadNow(
+                    meetingId: meeting.id,
+                    localURL: recordingURL,
+                    userId: userId
+                )
+                print("✅ Upload complete. URL: \(downloadUrl)")
+                
+                // 4. Notify backend with the Firebase download URL
+                let duration = Int(audioDuration)
+                let success = await meetingViewModel.uploadMeeting(
+                    meetingId: meeting.id,
+                    recordingUrl: downloadUrl,
+                    duration: duration,
+                    recordedAt: Date()
+                )
+                
+                if success {
+                    print("✅ Backend updated with recording URL")
+                    
+                    // 5. Delete local recording file — everything is in the cloud now
+                    deleteRecording()
+                    print("🗑️ Local recording file deleted")
+                } else {
+                    print("⚠️ Backend update failed, keeping local file as backup")
+                }
+                
+                isUploading = false
+                onComplete()
+                
+            } catch {
+                print("❌ Upload failed: \(error.localizedDescription)")
+                // Fallback: mark as ready so recording isn't lost
+                let _ = await meetingViewModel.updateMeeting(meetingId: meeting.id, status: .ready)
+                isUploading = false
+                onComplete()
             }
-            
-            // Update meeting status
-            let _ = await meetingViewModel.updateMeeting(meetingId: meeting.id, status: .ready)
-            
-            // Complete
-            isUploading = false
-            onComplete()
         }
     }
     
@@ -636,12 +693,29 @@ struct PostRecordingView: View {
     }
     
     private func saveTranscript(_ transcript: GeneratedTranscript, type: String = "raw") async {
+        // Build speaker blocks array for storage
+        var speakerBlocksData: [[String: Any]] = []
+        for block in transcript.speakerBlocks {
+            speakerBlocksData.append([
+                "speaker": block.speaker,
+                "content": block.content,
+                "startTime": block.startTime,
+                "endTime": block.endTime,
+                "confidence": block.confidence,
+                "wordCount": block.wordCount
+            ])
+        }
+        
         let transcriptData: [String: Any] = [
             "type": type,
             "rawText": transcript.rawText,
             "processedText": transcript.processedText,
             "wordCount": transcript.wordCount,
             "duration": transcript.duration,
+            "speakerCount": transcript.speakerCount,
+            "speakers": transcript.speakers,
+            "isDiarized": transcript.isDiarized,
+            "speakerBlocks": speakerBlocksData,
             "generatedAt": transcript.generatedAt.timeIntervalSince1970,
             "savedAt": Date().timeIntervalSince1970
         ]
@@ -649,8 +723,33 @@ struct PostRecordingView: View {
         // Save locally for backup
         UserDefaults.standard.set(try? JSONSerialization.data(withJSONObject: transcriptData), forKey: "transcript_\(type)_\(meeting.id)")
         
-        // TODO: Also save to Firebase/backend database for cloud sync
-        // await APIService.shared.saveTranscript(meetingId: meeting.id, rawText: transcript.rawText, processedText: transcript.processedText, type: type)
+        // Save to backend database for cloud sync
+        do {
+            // Build blocks array for backend (speaker-attributed blocks)
+            var backendBlocks: [[String: Any]] = []
+            if transcript.isDiarized && !transcript.speakerBlocks.isEmpty {
+                for block in transcript.speakerBlocks {
+                    backendBlocks.append([
+                        "speakerLabel": block.speaker,
+                        "content": block.content,
+                        "startTime": Int(block.startTime),
+                        "endTime": Int(block.endTime),
+                        "confidence": block.confidence
+                    ])
+                }
+            }
+            
+            try await APIService.shared.saveTranscriptWithBlocks(
+                meetingId: meeting.id,
+                rawText: transcript.rawText,
+                processedText: transcript.processedText,
+                blocks: backendBlocks.isEmpty ? nil : backendBlocks,
+                type: type
+            )
+            print("✅ Transcript saved to backend database")
+        } catch {
+            print("⚠️ Backend transcript save failed (non-critical): \(error.localizedDescription)")
+        }
     }
     
     private func deleteRecording() {

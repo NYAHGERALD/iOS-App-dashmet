@@ -8,6 +8,7 @@
 
 import SwiftUI
 import Combine
+import FirebaseAuth
 
 // MARK: - Review Status
 enum ReviewStatus: String, Codable {
@@ -102,6 +103,7 @@ struct SupervisorReviewView: View {
     let conflictCase: ConflictCase
     let generatedResult: GeneratedDocumentResult
     let targetEmployeeIds: [UUID]  // Which employees the AI recommended for this action
+    let isAlreadyApproved: Bool
     let onApprove: (GeneratedDocumentResult, [DocumentEdit]) -> Void
     let onRequestChanges: ([ReviewComment]) -> Void
     let onReject: (String) -> Void
@@ -682,20 +684,23 @@ struct SupervisorReviewView: View {
     // MARK: - Action Buttons
     private var actionButtons: some View {
         VStack(spacing: 12) {
-            // Approve button
-            Button {
-                showApprovalSheet = true
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.seal.fill")
-                    Text("Approve Document")
+            // Approve button — hidden when viewing an already-approved doc with no edits
+            if !isAlreadyApproved || !edits.isEmpty {
+                Button {
+                    showApprovalSheet = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.seal.fill")
+                        Text(isAlreadyApproved ? "Re-Approve Document" : "Approve Document")
+                    }
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(Color.green)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-                .background(Color.green)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
             
             // Request changes button
@@ -1011,11 +1016,13 @@ struct ReviewDocumentPreviewSheet: View {
     
     @State private var companyLogo: UIImage? = nil
     @State private var showImagePicker = false
+    @State private var isUploadingLogo = false
     @State private var warningType: WarningType = .written
     @State private var showShareSheet = false
     @State private var pdfURL: URL? = nil
     @State private var isExporting = false
     @State private var exportError: String? = nil
+    @State private var showExportErrorAlert = false
     
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -1190,10 +1197,78 @@ struct ReviewDocumentPreviewSheet: View {
                     ShareSheet(items: [url])
                 }
             }
-            .alert("Export Error", isPresented: .constant(exportError != nil)) {
+            .onChange(of: exportError) { _, newValue in
+                showExportErrorAlert = newValue != nil
+            }
+            .alert("Export Error", isPresented: $showExportErrorAlert) {
                 Button("OK") { exportError = nil }
             } message: {
                 Text(exportError ?? "Unknown error")
+            }
+            .task {
+                // Load company logo from Firebase if URL exists
+                if let logoUrl = conflictCase.companyLogoUrl,
+                   let url = URL(string: logoUrl) {
+                    do {
+                        let (data, _) = try await URLSession.shared.data(from: url)
+                        if let image = UIImage(data: data) {
+                            await MainActor.run {
+                                isUploadingLogo = true  // Prevent re-upload
+                                companyLogo = image
+                            }
+                            // Small delay to let onChange fire before resetting flag
+                            try? await Task.sleep(nanoseconds: 500_000_000)
+                            await MainActor.run {
+                                isUploadingLogo = false
+                            }
+                        }
+                    } catch {
+                        print("⚠️ Failed to load company logo: \(error.localizedDescription)")
+                    }
+                }
+            }
+            .onChange(of: companyLogo) { newLogo in
+                guard let logo = newLogo else { return }
+                // Don't re-upload if we just loaded from URL
+                guard !isUploadingLogo else { return }
+                isUploadingLogo = true
+                
+                Task {
+                    do {
+                        let userId = Auth.auth().currentUser?.uid ?? conflictCase.createdBy
+                        
+                        // Upload to Firebase Storage
+                        let downloadUrl = try await FirebaseStorageService.shared.uploadCompanyLogo(
+                            logo,
+                            caseNumber: conflictCase.caseNumber,
+                            userId: userId
+                        )
+                        
+                        // Save URL to backend via API
+                        if let backendId = conflictCase.backendId {
+                            let _ = try await ConflictCaseService.shared.updateCase(
+                                id: backendId,
+                                updates: ["companyLogoUrl": downloadUrl],
+                                userId: userId
+                            )
+                        }
+                        
+                        // Update local case model
+                        if let idx = ConflictResolutionManager.shared.cases.firstIndex(where: { $0.id == conflictCase.id }) {
+                            await MainActor.run {
+                                ConflictResolutionManager.shared.cases[idx].companyLogoUrl = downloadUrl
+                            }
+                        }
+                        
+                        print("✅ Company logo saved to Firebase and database")
+                    } catch {
+                        print("⚠️ Failed to save company logo: \(error.localizedDescription)")
+                    }
+                    
+                    await MainActor.run {
+                        isUploadingLogo = false
+                    }
+                }
             }
         }
     }

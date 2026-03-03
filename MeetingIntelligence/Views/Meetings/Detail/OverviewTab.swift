@@ -155,7 +155,8 @@ class URLAudioPlayer: ObservableObject {
 
 struct OverviewTab: View {
     @ObservedObject var viewModel: MeetingDetailViewModel
-    @ObservedObject var meetingViewModel: MeetingViewModel
+    // NOT @ObservedObject — we never read its @Published properties in our body
+    let meetingViewModel: MeetingViewModel
     @Binding var selectedTab: MeetingTab
     @Binding var shouldExtractActionItems: Bool
     
@@ -164,23 +165,27 @@ struct OverviewTab: View {
     @Binding var showAISummary: Bool
     @Binding var showAudioPlayer: Bool
     @Binding var showAISummaryAudioPlayer: Bool
+    @Binding var showRecording: Bool
+    @Binding var showConsentModal: Bool
     
     // Data synced to parent for presentation modifiers
     @Binding var rawTranscript: String
     @Binding var localRecordingURL: URL?
     @Binding var savedAISummary: SavedAISummary?
     var aiSummaryAudioPlayer: URLAudioPlayer
-    
-    @State private var showRecording = false
     @State private var showTranscriptGeneration = false
     @State private var isTranscriptFromDatabase: Bool = false
-    @State private var scrollOffset: CGFloat = 0
+    @State private var hasLoadedInitialData = false
     
     var body: some View {
         ScrollView {
-            VStack(spacing: 0) {
-                // Spacer for floating header (larger buttons need more space)
-                Color.clear.frame(height: 80)
+            LazyVStack(spacing: 0) {
+                // Resume Recording Banner (when status is recording)
+                if viewModel.meeting.safeStatus == .recording {
+                    resumeRecordingBanner
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 8)
+                }
                 
                 // Compact Hero Section
                 compactHeroSection
@@ -205,24 +210,6 @@ struct OverviewTab: View {
                         thinSeparator
                     }
                     
-                    // Transcript Section
-                    if hasTranscript {
-                        compactTranscriptSection
-                        thinSeparator
-                    }
-                    
-                    // AI Summary Section
-                    if let summary = savedAISummary, !summary.briefSummary.isEmpty {
-                        compactAISummarySection(summary)
-                        thinSeparator
-                    }
-                    
-                    // Action Items
-                    if viewModel.actionItems.count > 0 {
-                        compactActionItemsSection
-                        thinSeparator
-                    }
-                    
                     // Timeline
                     compactTimelineSection
                 }
@@ -230,47 +217,85 @@ struct OverviewTab: View {
                 .clipShape(RoundedRectangle(cornerRadius: 16))
                 .padding(.horizontal, 16)
                 
+                // Meeting Type & Status Card
+                meetingTypeStatusCard
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                
+                // Created By Card
+                if viewModel.meeting.creator != nil {
+                    createdByCard
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+                }
+                
+                // Stats Cards
+                statsCardsSection
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                
+                // Record Meeting button for Draft meetings
+                if viewModel.meeting.safeStatus == .draft {
+                    Button {
+                        showConsentModal = true
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "mic.circle.fill")
+                                .font(.system(size: 22))
+                            Text("Record Meeting")
+                                .font(.headline)
+                                .fontWeight(.semibold)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(
+                            LinearGradient(
+                                gradient: Gradient(colors: [
+                                    Color(red: 0.49, green: 0.32, blue: 0.95),
+                                    Color(red: 0.35, green: 0.22, blue: 0.89)
+                                ]),
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .foregroundColor(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 16)
+                }
+                
                 // Bottom spacing
                 Color.clear.frame(height: 100)
             }
-            .background(
-                GeometryReader { geo in
-                    Color.clear.preference(
-                        key: ScrollOffsetPreferenceKey.self,
-                        value: geo.frame(in: .named("scroll")).minY
-                    )
-                }
-            )
-        }
-        .coordinateSpace(name: "scroll")
-        .onPreferenceChange(ScrollOffsetPreferenceKey.self) { value in
-            scrollOffset = value
         }
         .refreshable {
             await viewModel.refreshMeeting()
-            loadLocalData()
+            await loadLocalDataAsync()
         }
-        .onAppear {
-            loadLocalData()
+        .task {
+            guard !hasLoadedInitialData else { return }
+            hasLoadedInitialData = true
+            await loadLocalDataAsync()
         }
         .onChange(of: showAudioPlayer) { _, newValue in
-            if !newValue { loadLocalData() }
+            if !newValue {
+                Task { await loadLocalDataAsync() }
+            }
         }
         .onChange(of: showTranscriptReview) { _, newValue in
-            if !newValue { loadLocalData() }
+            if !newValue {
+                Task { await loadLocalDataAsync() }
+            }
         }
         .onChange(of: showAISummary) { _, newValue in
-            if !newValue { loadLocalData() }
+            if !newValue {
+                Task { await loadLocalDataAsync() }
+            }
         }
         .onChange(of: showRecording) { _, newValue in
-            if !newValue { loadLocalData() }
-        }
-        .fullScreenCover(isPresented: $showRecording) {
-            RecordingView(meeting: viewModel.meeting, meetingViewModel: meetingViewModel) { _ in
-                Task {
-                    await viewModel.refreshMeeting()
-                    loadLocalData()
-                }
+            if !newValue {
+                Task { await loadLocalDataAsync() }
             }
         }
         .fullScreenCover(isPresented: $showTranscriptGeneration) {
@@ -294,6 +319,46 @@ struct OverviewTab: View {
                 )
             }
         }
+    }
+    
+    // MARK: - Resume Recording Banner
+    private var resumeRecordingBanner: some View {
+        Button {
+            showRecording = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "record.circle")
+                    .font(.system(size: 22))
+                    .foregroundColor(.white)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Recording in Progress")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.white)
+                    Text("Tap to resume recording")
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.8))
+                }
+                
+                Spacer()
+                
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.7))
+            }
+            .padding(16)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.red, Color.red.opacity(0.8)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+            )
+        }
+        .buttonStyle(.plain)
     }
     
     // MARK: - Thin Separator
@@ -359,7 +424,7 @@ struct OverviewTab: View {
             Spacer()
             
             // Quick actions - only show play button if local file exists
-            if localRecordingURL != nil {
+            if localRecordingURL != nil && viewModel.meeting.recordingUrl != nil {
                 Button {
                     showAudioPlayer = true
                 } label: {
@@ -368,6 +433,10 @@ struct OverviewTab: View {
                         .foregroundColor(AppColors.primary)
                 }
                 .buttonStyle(.plain)
+            } else if let summary = savedAISummary, !summary.narrative.isEmpty {
+                Image(systemName: "checkmark.shield.fill")
+                    .font(.system(size: 18))
+                    .foregroundColor(AppColors.success)
             }
         }
         .padding(16)
@@ -380,13 +449,74 @@ struct OverviewTab: View {
             sectionHeader(title: "Details", icon: "info.circle")
             
             VStack(spacing: 12) {
-                detailRow(icon: "globe", label: "Language", value: languageName(for: viewModel.meeting.safeLanguage))
+                // Language (from DB)
+                detailRow(icon: "globe", label: "Language", value: {
+                    if let lang = viewModel.meeting.language, !lang.isEmpty {
+                        return languageName(for: lang)
+                    }
+                    return "None"
+                }())
                 
-                if let location = viewModel.meeting.location, !location.isEmpty {
-                    detailRow(icon: "location", label: "Location", value: location)
-                }
+                // Location Type (from DB)
+                detailRow(icon: "building.2", label: "Type", value: {
+                    if let locType = viewModel.meeting.locationType, !locType.isEmpty {
+                        return locType
+                    }
+                    return "None"
+                }())
                 
-                if !viewModel.meeting.safeTags.isEmpty {
+                // Location (from DB)
+                detailRow(icon: "location", label: "Location", value: {
+                    if let location = viewModel.meeting.location, !location.isEmpty {
+                        return location
+                    }
+                    return "None"
+                }())
+                
+                // Department (from DB)
+                detailRow(icon: "person.3", label: "Department", value: {
+                    if let dept = viewModel.meeting.department?.name, !dept.isEmpty {
+                        return dept
+                    }
+                    return "None"
+                }())
+                
+                // Objective (from DB)
+                detailRow(icon: "target", label: "Objective", value: {
+                    if let objective = viewModel.meeting.objective, !objective.isEmpty {
+                        return objective
+                    }
+                    return "None"
+                }())
+                
+                // Scheduled At (from DB)
+                detailRow(icon: "calendar", label: "Scheduled", value: {
+                    if let scheduledDate = viewModel.meeting.formattedScheduledDate {
+                        return scheduledDate
+                    }
+                    return "None"
+                }())
+                
+                // Duration (from DB)
+                detailRow(icon: "timer", label: "Duration", value: {
+                    if let duration = viewModel.meeting.duration, duration > 0 {
+                        return formatDuration(duration)
+                    }
+                    return "None"
+                }())
+                
+                // Confidentiality Level (from DB)
+                detailRow(icon: "lock.shield", label: "Visibility", value: {
+                    if let level = viewModel.meeting.confidentialityLevel, !level.isEmpty {
+                        return level.replacingOccurrences(of: "_", with: " ").capitalized
+                    }
+                    return "None"
+                }())
+                
+                // Tags (from DB)
+                if viewModel.meeting.safeTags.isEmpty {
+                    detailRow(icon: "tag", label: "Tags", value: "None")
+                } else {
                     HStack(alignment: .top) {
                         Image(systemName: "tag")
                             .font(.system(size: 13))
@@ -396,7 +526,7 @@ struct OverviewTab: View {
                         Text("Tags")
                             .font(.system(size: 13))
                             .foregroundColor(AppColors.textSecondary)
-                            .frame(width: 70, alignment: .leading)
+                            .frame(width: 80, alignment: .leading)
                         
                         FlowLayout(spacing: 6) {
                             ForEach(viewModel.meeting.safeTags, id: \.self) { tag in
@@ -407,6 +537,31 @@ struct OverviewTab: View {
                                     .padding(.vertical, 5)
                                     .background(AppColors.primary.opacity(0.1))
                                     .clipShape(Capsule())
+                            }
+                        }
+                    }
+                }
+                
+                // Agenda Items (from DB)
+                if viewModel.meeting.safeAgendaItems.isEmpty {
+                    detailRow(icon: "list.bullet", label: "Agenda", value: "None")
+                } else {
+                    HStack(alignment: .top) {
+                        Image(systemName: "list.bullet")
+                            .font(.system(size: 13))
+                            .foregroundColor(AppColors.textTertiary)
+                            .frame(width: 20)
+                        
+                        Text("Agenda")
+                            .font(.system(size: 13))
+                            .foregroundColor(AppColors.textSecondary)
+                            .frame(width: 80, alignment: .leading)
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(Array(viewModel.meeting.safeAgendaItems.enumerated()), id: \.offset) { index, item in
+                                Text("\(index + 1). \(item)")
+                                    .font(.system(size: 13))
+                                    .foregroundColor(AppColors.textPrimary)
                             }
                         }
                     }
@@ -425,24 +580,41 @@ struct OverviewTab: View {
             
             VStack(spacing: 12) {
                 // Info message
-                HStack(spacing: 10) {
-                    Image(systemName: "info.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundColor(AppColors.info)
-                    
-                    Text("Your recording is saved. Generate a transcript to unlock AI features.")
-                        .font(.system(size: 14))
-                        .foregroundColor(AppColors.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                if viewModel.meeting.recordingUrl == nil, let summary = savedAISummary, !summary.narrative.isEmpty {
+                    // Dashmet Audio Recording Policy compliance notice
+                    HStack(spacing: 10) {
+                        Image(systemName: "checkmark.shield.fill")
+                            .font(.system(size: 16))
+                            .foregroundColor(AppColors.success)
+                        
+                        Text("Original meeting audio recording has been deleted from the system completely as per Dashmet Audio Recording Policy.")
+                            .font(.system(size: 13))
+                            .foregroundColor(AppColors.success)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(12)
+                    .background(Color(red: 0.106, green: 0.227, blue: 0.176))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                } else {
+                    HStack(spacing: 10) {
+                        Image(systemName: "info.circle.fill")
+                            .font(.system(size: 16))
+                            .foregroundColor(AppColors.info)
+                        
+                        Text("Your recording is saved. Generate a transcript to unlock AI features.")
+                            .font(.system(size: 14))
+                            .foregroundColor(AppColors.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(12)
+                    .background(AppColors.info.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
-                .padding(12)
-                .background(AppColors.info.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
                 
                 // Action buttons
                 HStack(spacing: 10) {
                     // Play Recording button
-                    if localRecordingURL != nil {
+                    if localRecordingURL != nil && viewModel.meeting.recordingUrl != nil {
                         Button {
                             showAudioPlayer = true
                         } label: {
@@ -462,7 +634,7 @@ struct OverviewTab: View {
                     }
                     
                     // Generate Transcript button
-                    if let recordingURL = localRecordingURL {
+                    if localRecordingURL != nil {
                         Button {
                             showTranscriptGeneration = true
                         } label: {
@@ -479,6 +651,19 @@ struct OverviewTab: View {
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                         }
                         .buttonStyle(.plain)
+                    } else {
+                        // Recording exists on another device
+                        HStack(spacing: 6) {
+                            Image(systemName: "icloud.slash")
+                                .font(.system(size: 16))
+                            Text("Audio on another device")
+                                .font(.system(size: 14, weight: .medium))
+                        }
+                        .foregroundColor(AppColors.textSecondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(AppColors.textSecondary.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
                 }
             }
@@ -589,11 +774,8 @@ struct OverviewTab: View {
             // Actions - Second Row (Extract Action Items) - only show if no action items exist
             if viewModel.actionItems.isEmpty {
                 Button {
-                    // Set flag to trigger AI extraction when navigating to Action Items tab
+                    // Trigger AI extraction of action items
                     shouldExtractActionItems = true
-                    withAnimation {
-                        selectedTab = .actionItems
-                    }
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "sparkles")
@@ -868,6 +1050,126 @@ struct OverviewTab: View {
         }
     }
     
+    // MARK: - Meeting Type & Status Card
+    private var meetingTypeStatusCard: some View {
+        VStack(spacing: 0) {
+            HStack {
+                HStack(spacing: 12) {
+                    // Meeting type icon in rounded box
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(AppColors.primary.opacity(0.15))
+                            .frame(width: 40, height: 40)
+                        Image(systemName: meetingTypeIcon)
+                            .font(.system(size: 18))
+                            .foregroundColor(AppColors.primary)
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(viewModel.meeting.safeMeetingType.displayName)
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundColor(AppColors.textPrimary)
+                        Text("Meeting Type")
+                            .font(.system(size: 12))
+                            .foregroundColor(AppColors.textSecondary)
+                    }
+                }
+                
+                Spacer()
+                
+                // Status badge
+                Text(statusTitle)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(statusColor)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(statusColor.opacity(0.15))
+                    .clipShape(Capsule())
+            }
+            .padding(16)
+        }
+        .background(AppColors.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+    
+    // MARK: - Created By Card
+    private var createdByCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Created By")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(AppColors.textPrimary)
+            
+            if let creator = viewModel.meeting.creator {
+                HStack(spacing: 10) {
+                    // Avatar circle
+                    ZStack {
+                        Circle()
+                            .fill(AppColors.primary.opacity(0.2))
+                            .frame(width: 36, height: 36)
+                        Text(String(creator.fullName.prefix(1)).uppercased())
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundColor(AppColors.primary)
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(creator.fullName)
+                            .font(.system(size: 14))
+                            .foregroundColor(AppColors.textPrimary)
+                        Text(creator.email)
+                            .font(.system(size: 12))
+                            .foregroundColor(AppColors.textSecondary)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(AppColors.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+    
+    // MARK: - Stats Cards
+    private var statsCardsSection: some View {
+        HStack(spacing: 12) {
+            // Transcript Blocks stat
+            statCard(
+                icon: "doc.text",
+                label: "Transcript Blocks",
+                value: "\(viewModel.meeting.transcriptBlockCount)",
+                color: AppColors.info
+            )
+            
+            // Action Items stat
+            statCard(
+                icon: "checkmark.circle",
+                label: "Action Items",
+                value: "\(viewModel.meeting.actionItemCount)",
+                color: AppColors.success
+            )
+        }
+    }
+    
+    private func statCard(icon: String, label: String, value: String, color: Color) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 22))
+                .foregroundColor(color)
+            
+            Text(value)
+                .font(.system(size: 20, weight: .bold))
+                .foregroundColor(AppColors.textPrimary)
+            
+            Text(label)
+                .font(.system(size: 12))
+                .foregroundColor(AppColors.textSecondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
+        .background(AppColors.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+    
     // MARK: - Helper Views
     private func sectionHeader(title: String, icon: String) -> some View {
         HStack(spacing: 8) {
@@ -903,7 +1205,7 @@ struct OverviewTab: View {
             Text(label)
                 .font(.system(size: 13))
                 .foregroundColor(AppColors.textSecondary)
-                .frame(width: 70, alignment: .leading)
+                .frame(width: 80, alignment: .leading)
             
             Text(value)
                 .font(.system(size: 13))
@@ -946,7 +1248,24 @@ struct OverviewTab: View {
     
     // MARK: - Computed Properties
     private var hasRecording: Bool {
-        viewModel.meeting.recordingUrl != nil || getLocalRecordingURL() != nil
+        // Use the already-loaded localRecordingURL binding — do NOT call getLocalRecordingURL() here!
+        // getLocalRecordingURL() does a synchronous FileManager directory scan, and hasRecording
+        // is called 5+ times per body evaluation. With multiple body re-evaluations from @Published
+        // changes, this was causing 50+ file system scans on the main thread, blocking the UI.
+        if viewModel.meeting.recordingUrl != nil || localRecordingURL != nil {
+            return true
+        }
+        // Check meeting status — these statuses mean a recording was uploaded/processed
+        let recordingStatuses: [MeetingStatus] = [.uploading, .uploaded, .processing, .ready, .published]
+        if let status = viewModel.meeting.status, recordingStatuses.contains(status) {
+            return true
+        }
+        // recordedAt alone is NOT enough if the meeting is still draft —
+        // it means recording was started but may have been discarded without saving
+        if viewModel.meeting.recordedAt != nil && viewModel.meeting.safeStatus != .draft {
+            return true
+        }
+        return false
     }
     
     private var hasTranscript: Bool {
@@ -961,11 +1280,15 @@ struct OverviewTab: View {
         viewModel.meeting.safeMeetingType.icon
     }
     
-    private var formattedDate: String {
+    private static let sharedDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
-        return formatter.string(from: viewModel.meeting.recordedAt ?? viewModel.meeting.createdAt)
+        return formatter
+    }()
+    
+    private var formattedDate: String {
+        Self.sharedDateFormatter.string(from: viewModel.meeting.recordedAt ?? viewModel.meeting.createdAt)
     }
     
     private var statusColor: Color {
@@ -1040,16 +1363,63 @@ struct OverviewTab: View {
     }
     
     // MARK: - Data Loading
-    private func loadLocalData() {
-        loadTranscriptFromCache()
-        fetchTranscriptFromDatabase()
-        localRecordingURL = getLocalRecordingURL()
-        
-        if localRecordingURL != nil {
-            print("🎙️ Found local recording at: \(localRecordingURL!.path)")
+    
+    /// Async version: moves FileManager I/O off the main thread, yields to let UI settle
+    private func loadLocalDataAsync() async {
+        // Step 1: Read UserDefaults (fast, on main thread is OK)
+        await MainActor.run {
+            loadTranscriptFromCache()
         }
         
-        loadSavedAISummary()
+        // Step 2: Kick off async DB fetch (does not block)
+        await MainActor.run {
+            fetchTranscriptFromDatabase()
+        }
+        
+        // Step 3: FileManager directory scan — do this OFF the main thread
+        let cloudUrlString = await MainActor.run { viewModel.meeting.recordingUrl }
+        let meetingId = await MainActor.run { viewModel.meeting.id }
+        
+        let resolvedURL: URL? = await Task.detached(priority: .userInitiated) {
+            if let cloudUrlString = cloudUrlString,
+               let cloudUrl = URL(string: cloudUrlString) {
+                return cloudUrl
+            }
+            return Self.getLocalRecordingURLBackground(meetingId: meetingId)
+        }.value
+        
+        await MainActor.run {
+            localRecordingURL = resolvedURL
+        }
+        
+        // Step 4: Load AI summary from cache/DB
+        await MainActor.run {
+            loadSavedAISummary()
+        }
+    }
+    
+    /// Background-safe file system scan (no main thread dependency)
+    private static func getLocalRecordingURLBackground(meetingId: String) -> URL? {
+        let fileManager = FileManager.default
+        let documentsDirectory = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let recordingsDirectory = documentsDirectory.appendingPathComponent("Recordings")
+        
+        let legacyURL = recordingsDirectory.appendingPathComponent("\(meetingId).m4a")
+        if fileManager.fileExists(atPath: legacyURL.path) {
+            return legacyURL
+        }
+        
+        do {
+            let files = try fileManager.contentsOfDirectory(at: recordingsDirectory, includingPropertiesForKeys: nil)
+            let meetingPrefix = "meeting_\(meetingId)_"
+            if let recording = files.first(where: { $0.lastPathComponent.hasPrefix(meetingPrefix) && $0.pathExtension == "m4a" }) {
+                return recording
+            }
+        } catch {
+            // Directory doesn't exist or can't be read — not an error for our purposes
+        }
+        
+        return nil
     }
     
     private func loadTranscriptFromCache() {
@@ -1374,8 +1744,10 @@ class OverviewAudioPlayer: ObservableObject {
     @Published var duration: TimeInterval = 0
     @Published var playbackSpeed: Float = 1.0
     
-    private var player: AVAudioPlayer?
+    private var player: AVPlayer?
+    private var playerItem: AVPlayerItem?
     private var timer: Timer?
+    private var statusObserver: NSKeyValueObservation?
     
     var currentTimeString: String {
         formatTime(currentTime)
@@ -1389,15 +1761,29 @@ class OverviewAudioPlayer: ObservableObject {
         do {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
             try AVAudioSession.sharedInstance().setActive(true)
-            
-            player = try AVAudioPlayer(contentsOf: url)
-            player?.enableRate = true  // Enable rate BEFORE prepareToPlay
-            player?.prepareToPlay()
-            player?.rate = playbackSpeed
-            duration = player?.duration ?? 0
-            print("✅ Loaded audio: \(url.lastPathComponent), duration: \(duration)s")
         } catch {
-            print("❌ Failed to load audio: \(error.localizedDescription)")
+            print("❌ Failed to set audio session: \(error.localizedDescription)")
+        }
+        
+        let item = AVPlayerItem(url: url)
+        playerItem = item
+        player = AVPlayer(playerItem: item)
+        player?.rate = 0 // Start paused
+        
+        // Observe when the item is ready to play
+        statusObserver = item.observe(\.status, options: [.new]) { [weak self] item, _ in
+            Task { @MainActor in
+                guard let self = self else { return }
+                if item.status == .readyToPlay {
+                    let dur = CMTimeGetSeconds(item.duration)
+                    if dur.isFinite && dur > 0 {
+                        self.duration = dur
+                    }
+                    print("✅ Loaded audio: \(url.lastPathComponent), duration: \(self.duration)s")
+                } else if item.status == .failed {
+                    print("❌ Failed to load audio: \(item.error?.localizedDescription ?? "unknown")")
+                }
+            }
         }
     }
     
@@ -1408,29 +1794,32 @@ class OverviewAudioPlayer: ObservableObject {
             player.pause()
             stopTimer()
         } else {
-            player.play()
+            player.rate = playbackSpeed
             startTimer()
         }
-        isPlaying = player.isPlaying
+        isPlaying = !isPlaying
     }
     
     func stop() {
-        player?.stop()
+        player?.pause()
         stopTimer()
         isPlaying = false
+        statusObserver?.invalidate()
+        statusObserver = nil
     }
     
     func seek(to progress: Double) {
         guard let player = player else { return }
-        let time = progress * duration
-        player.currentTime = time
-        currentTime = time
+        let time = CMTime(seconds: progress * duration, preferredTimescale: 600)
+        player.seek(to: time)
+        currentTime = progress * duration
     }
     
     func skip(by seconds: Double) {
         guard let player = player else { return }
-        let newTime = max(0, min(duration, player.currentTime + seconds))
-        player.currentTime = newTime
+        let current = CMTimeGetSeconds(player.currentTime())
+        let newTime = max(0, min(duration, current + seconds))
+        player.seek(to: CMTime(seconds: newTime, preferredTimescale: 600))
         currentTime = newTime
         updateProgress()
     }
@@ -1438,19 +1827,9 @@ class OverviewAudioPlayer: ObservableObject {
     func setSpeed(_ speed: Float) {
         playbackSpeed = speed
         guard let player = player else { return }
-        
-        // If playing, we need to pause, set rate, and resume
-        let wasPlaying = player.isPlaying
-        if wasPlaying {
-            player.pause()
+        if isPlaying {
+            player.rate = speed
         }
-        
-        player.rate = speed
-        
-        if wasPlaying {
-            player.play()
-        }
-        
         print("🎚️ Playback speed set to \(speed)x")
     }
     
@@ -1469,11 +1848,12 @@ class OverviewAudioPlayer: ObservableObject {
     
     private func updateProgress() {
         guard let player = player, duration > 0 else { return }
-        currentTime = player.currentTime
+        currentTime = CMTimeGetSeconds(player.currentTime())
         progress = currentTime / duration
         
-        if !player.isPlaying && currentTime >= duration - 0.1 {
+        if currentTime >= duration - 0.1 {
             isPlaying = false
+            player.pause()
             stopTimer()
         }
     }
@@ -1722,14 +2102,6 @@ struct AISummaryAudioPlayerSheet: View {
                 audioPlayer.stop()
             }
         }
-    }
-}
-
-// MARK: - Scroll Offset Preference Key
-struct ScrollOffsetPreferenceKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
     }
 }
 

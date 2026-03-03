@@ -75,6 +75,7 @@ struct SignatureCaptureSheet: View {
     @State private var showSignatureCanvas = false
     @State private var isUploadingSignature = false
     @State private var uploadError: String?
+    @State private var showUploadErrorAlert = false
     
     @Environment(\.colorScheme) private var colorScheme
     
@@ -170,7 +171,10 @@ struct SignatureCaptureSheet: View {
                     }
                 )
             }
-            .alert("Upload Error", isPresented: .constant(uploadError != nil)) {
+            .onChange(of: uploadError) { _, newValue in
+                showUploadErrorAlert = newValue != nil
+            }
+            .alert("Upload Error", isPresented: $showUploadErrorAlert) {
                 Button("OK") { uploadError = nil }
             } message: {
                 Text(uploadError ?? "Unknown error")

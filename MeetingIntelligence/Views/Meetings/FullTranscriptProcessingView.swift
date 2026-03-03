@@ -490,16 +490,20 @@ struct FullTranscriptProcessingView: View {
 // MARK: - Preview
 #Preview {
     let state = TranscriptProcessingState()
-    state.setRawTranscript(GeneratedTranscript(
+    let _ = state.setRawTranscript(GeneratedTranscript(
         rawText: "Hello, how are you? I'm doing great, thanks for asking.",
         processedText: "Hello, how are you?\n\nI'm doing great, thanks for asking.",
         segments: [],
+        speakerBlocks: [],
         duration: 120,
         wordCount: 12,
+        speakerCount: 0,
+        speakers: [],
+        isDiarized: false,
         generatedAt: Date()
     ))
     
-    return FullTranscriptProcessingView(
+    FullTranscriptProcessingView(
         meeting: Meeting.preview,
         transcriptState: state,
         onDismiss: {}

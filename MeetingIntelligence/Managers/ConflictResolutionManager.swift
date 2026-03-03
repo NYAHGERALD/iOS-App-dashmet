@@ -10,7 +10,6 @@ import SwiftUI
 import Combine
 import PDFKit
 import Vision
-import NaturalLanguage
 
 @MainActor
 class ConflictResolutionManager: ObservableObject {
@@ -42,18 +41,9 @@ class ConflictResolutionManager: ObservableObject {
     
     // MARK: - Private Properties
     
-    private let userDefaults = UserDefaults.standard
-    private let policiesKey = "conflictResolution.policies"
-    private let casesKey = "conflictResolution.cases"
-    private let activePolicyKey = "conflictResolution.activePolicy"
-    private let policyBackendIdsKey = "conflictResolution.policyBackendIds" // Maps local UUID to backend ID
-    
     // Database sync services
     private let caseService = ConflictCaseService.shared
     private let policyService = WorkplacePolicyService.shared
-    
-    // Policy backend ID mapping
-    private var policyBackendIds: [UUID: String] = [:]
     
     // User context for API calls (set from AppState)
     var currentUserId: String?
@@ -65,8 +55,8 @@ class ConflictResolutionManager: ObservableObject {
     // MARK: - Initialization
     
     init() {
-        loadPolicies()
-        // Cases will be loaded from database when user context is set
+        // Clear any legacy UserDefaults cache to prevent stale data
+        UserDefaults.standard.removeObject(forKey: "conflictResolution.cases")
     }
     
     /// Set user context for API calls (call this when user logs in)
@@ -84,19 +74,16 @@ class ConflictResolutionManager: ObservableObject {
                 await loadCasesFromDatabase()
             }
         } else {
-            print("⚠️ User context incomplete - loading from local cache only")
-            loadPoliciesFromCache()
-            loadCasesFromCache()
+            print("⚠️ User context incomplete - cannot load from database")
         }
     }
     
     // MARK: - Policy Management (Database-Backed)
     
-    /// Load policies from database
+    /// Load policies from database (single source of truth)
     func loadPoliciesFromDatabase() async {
         guard let organizationId = currentOrganizationId else {
             print("Cannot load policies: organizationId not set")
-            loadPoliciesFromCache()
             return
         }
         
@@ -106,19 +93,7 @@ class ConflictResolutionManager: ObservableObject {
         do {
             let remotePolicies = try await policyService.fetchPolicies(organizationId: organizationId)
             
-            // Convert and store
-            policies = remotePolicies.map { apiData in
-                let policy = apiData.toWorkplacePolicy()
-                // Store backend ID mapping
-                policyBackendIds[policy.id] = apiData.id
-                return policy
-            }
-            
-            // Save backend ID mapping
-            savePolicyBackendIds()
-            
-            // Save to local cache
-            savePolicies()
+            policies = remotePolicies.map { $0.toWorkplacePolicy() }
             
             // Set active policy
             activePolicy = policies.first { $0.status == .active }
@@ -130,70 +105,9 @@ class ConflictResolutionManager: ObservableObject {
         } catch {
             policyError = "Failed to load policies: \(error.localizedDescription)"
             print("Error loading policies from database: \(error)")
-            // Fall back to local cache
-            loadPoliciesFromCache()
         }
         
         isLoadingPolicies = false
-    }
-    
-    /// Load policies from local cache (fallback)
-    private func loadPoliciesFromCache() {
-        if let data = userDefaults.data(forKey: policiesKey),
-           let decoded = try? JSONDecoder().decode([WorkplacePolicy].self, from: data) {
-            policies = decoded
-            
-            // Load active policy
-            if let activePolicyData = userDefaults.data(forKey: activePolicyKey),
-               let activeId = try? JSONDecoder().decode(UUID.self, from: activePolicyData) {
-                activePolicy = policies.first { $0.id == activeId }
-            } else {
-                activePolicy = policies.first { $0.status == .active }
-            }
-        }
-        
-        // Load backend ID mapping
-        loadPolicyBackendIds()
-    }
-    
-    /// Load policies from storage (legacy - now loads from cache)
-    func loadPolicies() {
-        isLoadingPolicies = true
-        loadPoliciesFromCache()
-        isLoadingPolicies = false
-    }
-    
-    /// Save policies to local cache
-    private func savePolicies() {
-        if let encoded = try? JSONEncoder().encode(policies) {
-            userDefaults.set(encoded, forKey: policiesKey)
-        }
-        
-        if let activePolicy = activePolicy,
-           let encoded = try? JSONEncoder().encode(activePolicy.id) {
-            userDefaults.set(encoded, forKey: activePolicyKey)
-        }
-    }
-    
-    /// Save policy backend ID mapping
-    private func savePolicyBackendIds() {
-        let stringKeyDict = Dictionary(uniqueKeysWithValues: policyBackendIds.map { (key, value) in
-            (key.uuidString, value)
-        })
-        if let encoded = try? JSONEncoder().encode(stringKeyDict) {
-            userDefaults.set(encoded, forKey: policyBackendIdsKey)
-        }
-    }
-    
-    /// Load policy backend ID mapping
-    private func loadPolicyBackendIds() {
-        if let data = userDefaults.data(forKey: policyBackendIdsKey),
-           let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
-            policyBackendIds = Dictionary(uniqueKeysWithValues: decoded.compactMap { (key, value) -> (UUID, String)? in
-                guard let uuid = UUID(uuidString: key) else { return nil }
-                return (uuid, value)
-            })
-        }
     }
     
     /// Create a new policy from uploaded document
@@ -204,6 +118,10 @@ class ConflictResolutionManager: ObservableObject {
         description: String,
         documentURL: URL
     ) async throws -> WorkplacePolicy {
+        guard let userId = currentUserId, let orgId = currentOrganizationId else {
+            throw PolicyError.failedToReadDocument
+        }
+        
         isProcessingDocument = true
         processingProgress = 0
         processingStatus = "Reading document..."
@@ -214,13 +132,19 @@ class ConflictResolutionManager: ObservableObject {
             processingStatus = ""
         }
         
+        // Small helper to allow UI to update between steps
+        func advanceProgress(_ value: Double, _ status: String) async {
+            processingProgress = value
+            processingStatus = status
+            try? await Task.sleep(nanoseconds: 400_000_000) // 0.4s for animation
+        }
+        
         // 1. Extract text from document
-        processingProgress = 0.1
+        await advanceProgress(0.1, "Reading document...")
         let extractedText = try await extractTextFromDocument(url: documentURL)
         
         // 2. Create document source
-        processingProgress = 0.3
-        processingStatus = "Processing document..."
+        await advanceProgress(0.25, "Extracting text...")
         
         let fileName = documentURL.lastPathComponent
         let fileType = documentURL.pathExtension.uppercased()
@@ -233,17 +157,30 @@ class ConflictResolutionManager: ObservableObject {
             originalText: extractedText
         )
         
-        // 3. Parse into sections
-        processingProgress = 0.5
-        processingStatus = "Analyzing structure..."
+        // 3. AI-powered section analysis with progressive discipline detection
+        await advanceProgress(0.4, "AI analyzing policy structure...")
         
-        let sections = await parsePolicySections(from: extractedText)
+        var sections: [PolicySection] = []
+        do {
+            print("📡 Calling AI parse-sections endpoint...")
+            sections = try await policyService.aiParseSections(text: extractedText, policyName: name)
+            await advanceProgress(0.7, "AI identified \(sections.count) sections")
+            print("✅ AI parsing succeeded: \(sections.count) sections")
+        } catch {
+            print("⚠️ AI parsing failed: \(error). Creating single section fallback.")
+            sections = [PolicySection(
+                sectionNumber: "1",
+                title: "Full Policy",
+                content: String(extractedText.prefix(5000)),
+                type: .overview,
+                orderIndex: 0
+            )]
+        }
         
-        // 4. Create policy
-        processingProgress = 0.8
-        processingStatus = "Saving policy..."
+        // 4. Create policy object
+        await advanceProgress(0.8, "Saving policy...")
         
-        var policy = WorkplacePolicy(
+        let policy = WorkplacePolicy(
             name: name,
             version: version,
             effectiveDate: effectiveDate,
@@ -251,41 +188,30 @@ class ConflictResolutionManager: ObservableObject {
             description: description,
             documentSource: documentSource,
             sections: sections,
-            organizationId: currentOrganizationId ?? "",
-            createdBy: currentUserId ?? "",
+            organizationId: orgId,
+            createdBy: userId,
             createdAt: Date(),
             updatedAt: Date()
         )
         
-        // 5. Save policy locally first
-        policies.append(policy)
-        savePolicies()
+        // 5. Save to database (backend is source of truth)
+        let created = try await policyService.createPolicy(
+            policy,
+            creatorId: userId,
+            organizationId: orgId,
+            facilityId: currentFacilityId
+        )
         
-        // 6. Sync to database
-        if let userId = currentUserId, let orgId = currentOrganizationId {
-            do {
-                let created = try await policyService.createPolicy(
-                    policy,
-                    creatorId: userId,
-                    organizationId: orgId,
-                    facilityId: currentFacilityId
-                )
-                
-                // Store backend ID mapping
-                policyBackendIds[policy.id] = created.id
-                savePolicyBackendIds()
-                
-                print("✅ Policy synced to database with ID: \(created.id)")
-            } catch {
-                policyError = "Failed to sync policy to database: \(error.localizedDescription)"
-                print("Error syncing policy to database: \(error)")
-            }
-        }
+        print("✅ Policy saved to database with ID: \(created.id)")
+        
+        // 6. Reload from database to ensure consistency
+        let savedPolicy = created.toWorkplacePolicy()
+        policies.append(savedPolicy)
         
         processingProgress = 1.0
         processingStatus = "Complete!"
         
-        return policy
+        return savedPolicy
     }
     
     /// Activate a policy
@@ -296,12 +222,10 @@ class ConflictResolutionManager: ObservableObject {
                 policies[index].status = .superseded
                 
                 // Sync to database
-                if let backendId = policyBackendIds[currentActive.id] {
-                    do {
-                        _ = try await policyService.updatePolicy(id: backendId, updates: ["status": "SUPERSEDED"])
-                    } catch {
-                        print("Error updating superseded policy: \(error)")
-                    }
+                do {
+                    _ = try await policyService.updatePolicy(id: currentActive.id.uuidString, updates: ["status": "SUPERSEDED"])
+                } catch {
+                    print("Error updating superseded policy: \(error)")
                 }
             }
         }
@@ -313,37 +237,28 @@ class ConflictResolutionManager: ObservableObject {
             activePolicy = policies[index]
             
             // Sync to database
-            if let backendId = policyBackendIds[policy.id] {
-                do {
-                    _ = try await policyService.updatePolicy(id: backendId, updates: ["status": "ACTIVE"])
-                } catch {
-                    print("Error updating active policy: \(error)")
-                }
+            do {
+                _ = try await policyService.updatePolicy(id: policy.id.uuidString, updates: ["status": "ACTIVE"])
+            } catch {
+                print("Error updating active policy: \(error)")
             }
         }
-        
-        savePolicies()
     }
     
     /// Delete a policy
     func deletePolicy(_ policy: WorkplacePolicy) async {
-        // Delete from database first
-        if let backendId = policyBackendIds[policy.id] {
-            do {
-                try await policyService.deletePolicy(id: backendId)
-                policyBackendIds.removeValue(forKey: policy.id)
-                savePolicyBackendIds()
-            } catch {
-                print("Error deleting policy from database: \(error)")
-            }
+        // Delete from database
+        do {
+            try await policyService.deletePolicy(id: policy.id.uuidString)
+        } catch {
+            print("Error deleting policy from database: \(error)")
         }
         
-        // Remove locally
+        // Remove from local array
         policies.removeAll { $0.id == policy.id }
         if activePolicy?.id == policy.id {
             activePolicy = policies.first { $0.status == .active }
         }
-        savePolicies()
     }
     
     /// Update a policy
@@ -358,41 +273,50 @@ class ConflictResolutionManager: ObservableObject {
             }
             
             // Sync to database
-            if let backendId = policyBackendIds[policy.id] {
-                var updates: [String: Any] = [
-                    "name": policy.name,
-                    "version": policy.version,
-                    "effectiveDate": ISO8601DateFormatter().string(from: policy.effectiveDate),
-                    "status": policy.status.rawValue,
-                    "description": policy.description
-                ]
-                
-                if let docSource = policy.documentSource {
-                    updates["documentFileName"] = docSource.fileName
-                    updates["documentFileUrl"] = docSource.fileURL
-                    updates["documentFileType"] = docSource.fileType
-                    updates["documentPageCount"] = docSource.pageCount
-                    if let originalText = docSource.originalText {
-                        updates["originalText"] = originalText
-                    }
-                }
-                
-                if !policy.sections.isEmpty {
-                    if let sectionsData = try? JSONEncoder().encode(policy.sections),
-                       let sectionsArray = try? JSONSerialization.jsonObject(with: sectionsData) {
-                        updates["sections"] = sectionsArray
-                    }
-                }
-                
-                do {
-                    _ = try await policyService.updatePolicy(id: backendId, updates: updates)
-                    print("✅ Policy updated in database")
-                } catch {
-                    print("Error updating policy in database: \(error)")
+            var updates: [String: Any] = [
+                "name": policy.name,
+                "version": policy.version,
+                "effectiveDate": ISO8601DateFormatter().string(from: policy.effectiveDate),
+                "status": policy.status.rawValue,
+                "description": policy.description
+            ]
+            
+            if let docSource = policy.documentSource {
+                updates["documentFileName"] = docSource.fileName
+                updates["documentFileUrl"] = docSource.fileURL
+                updates["documentFileType"] = docSource.fileType
+                updates["documentPageCount"] = docSource.pageCount
+                if let originalText = docSource.originalText {
+                    updates["originalText"] = originalText
                 }
             }
+            
+            if !policy.sections.isEmpty {
+                let sectionsArray = policy.sections.map { section -> [String: Any] in
+                    var dict: [String: Any] = [
+                        "id": section.id.uuidString,
+                        "sectionNumber": section.sectionNumber,
+                        "title": section.title,
+                        "content": section.content,
+                        "type": section.type.rawValue,
+                        "orderIndex": section.orderIndex
+                    ]
+                    if let v = section.firstProgression { dict["firstProgression"] = v }
+                    if let v = section.secondProgression { dict["secondProgression"] = v }
+                    if let v = section.thirdProgression { dict["thirdProgression"] = v }
+                    if let v = section.fourthProgression { dict["fourthProgression"] = v }
+                    return dict
+                }
+                updates["sections"] = sectionsArray
+            }
+            
+            do {
+                _ = try await policyService.updatePolicy(id: policy.id.uuidString, updates: updates)
+                print("✅ Policy updated in database")
+            } catch {
+                print("Error updating policy in database: \(error)")
+            }
         }
-        savePolicies()
     }
     
     // MARK: - Document Text Extraction
@@ -455,173 +379,6 @@ class ConflictResolutionManager: ObservableObject {
         return 1
     }
     
-    // MARK: - Policy Section Parsing
-    
-    /// Parse policy text into structured sections
-    private func parsePolicySections(from text: String) async -> [PolicySection] {
-        var sections: [PolicySection] = []
-        
-        // Common section patterns
-        let sectionPatterns = [
-            #"(?m)^(\d+\.?\d*\.?\d*)\s+([A-Z][A-Za-z\s]+)$"#,  // "1.2.3 Section Title"
-            #"(?m)^(Section|Article|Chapter)\s+(\d+)[:\s]*(.+)$"#,  // "Section 1: Title"
-            #"(?m)^([A-Z][A-Z\s]+)$"#  // "ALL CAPS TITLE"
-        ]
-        
-        // Split by common patterns
-        let lines = text.components(separatedBy: .newlines)
-        var currentSection: PolicySection?
-        var currentContent = ""
-        var orderIndex = 0
-        
-        for line in lines {
-            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
-            
-            // Check if this line looks like a section header
-            if isSectionHeader(trimmedLine) {
-                // Save previous section
-                if var section = currentSection {
-                    section.content = currentContent.trimmingCharacters(in: .whitespacesAndNewlines)
-                    sections.append(section)
-                    currentContent = ""
-                }
-                
-                // Start new section
-                let (number, title) = parseSectionHeader(trimmedLine)
-                let sectionType = detectSectionType(title: title, content: "")
-                
-                currentSection = PolicySection(
-                    sectionNumber: number,
-                    title: title,
-                    content: "",
-                    type: sectionType,
-                    keywords: extractKeywords(from: title),
-                    orderIndex: orderIndex
-                )
-                orderIndex += 1
-            } else {
-                currentContent += trimmedLine + "\n"
-            }
-        }
-        
-        // Save last section
-        if var section = currentSection {
-            section.content = currentContent.trimmingCharacters(in: .whitespacesAndNewlines)
-            sections.append(section)
-        }
-        
-        // If no sections detected, create a single "Full Policy" section
-        if sections.isEmpty {
-            sections.append(PolicySection(
-                sectionNumber: "1",
-                title: "Full Policy",
-                content: text,
-                type: .overview,
-                orderIndex: 0
-            ))
-        }
-        
-        return sections
-    }
-    
-    /// Check if a line looks like a section header
-    private func isSectionHeader(_ line: String) -> Bool {
-        // Numbered section (1.2.3 Title)
-        if line.range(of: #"^\d+\.?\d*\.?\d*\s+[A-Z]"#, options: .regularExpression) != nil {
-            return true
-        }
-        
-        // "Section X" or "Article X"
-        if line.range(of: #"^(Section|Article|Chapter)\s+\d+"#, options: [.regularExpression, .caseInsensitive]) != nil {
-            return true
-        }
-        
-        // ALL CAPS line (likely a header)
-        if line.count > 3 && line.count < 100 && line == line.uppercased() && line.contains(where: { $0.isLetter }) {
-            return true
-        }
-        
-        return false
-    }
-    
-    /// Parse section header into number and title
-    private func parseSectionHeader(_ line: String) -> (String, String) {
-        // Try numbered format first
-        if let match = line.range(of: #"^(\d+\.?\d*\.?\d*)\s+(.+)$"#, options: .regularExpression) {
-            let fullMatch = String(line[match])
-            let components = fullMatch.split(separator: " ", maxSplits: 1)
-            if components.count >= 2 {
-                return (String(components[0]), String(components[1]))
-            }
-        }
-        
-        // Try "Section X: Title" format
-        if let match = line.range(of: #"^(Section|Article|Chapter)\s+(\d+)[:\s]*(.*)$"#, options: [.regularExpression, .caseInsensitive]) {
-            let fullMatch = String(line[match])
-            if let numberMatch = fullMatch.range(of: #"\d+"#, options: .regularExpression) {
-                let number = String(fullMatch[numberMatch])
-                let title = fullMatch.replacingOccurrences(of: #"(Section|Article|Chapter)\s+\d+[:\s]*"#, with: "", options: [.regularExpression, .caseInsensitive])
-                return (number, title.isEmpty ? line : title)
-            }
-        }
-        
-        // Default: no number, line is the title
-        return ("", line)
-    }
-    
-    /// Detect section type based on title and content
-    private func detectSectionType(title: String, content: String) -> PolicySectionType {
-        let lowercaseTitle = title.lowercased()
-        
-        if lowercaseTitle.contains("overview") || lowercaseTitle.contains("introduction") || lowercaseTitle.contains("purpose") {
-            return .overview
-        }
-        if lowercaseTitle.contains("definition") || lowercaseTitle.contains("terminology") {
-            return .definitions
-        }
-        if lowercaseTitle.contains("guideline") || lowercaseTitle.contains("standard") || lowercaseTitle.contains("expectation") {
-            return .guidelines
-        }
-        if lowercaseTitle.contains("procedure") || lowercaseTitle.contains("process") || lowercaseTitle.contains("step") {
-            return .procedures
-        }
-        if lowercaseTitle.contains("violation") || lowercaseTitle.contains("misconduct") || lowercaseTitle.contains("prohibited") {
-            return .violations
-        }
-        if lowercaseTitle.contains("consequence") || lowercaseTitle.contains("discipline") || lowercaseTitle.contains("action") || lowercaseTitle.contains("penalty") {
-            return .consequences
-        }
-        if lowercaseTitle.contains("report") || lowercaseTitle.contains("complaint") || lowercaseTitle.contains("escalat") {
-            return .reporting
-        }
-        if lowercaseTitle.contains("appeal") || lowercaseTitle.contains("grievance") || lowercaseTitle.contains("review") {
-            return .appeals
-        }
-        
-        return .other
-    }
-    
-    /// Extract keywords from text using NaturalLanguage
-    private func extractKeywords(from text: String) -> [String] {
-        var keywords: [String] = []
-        
-        let tagger = NLTagger(tagSchemes: [.lexicalClass])
-        tagger.string = text
-        
-        let options: NLTagger.Options = [.omitPunctuation, .omitWhitespace]
-        tagger.enumerateTags(in: text.startIndex..<text.endIndex, unit: .word, scheme: .lexicalClass, options: options) { tag, tokenRange in
-            if let tag = tag, tag == .noun || tag == .verb {
-                let word = String(text[tokenRange]).lowercased()
-                if word.count > 3 && !keywords.contains(word) {
-                    keywords.append(word)
-                }
-            }
-            return true
-        }
-        
-        return Array(keywords.prefix(10))
-    }
-    
     // MARK: - Case Management (Database-Backed)
     
     /// Load cases from database
@@ -635,30 +392,38 @@ class ConflictResolutionManager: ObservableObject {
         caseError = nil
         
         do {
-            let remoteCases = try await caseService.fetchCases(organizationId: organizationId)
+            let remoteCases = try await caseService.fetchCases(organizationId: organizationId, createdBy: currentUserId)
             cases = remoteCases.map { $0.toConflictCase() }
         } catch {
             caseError = "Failed to load cases: \(error.localizedDescription)"
             print("Error loading cases from database: \(error)")
-            // Fall back to local cache
-            loadCasesFromCache()
         }
         
         isLoadingCases = false
     }
     
-    /// Load cases from local cache (fallback)
-    private func loadCasesFromCache() {
-        if let data = userDefaults.data(forKey: casesKey),
-           let decoded = try? JSONDecoder().decode([ConflictCase].self, from: data) {
-            cases = decoded
-        }
-    }
-    
-    /// Save cases to local cache (for offline support)
-    private func saveCasesToCache() {
-        if let encoded = try? JSONEncoder().encode(cases) {
-            userDefaults.set(encoded, forKey: casesKey)
+    /// Refresh a single case from the API and update the in-memory array.
+    /// Call this when opening a case detail to ensure documents are up-to-date.
+    func refreshCase(backendId: String) async {
+        do {
+            let apiCase = try await caseService.fetchCase(id: backendId)
+            var refreshedCase = apiCase.toConflictCase()
+            
+            if let index = cases.firstIndex(where: { $0.backendId == backendId || $0.id == refreshedCase.id }) {
+                // Preserve the local UUID so CaseDetailView can still find this case
+                refreshedCase.id = cases[index].id
+                cases[index] = refreshedCase
+            } else {
+                cases.insert(refreshedCase, at: 0)
+            }
+            
+            if currentCase?.backendId == backendId {
+                currentCase = refreshedCase
+            }
+            
+            print("✅ Case \(backendId) refreshed from API — \(refreshedCase.documents.count) documents")
+        } catch {
+            print("⚠️ Failed to refresh case \(backendId): \(error.localizedDescription)")
         }
     }
     
@@ -689,7 +454,6 @@ class ConflictResolutionManager: ObservableObject {
         // Add to local array first
         cases.insert(newCase, at: 0)
         currentCase = newCase
-        saveCasesToCache()
         
         // Save to database
         print("🔍 Creating case - userId: \(currentUserId ?? "nil"), orgId: \(currentOrganizationId ?? "nil")")
@@ -699,11 +463,11 @@ class ConflictResolutionManager: ObservableObject {
             do {
                 print("📤 Saving case to database...")
                 
-                // Look up backend policy ID from local UUID
+                // Policy ID is now the backend UUID directly
                 var backendPolicyId: String? = nil
                 if let localPolicyId = newCase.activePolicyId {
-                    backendPolicyId = policyBackendIds[localPolicyId]
-                    print("🔍 Active policy lookup - local: \(localPolicyId), backend: \(backendPolicyId ?? "not found")")
+                    backendPolicyId = localPolicyId.uuidString
+                    print("🔍 Active policy - ID: \(backendPolicyId ?? "nil")")
                 }
                 
                 let created = try await caseService.createCase(
@@ -718,7 +482,6 @@ class ConflictResolutionManager: ObservableObject {
                 if let index = cases.firstIndex(where: { $0.id == newCase.id }) {
                     cases[index].backendId = created.id
                     currentCase?.backendId = created.id
-                    saveCasesToCache()
                     print("✅ Case saved to database with ID: \(created.id)")
                 }
             } catch {
@@ -745,7 +508,6 @@ class ConflictResolutionManager: ObservableObject {
             }
             
             objectWillChange.send()
-            saveCasesToCache()
             
             // Sync to database
             if let backendId = caseToUpdate.backendId, let userId = currentUserId {
@@ -804,6 +566,18 @@ class ConflictResolutionManager: ObservableObject {
                        let data = try? JSONEncoder().encode(fullResult),
                        let json = try? JSONSerialization.jsonObject(with: data) {
                         updates["fullGeneratedDocumentResultJson"] = json
+                    }
+                    
+                    // Save per-employee generated documents
+                    if let empDocs = caseToUpdate.employeeGeneratedDocuments, !empDocs.isEmpty,
+                       let data = try? JSONEncoder().encode(empDocs),
+                       let json = try? JSONSerialization.jsonObject(with: data) {
+                        updates["employeeGeneratedDocumentsJson"] = json
+                    }
+                    
+                    // Save approved employee names
+                    if !caseToUpdate.approvedEmployeeNames.isEmpty {
+                        updates["approvedEmployeeNamesJson"] = caseToUpdate.approvedEmployeeNames
                     }
                     
                     // Save target employee IDs for action
@@ -869,7 +643,6 @@ class ConflictResolutionManager: ObservableObject {
             }
             
             objectWillChange.send()
-            saveCasesToCache()
             
             // Sync to database
             if let backendId = updatedCase.backendId, let userId = currentUserId {
@@ -894,7 +667,6 @@ class ConflictResolutionManager: ObservableObject {
             currentCase = nil
         }
         objectWillChange.send()
-        saveCasesToCache()
         
         // Delete from database
         if let backendId = caseToDelete.backendId {
@@ -928,7 +700,6 @@ class ConflictResolutionManager: ObservableObject {
                 currentCase = updatedCase
             }
             objectWillChange.send()
-            saveCasesToCache()
             
             // Sync to database
             if let backendId = updatedCase.backendId {
@@ -976,7 +747,6 @@ class ConflictResolutionManager: ObservableObject {
                 currentCase = updatedCase
             }
             objectWillChange.send()
-            saveCasesToCache()
             
             // Sync to database
             if let backendId = updatedCase.backendId, let userId = currentUserId {
@@ -1009,7 +779,6 @@ class ConflictResolutionManager: ObservableObject {
         )
         
         cases = syncedCases
-        saveCasesToCache()
         isLoadingCases = false
     }
     
@@ -1020,8 +789,33 @@ class ConflictResolutionManager: ObservableObject {
         // Update timestamp
         if let index = cases.firstIndex(where: { $0.id == caseToClose.id }) {
             cases[index].closedAt = Date()
-            saveCasesToCache()
         }
+    }
+    
+    /// Re-open a closed/locked case via the dedicated reopen endpoint
+    func reopenCase(_ caseId: UUID) async throws {
+        guard let index = cases.firstIndex(where: { $0.id == caseId }) else { return }
+        let caseToReopen = cases[index]
+        
+        if let backendId = caseToReopen.backendId, let userId = currentUserId {
+            let reopenedData = try await caseService.reopenCase(id: backendId, reopenedBy: userId, reason: "Re-opened by supervisor")
+            var updatedCase = reopenedData.toConflictCase()
+            updatedCase.id = caseToReopen.id // Preserve local UUID
+            cases[index] = updatedCase
+        } else {
+            // Local only — just update status
+            cases[index].status = .awaitingAction
+            cases[index].isLocked = false
+            cases[index].closedAt = nil
+            cases[index].closedBy = nil
+            cases[index].closureReason = nil
+            cases[index].closureSummary = nil
+        }
+        
+        if currentCase?.id == caseId {
+            currentCase = cases[index]
+        }
+        objectWillChange.send()
     }
     
     // MARK: - Statistics

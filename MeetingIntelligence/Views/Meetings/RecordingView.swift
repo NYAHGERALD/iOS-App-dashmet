@@ -187,16 +187,8 @@ struct RecordingView: View {
     
     // MARK: - Background
     private var backgroundGradient: some View {
-        LinearGradient(
-            colors: [
-                Color(hex: "0f0c29"),
-                Color(hex: "302b63"),
-                Color(hex: "24243e")
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-        .ignoresSafeArea()
+        AppColors.background
+            .ignoresSafeArea()
     }
     
     // MARK: - Top Control Bar
@@ -235,10 +227,10 @@ struct RecordingView: View {
                 } label: {
                     Text("Cancel")
                         .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(.white)
+                        .foregroundColor(AppColors.textPrimary)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 8)
-                        .background(Color.white.opacity(0.15))
+                        .background(AppColors.surface)
                         .cornerRadius(20)
                 }
                 
@@ -253,7 +245,7 @@ struct RecordingView: View {
                     
                     Text(viewModel.formattedTime)
                         .font(.system(size: 18, weight: .bold, design: .monospaced))
-                        .foregroundColor(.white)
+                        .foregroundColor(AppColors.textPrimary)
                 }
                 
                 Spacer()
@@ -265,10 +257,10 @@ struct RecordingView: View {
                     Text("System")
                         .font(.system(size: 12, weight: .bold))
                 }
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(AppColors.textSecondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(Color.white.opacity(0.1))
+                .background(AppColors.surface)
                 .cornerRadius(16)
             }
             .padding(.horizontal, 16)
@@ -319,7 +311,7 @@ struct RecordingView: View {
                     // Time display - responsive font size
                     Text(viewModel.formattedTime)
                         .font(.system(size: min(availableHeight * 0.12, 64), weight: .ultraLight, design: .monospaced))
-                        .foregroundColor(.white)
+                        .foregroundColor(AppColors.textPrimary)
                         .contentTransition(.numericText())
                         .animation(.spring(response: 0.3), value: viewModel.formattedTime)
                 }
@@ -368,7 +360,7 @@ struct RecordingView: View {
                         
                         Text("Recording Audio")
                             .font(.caption)
-                            .foregroundColor(.white.opacity(0.7))
+                            .foregroundColor(AppColors.textSecondary)
                     }
                 }
                 .padding(.vertical, 8)
@@ -393,11 +385,11 @@ struct RecordingView: View {
                 Text("System Transcript Generation")
                     .font(.subheadline)
                     .fontWeight(.medium)
-                    .foregroundColor(.white)
+                    .foregroundColor(AppColors.textPrimary)
                 
                 Text("Generate high-quality transcript after recording")
                     .font(.caption)
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(AppColors.textTertiary)
             }
             
             Spacer()
@@ -423,12 +415,12 @@ struct RecordingView: View {
                     .foregroundColor(AppColors.primary)
                 Text("Meeting Notes")
                     .font(.headline)
-                    .foregroundColor(.white)
+                    .foregroundColor(AppColors.textPrimary)
                 Spacer()
                 
                 Text("\(meetingNotes.count) chars")
                     .font(.caption)
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(AppColors.textTertiary)
             }
             .padding(.horizontal)
             .padding(.top, 12)
@@ -437,9 +429,9 @@ struct RecordingView: View {
             // Notes text editor - takes remaining space
             TextEditor(text: $meetingNotes)
                 .font(.body)
-                .foregroundColor(.white)
+                .foregroundColor(AppColors.textPrimary)
                 .scrollContentBackground(.hidden)
-                .background(Color.white.opacity(0.05))
+                .background(AppColors.surface.opacity(0.5))
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .padding(.horizontal)
                 .frame(maxHeight: .infinity)
@@ -450,7 +442,7 @@ struct RecordingView: View {
                                 HStack {
                                     Text("Jot down key points, action items, or observations...")
                                         .font(.body)
-                                        .foregroundColor(.white.opacity(0.3))
+                                        .foregroundColor(AppColors.textTertiary)
                                         .padding(.horizontal, 20)
                                         .padding(.top, 24)
                                     Spacer()
@@ -492,10 +484,10 @@ struct RecordingView: View {
         } label: {
             Text(text)
                 .font(.caption)
-                .foregroundColor(.white)
+                .foregroundColor(AppColors.textPrimary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(Color.white.opacity(0.15))
+                .background(AppColors.surface)
                 .clipShape(Capsule())
         }
     }
@@ -508,12 +500,12 @@ struct RecordingView: View {
                     .foregroundColor(AppColors.accent)
                 Text(value)
                     .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
+                    .foregroundColor(AppColors.textPrimary)
             }
             
             Text(label)
                 .font(.system(size: 10, weight: .medium))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(AppColors.textTertiary)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 10)
@@ -524,7 +516,7 @@ struct RecordingView: View {
                     RoundedRectangle(cornerRadius: 12)
                         .stroke(
                             LinearGradient(
-                                colors: [.white.opacity(0.2), .white.opacity(0.05)],
+                                colors: [AppColors.textTertiary.opacity(0.3), AppColors.textTertiary.opacity(0.1)],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ),
@@ -588,7 +580,7 @@ struct RecordingView: View {
                             Text(tab.rawValue)
                                 .font(.system(size: 11, weight: .semibold))
                         }
-                        .foregroundColor(selectedTab == tab ? AppColors.primary : .white.opacity(0.4))
+                        .foregroundColor(selectedTab == tab ? AppColors.primary : AppColors.textTertiary)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
                     }
@@ -608,9 +600,9 @@ struct RecordingView: View {
                 // Gradient overlay for depth
                 LinearGradient(
                     colors: [
-                        Color.black.opacity(0.3),
-                        Color.black.opacity(0.5),
-                        Color.black.opacity(0.7)
+                        AppColors.surface.opacity(0.3),
+                        AppColors.surface.opacity(0.6),
+                        AppColors.surface.opacity(0.9)
                     ],
                     startPoint: .top,
                     endPoint: .bottom
@@ -685,7 +677,7 @@ struct RecordingView: View {
                     
                     Text("Bookmark")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.white.opacity(0.8))
+                        .foregroundColor(AppColors.textSecondary)
                 }
             }
             .buttonStyle(ScaleButtonStyle())
@@ -838,7 +830,7 @@ struct RecordingView: View {
                     
                     Text("Notes")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(selectedTab == .notes ? AppColors.primary : .white.opacity(0.8))
+                        .foregroundColor(selectedTab == .notes ? AppColors.primary : AppColors.textSecondary)
                 }
             }
             .buttonStyle(ScaleButtonStyle())
@@ -858,7 +850,7 @@ struct RecordingView: View {
                     .foregroundColor(AppColors.accent)
                 Text(viewModel.meeting.safeMeetingType.displayName)
                     .font(AppTypography.caption)
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(AppColors.textSecondary)
                 
                 Spacer()
             }
@@ -866,7 +858,7 @@ struct RecordingView: View {
             Text(viewModel.meeting.displayTitle)
                 .font(AppTypography.title3)
                 .fontWeight(.semibold)
-                .foregroundColor(.white)
+                .foregroundColor(AppColors.textPrimary)
                 .multilineTextAlignment(.center)
         }
         .padding(.horizontal)
@@ -891,12 +883,12 @@ struct RecordingView: View {
                                 .fontWeight(.medium)
                         }
                     }
-                    .foregroundColor(selectedTab == tab ? .white : .white.opacity(0.5))
+                    .foregroundColor(selectedTab == tab ? AppColors.textPrimary : AppColors.textTertiary)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
                     .background(
                         selectedTab == tab ?
-                        Color.white.opacity(0.15) :
+                        AppColors.surface :
                         Color.clear
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -906,7 +898,7 @@ struct RecordingView: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 4)
-        .background(Color.black.opacity(0.2))
+        .background(AppColors.surface)
     }
     
     // MARK: - Timer Display
@@ -932,7 +924,7 @@ struct RecordingView: View {
             // Time display
             Text(viewModel.formattedTime)
                 .font(.system(size: 64, weight: .ultraLight, design: .monospaced))
-                .foregroundColor(.white)
+                .foregroundColor(AppColors.textPrimary)
                 .contentTransition(.numericText())
                 .animation(.spring(response: 0.3), value: viewModel.formattedTime)
         }
@@ -1029,9 +1021,9 @@ struct RecordingView: View {
                 
                 Text("\(viewModel.bookmarks.count)")
                     .font(AppTypography.caption)
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(AppColors.textTertiary)
             }
-            .foregroundColor(.white.opacity(0.7))
+            .foregroundColor(AppColors.textSecondary)
             
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
@@ -1210,7 +1202,7 @@ struct ModernAudioBar: View {
     
     private var barColors: [Color] {
         if !isRecording {
-            return [Color.white.opacity(0.2), Color.white.opacity(0.3)]
+            return [AppColors.textTertiary.opacity(0.3), AppColors.textTertiary.opacity(0.4)]
         }
         
         if level > 0.8 {
@@ -1246,7 +1238,7 @@ struct ModernControlButton: View {
                 
                 Text(label)
                     .font(AppTypography.caption)
-                    .foregroundColor(.white.opacity(isEnabled ? 0.8 : 0.4))
+                    .foregroundColor(isEnabled ? AppColors.textSecondary : AppColors.textTertiary)
             }
         }
         .disabled(!isEnabled)
@@ -1383,7 +1375,7 @@ struct ModernBookmarkChip: View {
             
             if let note = bookmark.note, !note.isEmpty {
                 Text("•")
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(AppColors.textTertiary)
                 Text(note)
                     .font(AppTypography.caption)
                     .lineLimit(1)
@@ -1393,13 +1385,13 @@ struct ModernBookmarkChip: View {
         .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 20)
-                .fill(Color.white.opacity(0.1))
+                .fill(AppColors.surface)
                 .overlay(
                     RoundedRectangle(cornerRadius: 20)
                         .stroke(Color.yellow.opacity(0.3), lineWidth: 1)
                 )
         )
-        .foregroundColor(.white)
+        .foregroundColor(AppColors.textPrimary)
     }
 }
 
@@ -1432,7 +1424,7 @@ struct AudioBar: View {
     
     private var barColor: Color {
         if !isRecording {
-            return Color.white.opacity(0.3)
+            return AppColors.textTertiary
         }
         
         if level > 0.8 {

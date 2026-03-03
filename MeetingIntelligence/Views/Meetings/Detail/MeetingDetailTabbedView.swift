@@ -14,7 +14,9 @@ import FirebaseAuth
 // MARK: - Meeting Detail Tabbed View
 struct MeetingDetailTabbedView: View {
     @StateObject private var viewModel: MeetingDetailViewModel
-    @ObservedObject var meetingViewModel: MeetingViewModel
+    // NOT @ObservedObject — we only call methods on it, we don't need to observe its @Published state
+    // Observing it causes the parent MeetingListView's state changes to re-render the entire detail sheet
+    let meetingViewModel: MeetingViewModel
     @EnvironmentObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
     
@@ -22,7 +24,6 @@ struct MeetingDetailTabbedView: View {
     @State private var showRecording = false
     @State private var showPublishConfirmation = false
     @State private var showConsentModal = false
-    @State private var scrollOffset: CGFloat = 0
     @State private var showMenu = false
     @State private var shouldAutoExtractActionItems = false
     
@@ -47,19 +48,14 @@ struct MeetingDetailTabbedView: View {
     }
     
     var body: some View {
-        ZStack(alignment: .top) {
-            // Background
-            AppColors.background.ignoresSafeArea()
+        VStack(spacing: 0) {
+            // Compact Tab Bar (always visible)
+            compactTabBar
             
-            // Main Content
-            VStack(spacing: 0) {
-                // Compact Tab Bar with blur effect
-                compactTabBar
-                    .opacity(scrollOffset < -50 ? 1 : 0)
-                    .animation(.easeInOut(duration: 0.2), value: scrollOffset < -50)
-                
-                // Tab Content
-                TabView(selection: $selectedTab) {
+            // Tab Content - Manual switcher
+            Group {
+                switch selectedTab {
+                case .overview:
                     OverviewTab(
                         viewModel: viewModel,
                         meetingViewModel: meetingViewModel,
@@ -69,34 +65,59 @@ struct MeetingDetailTabbedView: View {
                         showAISummary: $showAISummary,
                         showAudioPlayer: $showAudioPlayer,
                         showAISummaryAudioPlayer: $showAISummaryAudioPlayer,
+                        showRecording: $showRecording,
+                        showConsentModal: $showConsentModal,
                         rawTranscript: $rawTranscript,
                         localRecordingURL: $localRecordingURL,
                         savedAISummary: $savedAISummary,
                         aiSummaryAudioPlayer: aiSummaryAudioPlayer
                     )
-                        .tag(MeetingTab.overview)
-                    
-                    TranscriptTab(viewModel: viewModel)
-                        .tag(MeetingTab.transcript)
-                    
-                    SummaryTab(viewModel: viewModel)
-                        .tag(MeetingTab.summary)
-                    
-                    ActionItemsTab(viewModel: viewModel, shouldAutoExtract: $shouldAutoExtractActionItems)
-                        .tag(MeetingTab.actionItems)
-                    
-                    AttachmentsTab(viewModel: viewModel)
-                        .tag(MeetingTab.attachments)
+                case .transcript:
+                    TranscriptTab(viewModel: viewModel, rawTranscript: $rawTranscript)
+                case .summary:
+                    SummaryTab(
+                        viewModel: viewModel,
+                        savedAISummary: $savedAISummary,
+                        showAISummaryAudioPlayer: $showAISummaryAudioPlayer,
+                        showAISummary: $showAISummary,
+                        rawTranscript: $rawTranscript
+                    )
                 }
-                .tabViewStyle(.page(indexDisplayMode: .never))
-            }
-            
-            // Floating Header Buttons (hidden on Action Items tab which has its own header)
-            if selectedTab != .actionItems {
-                floatingHeader
             }
         }
-        .ignoresSafeArea(edges: .top)
+        .task {
+            await viewModel.loadFullDetails()
+            // Load transcript and AI summary from local cache
+            loadTranscriptFromLocalCache()
+            loadSavedAISummary()
+        }
+        .background(AppColors.background)
+        .navigationTitle(viewModel.meeting.displayTitle)
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    dismiss()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 16, weight: .semibold))
+                        Text("Back")
+                    }
+                    .foregroundColor(AppColors.primary)
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showMenu = true
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(AppColors.textPrimary)
+                }
+            }
+        }
         .fullScreenCover(isPresented: $showRecording) {
             RecordingView(meeting: viewModel.meeting, meetingViewModel: viewModel.meetingViewModel) { _ in
                 Task {
@@ -130,6 +151,12 @@ struct MeetingDetailTabbedView: View {
                 }
             }
             
+            if viewModel.meeting.safeStatus == .recording {
+                Button("Resume Recording") {
+                    showRecording = true
+                }
+            }
+            
             Button("Share") {
                 // Share meeting
             }
@@ -153,9 +180,6 @@ struct MeetingDetailTabbedView: View {
         } message: {
             Text("This will make the meeting results and action items visible to all participants.")
         }
-        .task {
-            await viewModel.loadFullDetails()
-        }
         // OverviewTab presentation modifiers (moved here to prevent reset on view recreation)
         .fullScreenCover(isPresented: $showTranscriptReview) {
             TranscriptReviewView(
@@ -174,8 +198,19 @@ struct MeetingDetailTabbedView: View {
             AISummaryView(
                 meeting: viewModel.meeting,
                 transcript: rawTranscript,
-                onSummarySaved: { }
+                onSummarySaved: {
+                    // Reload saved AI summary from local cache so SummaryTab shows it immediately
+                    loadSavedAISummary()
+                    // Also refresh meeting data from backend
+                    Task { await viewModel.refreshMeeting() }
+                }
             )
+        }
+        .onChange(of: showAISummary) { _, newValue in
+            if !newValue {
+                // When AISummaryView dismisses, reload saved summary in case it was saved
+                loadSavedAISummary()
+            }
         }
         .sheet(isPresented: $showAISummaryAudioPlayer) {
             if let summary = savedAISummary, let audioUrl = summary.audioUrl, !audioUrl.isEmpty {
@@ -188,97 +223,25 @@ struct MeetingDetailTabbedView: View {
         }
     }
     
-    // MARK: - Floating Header
-    private var floatingHeader: some View {
-        ZStack {
-            // Centered Title
-            Text(viewModel.meeting.displayTitle)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundColor(AppColors.textPrimary)
-                .lineLimit(1)
-                .frame(maxWidth: 200)
-            
-            // Buttons on sides
-            HStack {
-                // Close Button - Glassmorphism style
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(.white)
-                        .frame(width: 44, height: 44)
-                        .background(
-                            Circle()
-                                .fill(Color.black.opacity(0.5))
-                        )
-                        .overlay(
-                            Circle()
-                                .stroke(Color.white.opacity(0.3), lineWidth: 1)
-                        )
-                        .shadow(color: .black.opacity(0.3), radius: 8, x: 0, y: 4)
-                }
-                
-                Spacer()
-                
-                // More Options Button - Glassmorphism style
-                Button {
-                    showMenu = true
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(.white)
-                        .frame(width: 44, height: 44)
-                        .background(
-                            Circle()
-                                .fill(Color.black.opacity(0.5))
-                        )
-                        .overlay(
-                            Circle()
-                                .stroke(Color.white.opacity(0.3), lineWidth: 1)
-                        )
-                        .shadow(color: .black.opacity(0.3), radius: 8, x: 0, y: 4)
-                }
-            }
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 60) // Safe area top
-        .padding(.bottom, 12)
-        .background(
-            // Blur background that appears on scroll
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .environment(\.colorScheme, .dark)
-                .opacity(scrollOffset < -50 ? 1 : 0)
-                .animation(.easeInOut(duration: 0.2), value: scrollOffset < -50)
-                .ignoresSafeArea()
-        )
-    }
-    
     // MARK: - Compact Tab Bar
     private var compactTabBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
-                ForEach(MeetingTab.allCases, id: \.self) { tab in
-                    CompactTabButton(
-                        tab: tab,
-                        isSelected: selectedTab == tab,
-                        badge: viewModel.badgeCount(for: tab)
-                    ) {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                            selectedTab = tab
-                        }
+        HStack(spacing: 4) {
+            ForEach(MeetingTab.allCases, id: \.self) { tab in
+                CompactTabButton(
+                    tab: tab,
+                    isSelected: selectedTab == tab,
+                    badge: viewModel.badgeCount(for: tab)
+                ) {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        selectedTab = tab
                     }
                 }
+                .frame(maxWidth: .infinity)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
         }
-        .background(
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .environment(\.colorScheme, .dark)
-        )
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(AppColors.surface)
     }
     
     // MARK: - Helpers
@@ -292,6 +255,113 @@ struct MeetingDetailTabbedView: View {
             phoneNumber: authService.currentUser?.phoneNumber
         )
     }
+    
+    /// Load saved transcript from local cache (UserDefaults) so it's available to all tabs
+    private func loadTranscriptFromLocalCache() {
+        let meetingId = viewModel.meeting.id
+        
+        // Try AI-processed transcript first
+        if let transcriptData = UserDefaults.standard.data(forKey: "transcript_processed_\(meetingId)"),
+           let json = try? JSONSerialization.jsonObject(with: transcriptData) as? [String: Any],
+           let text = json["processedText"] as? String ?? json["rawText"] as? String,
+           !text.isEmpty {
+            rawTranscript = text
+            return
+        }
+        
+        // Then try final transcript
+        if let transcriptData = UserDefaults.standard.data(forKey: "transcript_final_\(meetingId)"),
+           let json = try? JSONSerialization.jsonObject(with: transcriptData) as? [String: Any],
+           let text = json["processedText"] as? String ?? json["rawText"] as? String,
+           !text.isEmpty {
+            rawTranscript = text
+            return
+        }
+        
+        // Fall back to raw transcript
+        if let transcriptData = UserDefaults.standard.data(forKey: "transcript_raw_\(meetingId)"),
+           let json = try? JSONSerialization.jsonObject(with: transcriptData) as? [String: Any],
+           let text = json["processedText"] as? String ?? json["rawText"] as? String,
+           !text.isEmpty {
+            rawTranscript = text
+            return
+        }
+        
+        // Legacy key support
+        if let transcriptData = UserDefaults.standard.data(forKey: "rawTranscript_\(meetingId)"),
+           let json = try? JSONSerialization.jsonObject(with: transcriptData) as? [String: Any],
+           let text = json["rawText"] as? String,
+           !text.isEmpty {
+            rawTranscript = text
+        }
+    }
+    
+    /// Load saved AI summary from local cache (UserDefaults) or backend
+    private func loadSavedAISummary() {
+        let meetingId = viewModel.meeting.id
+        
+        // Try local cache first (AISummaryView saves here on save)
+        if let data = UserDefaults.standard.data(forKey: "ai_summary_\(meetingId)"),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            savedAISummary = SavedAISummary(
+                id: json["id"] as? String ?? "",
+                briefSummary: json["briefSummary"] as? String ?? "",
+                narrative: json["narrative"] as? String ?? "",
+                tone: json["tone"] as? String ?? "",
+                objectives: json["objectives"] as? [String] ?? [],
+                keyDiscussions: json["keyDiscussions"] as? [String] ?? [],
+                takeaways: json["takeaways"] as? [String] ?? [],
+                audioUrl: json["audioUrl"] as? String,
+                audioVoice: json["audioVoice"] as? String,
+                generatedAt: json["generatedAt"] as? String ?? "",
+                savedAt: json["savedAt"] as? Double ?? 0
+            )
+            return
+        }
+        
+        // Fetch from backend if not cached
+        Task {
+            do {
+                if let summary = try await MeetingSummaryService.shared.fetchAISummary(meetingId: meetingId) {
+                    await MainActor.run {
+                        savedAISummary = SavedAISummary(
+                            id: summary.id,
+                            briefSummary: summary.briefSummary ?? "",
+                            narrative: summary.narrative ?? "",
+                            tone: summary.tone ?? "",
+                            objectives: summary.objectives ?? [],
+                            keyDiscussions: summary.keyDiscussions ?? [],
+                            takeaways: summary.takeaways ?? [],
+                            audioUrl: summary.audioUrl,
+                            audioVoice: summary.audioVoice,
+                            generatedAt: summary.generatedAt ?? "",
+                            savedAt: Date().timeIntervalSince1970
+                        )
+                        
+                        // Cache locally
+                        let localData: [String: Any] = [
+                            "id": summary.id,
+                            "briefSummary": summary.briefSummary ?? "",
+                            "narrative": summary.narrative ?? "",
+                            "tone": summary.tone ?? "",
+                            "objectives": summary.objectives ?? [],
+                            "keyDiscussions": summary.keyDiscussions ?? [],
+                            "takeaways": summary.takeaways ?? [],
+                            "audioUrl": summary.audioUrl ?? "",
+                            "audioVoice": summary.audioVoice ?? "",
+                            "generatedAt": summary.generatedAt ?? "",
+                            "savedAt": Date().timeIntervalSince1970
+                        ]
+                        if let cacheData = try? JSONSerialization.data(withJSONObject: localData) {
+                            UserDefaults.standard.set(cacheData, forKey: "ai_summary_\(meetingId)")
+                        }
+                    }
+                }
+            } catch {
+                print("⚠️ Failed to fetch AI summary: \(error.localizedDescription)")
+            }
+        }
+    }
 }
 
 // MARK: - Compact Tab Button
@@ -303,25 +373,27 @@ struct CompactTabButton: View {
     
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
+            HStack(spacing: 3) {
                 Image(systemName: tab.icon)
-                    .font(.system(size: 12))
+                    .font(.system(size: 10))
                 
                 Text(tab.rawValue)
-                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                    .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                 
                 if let badge = badge, badge > 0 {
                     Text("\(badge)")
-                        .font(.system(size: 10, weight: .bold))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
+                        .font(.system(size: 9, weight: .bold))
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
                         .background(isSelected ? Color.white.opacity(0.25) : AppColors.primary.opacity(0.15))
                         .foregroundColor(isSelected ? .white : AppColors.primary)
                         .clipShape(Capsule())
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
             .background {
                 if isSelected {
                     Capsule()
@@ -342,16 +414,12 @@ enum MeetingTab: String, CaseIterable {
     case overview = "Overview"
     case transcript = "Transcript"
     case summary = "Summary"
-    case actionItems = "Action Items"
-    case attachments = "Attachments"
     
     var icon: String {
         switch self {
         case .overview: return "doc.text"
         case .transcript: return "text.alignleft"
         case .summary: return "sparkles"
-        case .actionItems: return "checklist"
-        case .attachments: return "paperclip"
         }
     }
 }
@@ -432,28 +500,20 @@ class MeetingDetailViewModel: ObservableObject {
     // MARK: - Public Methods
     
     func loadFullDetails() async {
-        isLoading = true
+        await MainActor.run { isLoading = true }
         
-        do {
-            if let detailedMeeting = await meetingViewModel.getMeetingDetails(meetingId: meeting.id) {
-                meeting = detailedMeeting
-                
-                if let t = detailedMeeting.transcript {
-                    transcript = t
-                }
-                if let s = detailedMeeting.summary {
-                    summary = s
-                }
-                if let a = detailedMeeting.actionItems {
-                    actionItems = a
-                }
-                if let att = detailedMeeting.attachments {
-                    attachments = att
-                }
+        let detailedMeeting = await meetingViewModel.getMeetingDetails(meetingId: meeting.id)
+        
+        await MainActor.run {
+            if let m = detailedMeeting {
+                meeting = m
+                if let t = m.transcript { transcript = t }
+                if let s = m.summary { summary = s }
+                if let a = m.actionItems { actionItems = a }
+                if let att = m.attachments { attachments = att }
             }
+            isLoading = false
         }
-        
-        isLoading = false
     }
     
     func refreshMeeting() async {
@@ -476,10 +536,6 @@ class MeetingDetailViewModel: ObservableObject {
         switch tab {
         case .transcript:
             return transcript.isEmpty ? nil : transcript.count
-        case .actionItems:
-            return actionItems.isEmpty ? nil : actionItems.count
-        case .attachments:
-            return attachments.isEmpty ? nil : attachments.count
         default:
             return nil
         }

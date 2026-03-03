@@ -64,7 +64,10 @@ class AppState: ObservableObject {
         
         // Check for existing Firebase auth session
         if let user = authService.currentUser {
-            currentUserID = user.uid
+            // Only set Firebase UID if we don't already have a backend UUID persisted
+            if currentUserID == nil {
+                currentUserID = user.uid
+            }
             isAuthenticated = true
             
             // Get fresh ID token

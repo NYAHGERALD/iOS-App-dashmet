@@ -112,8 +112,12 @@ class TranscriptProcessingState: ObservableObject {
                 rawText: transcript.rawText,
                 processedText: processedText,
                 segments: transcript.segments,
+                speakerBlocks: transcript.speakerBlocks,
                 duration: transcript.duration,
                 wordCount: processedText.split(separator: " ").count,
+                speakerCount: transcript.speakerCount,
+                speakers: transcript.speakers,
+                isDiarized: transcript.isDiarized,
                 generatedAt: Date()
             )
             

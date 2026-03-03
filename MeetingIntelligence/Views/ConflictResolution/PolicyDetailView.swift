@@ -52,7 +52,10 @@ struct PolicyDetailView: View {
             sections = sections.filter { section in
                 section.title.localizedCaseInsensitiveContains(searchText) ||
                 section.content.localizedCaseInsensitiveContains(searchText) ||
-                section.keywords.contains { $0.localizedCaseInsensitiveContains(searchText) }
+                section.firstProgression?.localizedCaseInsensitiveContains(searchText) == true ||
+                section.secondProgression?.localizedCaseInsensitiveContains(searchText) == true ||
+                section.thirdProgression?.localizedCaseInsensitiveContains(searchText) == true ||
+                section.fourthProgression?.localizedCaseInsensitiveContains(searchText) == true
             }
         }
         
@@ -470,17 +473,57 @@ struct SectionRowView: View {
                         .foregroundColor(textSecondary)
                         .lineSpacing(4)
                     
-                    if !section.keywords.isEmpty {
+                    // Progressive Discipline — 4 Fixed Columns
+                    if section.hasProgression {
+                        VStack(alignment: .leading, spacing: 10) {
+                            // Header
+                            HStack(spacing: 6) {
+                                Image(systemName: "hammer.fill")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(Color(hex: "F59E0B"))
+                                Text("Progressive Discipline")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundColor(Color(hex: "F59E0B"))
+                            }
+                            
+                            // Progression steps
+                            if let first = section.firstProgression {
+                                progressionStepRow(step: 1, label: "1st Offense", value: first, color: Color(hex: "10B981"))
+                            }
+                            if let second = section.secondProgression {
+                                progressionStepRow(step: 2, label: "2nd Offense", value: second, color: Color(hex: "F59E0B"))
+                            }
+                            if let third = section.thirdProgression {
+                                progressionStepRow(step: 3, label: "3rd Offense", value: third, color: Color(hex: "EF8C22"))
+                            }
+                            if let fourth = section.fourthProgression {
+                                progressionStepRow(step: 4, label: "4th Offense", value: fourth, color: Color(hex: "EF4444"))
+                            }
+                        }
+                        .padding(12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color(hex: "F59E0B").opacity(0.08))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color(hex: "F59E0B").opacity(0.2), lineWidth: 1)
+                        )
+                        
+                        // Progression chips
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 6) {
-                                ForEach(section.keywords, id: \.self) { keyword in
-                                    Text(keyword)
-                                        .font(.system(size: 11))
-                                        .foregroundColor(AppColors.primary)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(AppColors.primary.opacity(0.1))
-                                        .clipShape(Capsule())
+                                if let first = section.firstProgression {
+                                    progressionChip(text: first, color: Color(hex: "10B981"))
+                                }
+                                if let second = section.secondProgression {
+                                    progressionChip(text: second, color: Color(hex: "F59E0B"))
+                                }
+                                if let third = section.thirdProgression {
+                                    progressionChip(text: third, color: Color(hex: "EF8C22"))
+                                }
+                                if let fourth = section.fourthProgression {
+                                    progressionChip(text: fourth, color: Color(hex: "EF4444"))
                                 }
                             }
                         }
@@ -496,6 +539,47 @@ struct SectionRowView: View {
             RoundedRectangle(cornerRadius: 14)
                 .stroke(cardBorder, lineWidth: 1)
         )
+    }
+    
+    // MARK: - Progression Step Row
+    
+    @ViewBuilder
+    private func progressionStepRow(step: Int, label: String, value: String, color: Color) -> some View {
+        HStack(spacing: 10) {
+            ZStack {
+                Circle()
+                    .fill(color.opacity(0.15))
+                    .frame(width: 22, height: 22)
+                Text("\(step)")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(color)
+            }
+            
+            VStack(alignment: .leading, spacing: 1) {
+                Text(label)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(color)
+                Text(value)
+                    .font(.system(size: 11))
+                    .foregroundColor(textSecondary)
+                    .lineSpacing(2)
+            }
+            
+            Spacer()
+        }
+    }
+    
+    // MARK: - Progression Chip
+    
+    @ViewBuilder
+    private func progressionChip(text: String, color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(color)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(color.opacity(0.12))
+            .clipShape(Capsule())
     }
 }
 

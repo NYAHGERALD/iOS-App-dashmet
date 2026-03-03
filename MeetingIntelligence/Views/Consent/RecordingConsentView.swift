@@ -27,6 +27,9 @@ struct RecordingConsentView: View {
     @State private var expandedSection: PolicySection?
     @State private var showAnnouncementPreview = false
     
+    // Audio voice consent — persisted via UserDefaults
+    @AppStorage("audioAnnouncementEnabled") private var audioAnnouncementEnabled: Bool = true
+    
     enum PolicySection: String, CaseIterable {
         case purpose = "Purpose of Recording"
         case retention = "Data Retention"
@@ -38,17 +41,9 @@ struct RecordingConsentView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                // Background
-                LinearGradient(
-                    colors: [
-                        Color(hex: "1a1a2e"),
-                        Color(hex: "16213e"),
-                        Color(hex: "0f0f1a")
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .ignoresSafeArea()
+                // Background — follows system theme
+                AppColors.background
+                    .ignoresSafeArea()
                 
                 ScrollView {
                     VStack(spacing: 24) {
@@ -105,35 +100,35 @@ struct RecordingConsentView: View {
             // Shield icon
             ZStack {
                 Circle()
-                    .fill(Color.blue.opacity(0.2))
+                    .fill(AppColors.primary.opacity(0.2))
                     .frame(width: 80, height: 80)
                 
                 Image(systemName: "shield.checkered")
                     .font(.system(size: 40))
-                    .foregroundColor(.blue)
+                    .foregroundColor(AppColors.primary)
             }
             
             Text("Meeting Recording Consent")
                 .font(.title2)
                 .fontWeight(.bold)
-                .foregroundColor(.white)
+                .foregroundColor(AppColors.textPrimary)
             
             Text("Please review and accept the recording policy before proceeding")
                 .font(.subheadline)
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(AppColors.textSecondary)
                 .multilineTextAlignment(.center)
             
             if let policy = policy {
                 HStack {
                     Image(systemName: "doc.text")
-                        .foregroundColor(.blue)
+                        .foregroundColor(AppColors.primary)
                     Text("Policy Version: \(policy.version)")
                         .font(.caption)
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(AppColors.textTertiary)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(Color.white.opacity(0.1))
+                .background(AppColors.surface.opacity(0.8))
                 .clipShape(Capsule())
             }
         }
@@ -144,10 +139,10 @@ struct RecordingConsentView: View {
     private var loadingView: some View {
         VStack(spacing: 12) {
             ProgressView()
-                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                .progressViewStyle(CircularProgressViewStyle(tint: AppColors.primary))
             Text("Loading policy...")
                 .font(.caption)
-                .foregroundColor(.white.opacity(0.6))
+                .foregroundColor(AppColors.textTertiary)
         }
         .padding(.vertical, 40)
     }
@@ -217,12 +212,12 @@ struct RecordingConsentView: View {
                     
                     Text(section.rawValue)
                         .font(.headline)
-                        .foregroundColor(.white)
+                        .foregroundColor(AppColors.textPrimary)
                     
                     Spacer()
                     
                     Image(systemName: expandedSection == section ? "chevron.up" : "chevron.down")
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(AppColors.textTertiary)
                         .font(.caption)
                 }
             }
@@ -231,13 +226,13 @@ struct RecordingConsentView: View {
             if expandedSection == section {
                 Text(content)
                     .font(.subheadline)
-                    .foregroundColor(.white.opacity(0.8))
+                    .foregroundColor(AppColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .padding()
-        .background(Color.white.opacity(0.05))
+        .background(AppColors.surface)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
@@ -251,58 +246,68 @@ struct RecordingConsentView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Image(systemName: "speaker.wave.3.fill")
-                    .foregroundColor(.yellow)
+                    .foregroundColor(.orange)
                 
                 Text("Audio Announcement")
                     .font(.headline)
-                    .foregroundColor(.white)
-            }
-            
-            Text("When recording begins, a natural voice announcement will notify all participants that the meeting is being recorded. Recording will start after the announcement completes.")
-                .font(.subheadline)
-                .foregroundColor(.white.opacity(0.8))
-            
-            Button {
-                showAnnouncementPreview = true
-                consentService.previewAnnouncement()
+                    .foregroundColor(AppColors.textPrimary)
                 
-                // Auto-reset after announcement (max 10 seconds)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
-                    if showAnnouncementPreview {
-                        consentService.stopAnnouncement()
-                        showAnnouncementPreview = false
-                    }
-                }
-            } label: {
-                HStack {
-                    if consentService.isPlayingAnnouncement {
-                        ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: .yellow))
-                            .scaleEffect(0.7)
-                    } else {
-                        Image(systemName: showAnnouncementPreview ? "speaker.wave.3.fill" : "play.circle")
-                    }
-                    Text(showAnnouncementPreview ? "Playing..." : "Preview Announcement")
-                }
-                .font(.caption)
-                .foregroundColor(.yellow)
+                Spacer()
+                
+                Toggle("", isOn: $audioAnnouncementEnabled)
+                    .labelsHidden()
+                    .tint(AppColors.primary)
             }
-            .disabled(showAnnouncementPreview || consentService.isPlayingAnnouncement)
             
-            // Voice quality notice
-            HStack(spacing: 4) {
-                Image(systemName: "waveform")
-                Text("Powered by OpenAI natural voice synthesis")
+            Text(audioAnnouncementEnabled
+                 ? "When recording begins, a natural voice announcement will notify all participants that the meeting is being recorded. Recording will start after the announcement completes."
+                 : "Voice announcement is disabled. Participants will not be audibly notified when recording starts.")
+                .font(.subheadline)
+                .foregroundColor(AppColors.textSecondary)
+            
+            if audioAnnouncementEnabled {
+                Button {
+                    showAnnouncementPreview = true
+                    consentService.previewAnnouncement()
+                    
+                    // Auto-reset after announcement (max 10 seconds)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
+                        if showAnnouncementPreview {
+                            consentService.stopAnnouncement()
+                            showAnnouncementPreview = false
+                        }
+                    }
+                } label: {
+                    HStack {
+                        if consentService.isPlayingAnnouncement {
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: .orange))
+                                .scaleEffect(0.7)
+                        } else {
+                            Image(systemName: showAnnouncementPreview ? "speaker.wave.3.fill" : "play.circle")
+                        }
+                        Text(showAnnouncementPreview ? "Playing..." : "Preview Announcement")
+                    }
+                    .font(.caption)
+                    .foregroundColor(.orange)
+                }
+                .disabled(showAnnouncementPreview || consentService.isPlayingAnnouncement)
+                
+                // Voice quality notice
+                HStack(spacing: 4) {
+                    Image(systemName: "waveform")
+                    Text("Powered by OpenAI natural voice synthesis")
+                }
+                .font(.caption2)
+                .foregroundColor(AppColors.textTertiary)
             }
-            .font(.caption2)
-            .foregroundColor(.white.opacity(0.5))
         }
         .padding()
-        .background(Color.yellow.opacity(0.1))
+        .background(AppColors.surface)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.yellow.opacity(0.3), lineWidth: 1)
+                .stroke(Color.orange.opacity(0.3), lineWidth: 1)
         )
         .onChange(of: consentService.isPlayingAnnouncement) { _, isPlaying in
             if !isPlaying {
@@ -322,17 +327,17 @@ struct RecordingConsentView: View {
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: hasAgreedToPolicy ? "checkmark.square.fill" : "square")
                         .font(.title3)
-                        .foregroundColor(hasAgreedToPolicy ? .green : .white.opacity(0.5))
+                        .foregroundColor(hasAgreedToPolicy ? .green : AppColors.textTertiary)
                     
                     VStack(alignment: .leading, spacing: 4) {
                         Text("I have read and agree to the Recording Policy")
                             .font(.subheadline)
                             .fontWeight(.medium)
-                            .foregroundColor(.white)
+                            .foregroundColor(AppColors.textPrimary)
                         
                         Text("I understand that this meeting will be recorded, transcribed, and processed by the System for summary generation.")
                             .font(.caption)
-                            .foregroundColor(.white.opacity(0.6))
+                            .foregroundColor(AppColors.textTertiary)
                     }
                     
                     Spacer()
@@ -346,17 +351,17 @@ struct RecordingConsentView: View {
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: hasConfirmedParticipants ? "checkmark.square.fill" : "square")
                         .font(.title3)
-                        .foregroundColor(hasConfirmedParticipants ? .green : .white.opacity(0.5))
+                        .foregroundColor(hasConfirmedParticipants ? .green : AppColors.textTertiary)
                     
                     VStack(alignment: .leading, spacing: 4) {
                         Text("All meeting participants have been notified")
                             .font(.subheadline)
                             .fontWeight(.medium)
-                            .foregroundColor(.white)
+                            .foregroundColor(AppColors.textPrimary)
                         
                         Text("I confirm that all participants have been informed about this recording or will be notified by the audio announcement.")
                             .font(.caption)
-                            .foregroundColor(.white.opacity(0.6))
+                            .foregroundColor(AppColors.textTertiary)
                     }
                     
                     Spacer()
@@ -364,7 +369,7 @@ struct RecordingConsentView: View {
             }
         }
         .padding()
-        .background(Color.white.opacity(0.05))
+        .background(AppColors.surface)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
     
@@ -422,7 +427,7 @@ struct RecordingConsentView: View {
         VStack(spacing: 8) {
             Text("Your consent is recorded with a timestamp and cryptographic hash for compliance purposes.")
                 .font(.caption2)
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(AppColors.textTertiary)
                 .multilineTextAlignment(.center)
             
             HStack {
@@ -430,7 +435,7 @@ struct RecordingConsentView: View {
                 Text("Consent ID will be generated upon agreement")
             }
             .font(.caption2)
-            .foregroundColor(.white.opacity(0.3))
+            .foregroundColor(AppColors.textTertiary)
         }
         .padding(.top, 8)
     }
@@ -475,19 +480,22 @@ struct RecordingConsentView: View {
             // Step 2: Cache consent locally
             consentService.cacheConsentLocally(meetingId: meetingId, consentRecord: consentRecord)
             
-            // Step 3: Play announcement and WAIT for it to complete
-            // Recording should NOT start until this finishes
-            print("🎙️ Playing recording announcement...")
-            do {
-                try await consentService.playRecordingAnnouncement()
-                print("✅ Announcement finished, now starting recording...")
-            } catch {
-                // If TTS fails, log it but continue with recording
-                print("⚠️ Announcement failed: \(error.localizedDescription), continuing without audio")
+            // Step 3: Play announcement if enabled and WAIT for it to complete
+            if audioAnnouncementEnabled {
+                print("🎙️ Playing recording announcement...")
+                do {
+                    try await consentService.playRecordingAnnouncement()
+                    print("✅ Announcement finished, now starting recording...")
+                } catch {
+                    // If TTS fails, log it but continue with recording
+                    print("⚠️ Announcement failed: \(error.localizedDescription), continuing without audio")
+                }
+                
+                // Step 4: Mark announcement as played
+                await consentService.markAnnouncementPlayed(consentId: consentRecord.id, meetingId: meetingId)
+            } else {
+                print("🔇 Audio announcement disabled by user preference, skipping...")
             }
-            
-            // Step 4: Mark announcement as played
-            await consentService.markAnnouncementPlayed(consentId: consentRecord.id, meetingId: meetingId)
             
             // Step 5: NOW proceed with recording (after announcement completed or failed)
             isProcessingConsent = false

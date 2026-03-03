@@ -520,7 +520,7 @@ struct CaseAuditEntry: Identifiable, Codable {
 
 // MARK: - Conflict Case (Main Model)
 struct ConflictCase: Identifiable, Codable {
-    let id: UUID
+    var id: UUID
     var backendId: String?  // Server-side ID for database sync
     var caseNumber: String
     var type: CaseType
@@ -551,10 +551,15 @@ struct ConflictCase: Identifiable, Codable {
     var selectedTargetEmployeeIds: [UUID]  // Target employees for the selected action
     var generatedDocument: GeneratedActionDocument?
     var fullGeneratedDocumentResult: GeneratedDocumentResult?  // Full result for UI display
+    var employeeGeneratedDocuments: [String: GeneratedDocumentResult]?  // Per-employee generated documents
+    var approvedEmployeeNames: [String]  // Employee names whose documents have been approved
     
     // Supervisor Notes
     var supervisorNotes: String?
     var supervisorDecision: String?  // Final decision reason
+    
+    // Company Logo
+    var companyLogoUrl: String?  // Firebase Storage URL for company logo
     
     // Case Closure Details
     var closureReason: String?       // Reason for closing the case
@@ -597,8 +602,11 @@ struct ConflictCase: Identifiable, Codable {
         selectedTargetEmployeeIds: [UUID] = [],
         generatedDocument: GeneratedActionDocument? = nil,
         fullGeneratedDocumentResult: GeneratedDocumentResult? = nil,
+        employeeGeneratedDocuments: [String: GeneratedDocumentResult]? = nil,
+        approvedEmployeeNames: [String] = [],
         supervisorNotes: String? = nil,
         supervisorDecision: String? = nil,
+        companyLogoUrl: String? = nil,
         closureReason: String? = nil,
         closureSummary: String? = nil,
         closedBy: String? = nil,
@@ -634,8 +642,11 @@ struct ConflictCase: Identifiable, Codable {
         self.selectedTargetEmployeeIds = selectedTargetEmployeeIds
         self.generatedDocument = generatedDocument
         self.fullGeneratedDocumentResult = fullGeneratedDocumentResult
+        self.employeeGeneratedDocuments = employeeGeneratedDocuments
+        self.approvedEmployeeNames = approvedEmployeeNames
         self.supervisorNotes = supervisorNotes
         self.supervisorDecision = supervisorDecision
+        self.companyLogoUrl = companyLogoUrl
         self.closureReason = closureReason
         self.closureSummary = closureSummary
         self.closedBy = closedBy

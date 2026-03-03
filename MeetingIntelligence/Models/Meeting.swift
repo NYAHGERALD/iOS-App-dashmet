@@ -300,6 +300,12 @@ struct MeetingAttachment: Codable, Identifiable, Hashable {
     }
 }
 
+// MARK: - Meeting Department
+struct MeetingDepartment: Codable, Hashable {
+    let id: String
+    let name: String
+}
+
 // MARK: - Meeting Count
 struct MeetingCount: Codable, Hashable {
     let actionItems: Int
@@ -315,8 +321,25 @@ struct Meeting: Codable, Identifiable, Hashable {
     
     // Location & Context
     let location: String?
+    var locationType: String? = nil
     let tags: [String]?
     let language: String?
+    
+    // Scheduling
+    var scheduledAt: Date? = nil
+    
+    // Department
+    var departmentId: String? = nil
+    var department: MeetingDepartment? = nil
+    
+    // Meeting Purpose
+    var objective: String? = nil
+    var agendaItems: [String]? = nil
+    
+    // AI Settings
+    var liveTranscriptionEnabled: Bool? = nil
+    var aiProcessingMode: String? = nil
+    var confidentialityLevel: String? = nil
     
     // Recording info
     let recordingUrl: String?
@@ -357,7 +380,7 @@ struct Meeting: Codable, Identifiable, Hashable {
         if let title = title, !title.isEmpty {
             return title
         }
-        return "\(meetingType?.displayName ?? "General") Meeting"
+        return "\(safeMeetingType.displayName) Meeting"
     }
     
     /// Safe accessors for optional fields
@@ -375,6 +398,20 @@ struct Meeting: Codable, Identifiable, Hashable {
     
     var safeLanguage: String {
         language ?? "en"
+    }
+    
+    var safeAgendaItems: [String] {
+        agendaItems ?? []
+    }
+    
+    /// Formatted scheduled date
+    var formattedScheduledDate: String? {
+        guard let scheduledAt = scheduledAt else { return nil }
+        
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: scheduledAt)
     }
     
     /// Formatted duration string (e.g., "1h 23m" or "45m")

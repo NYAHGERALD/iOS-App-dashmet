@@ -248,6 +248,9 @@ struct TaskItem: Codable, Identifiable, Hashable {
     let meetingId: String?
     let meeting: TaskMeeting?
     
+    // Backend-provided group name for consistent grouping across platforms
+    let groupName: String?
+    
     // Comments and evidence
     let comments: [TaskComment]?
     let evidence: [TaskEvidence]?
@@ -390,6 +393,7 @@ struct OrganizationUser: Codable, Identifiable, Hashable {
     let lastName: String?
     let role: String?
     let profilePicture: String?
+    let phone: String?
     
     var fullName: String {
         let first = firstName ?? ""

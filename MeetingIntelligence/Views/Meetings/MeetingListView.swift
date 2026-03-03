@@ -21,6 +21,7 @@ struct MeetingListView: View {
     @State private var importedAudioURL: URL?
     @State private var searchText = ""
     @State private var showFilterMenu = false
+    @State private var showErrorAlert = false
     
     var onMenuTap: (() -> Void)?
     
@@ -119,7 +120,7 @@ struct MeetingListView: View {
             ) { result in
                 handleFileImport(result)
             }
-            .sheet(item: $selectedMeeting) { meeting in
+            .navigationDestination(item: $selectedMeeting) { meeting in
                 MeetingDetailTabbedView(meeting: meeting, meetingViewModel: viewModel)
             }
             .refreshable {
@@ -134,7 +135,10 @@ struct MeetingListView: View {
                     print("⚠️ MeetingListView: No user ID available")
                 }
             }
-            .alert("Error", isPresented: .constant(viewModel.errorMessage != nil)) {
+            .onChange(of: viewModel.errorMessage) { _, newValue in
+                showErrorAlert = newValue != nil
+            }
+            .alert("Error", isPresented: $showErrorAlert) {
                 Button("OK") {
                     viewModel.clearError()
                 }

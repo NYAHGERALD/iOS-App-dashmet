@@ -871,6 +871,29 @@ class APIService {
         let _ = try await updateMeeting(meetingId: meetingId, update: update)
     }
     
+    /// Clear the recordingUrl from a meeting (Dashmet Audio Recording Policy compliance).
+    /// Sends explicit {"recordingUrl": null} to the PATCH endpoint.
+    func clearMeetingRecordingUrl(meetingId: String) async throws {
+        let url = URL(string: "\(baseURL)/mobile/meetings/\(meetingId)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "PATCH"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = try? await FirebaseAuthService.shared.getIDToken() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        // Explicit null — Swift Codable omits nil, so we build JSON manually
+        request.httpBody = "{\"recordingUrl\":null}".data(using: .utf8)
+        
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            print("⚠️ Failed to clear recordingUrl from backend")
+            return
+        }
+        print("✅ recordingUrl cleared from backend for meeting \(meetingId)")
+    }
+    
     /// Delete a meeting
     func deleteMeeting(meetingId: String) async throws -> MeetingResponse {
         let url = URL(string: "\(baseURL)/mobile/meetings/\(meetingId)")!
@@ -1011,6 +1034,11 @@ class APIService {
     
     /// Save transcript to database
     func saveTranscript(meetingId: String, rawText: String, processedText: String?, type: String = "raw") async throws {
+        try await saveTranscriptWithBlocks(meetingId: meetingId, rawText: rawText, processedText: processedText, blocks: nil, type: type)
+    }
+    
+    /// Save transcript to database with optional speaker blocks
+    func saveTranscriptWithBlocks(meetingId: String, rawText: String, processedText: String?, blocks: [[String: Any]]?, type: String = "raw") async throws {
         let url = URL(string: "\(baseURL)/mobile/meetings/\(meetingId)/transcript")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -1026,8 +1054,12 @@ class APIService {
             "type": type
         ]
         
-        if let processed = processedText {
+        if let processed = processedText, !processed.isEmpty {
             body["processedText"] = processed
+        }
+        
+        if let blocks = blocks, !blocks.isEmpty {
+            body["blocks"] = blocks
         }
         
         request.httpBody = try JSONSerialization.data(withJSONObject: body)

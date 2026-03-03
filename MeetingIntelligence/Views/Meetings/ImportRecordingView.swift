@@ -25,6 +25,7 @@ struct ImportRecordingView: View {
     @State private var showFilePicker = false
     @State private var isProcessing = false
     @State private var errorMessage: String?
+    @State private var showErrorAlert = false
     @State private var uploadProgress: Double = 0
     @State private var currentStep: ImportStep = .selectFile
     
@@ -73,7 +74,10 @@ struct ImportRecordingView: View {
             ) { result in
                 handleFileSelection(result)
             }
-            .alert("Error", isPresented: .constant(errorMessage != nil)) {
+            .onChange(of: errorMessage) { _, newValue in
+                showErrorAlert = newValue != nil
+            }
+            .alert("Error", isPresented: $showErrorAlert) {
                 Button("OK") {
                     errorMessage = nil
                 }

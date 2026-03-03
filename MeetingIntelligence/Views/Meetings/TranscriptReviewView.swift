@@ -43,7 +43,7 @@ struct TranscriptReviewView: View {
     
     @StateObject private var viewModel: TranscriptReviewViewModel
     @Environment(\.dismiss) private var dismiss
-    
+    @Environment(\.colorScheme) private var colorScheme
     @State private var selectedViewType: TranscriptViewType = .processed
     @State private var showAudioReview = false
     @State private var showShareSheet = false
@@ -86,6 +86,14 @@ struct TranscriptReviewView: View {
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
+                        if recordingURL != nil {
+                            Button {
+                                showAudioReview = true
+                            } label: {
+                                Label("Review Audio Recording", systemImage: "waveform")
+                            }
+                        }
+                        
                         Button {
                             showShareSheet = true
                         } label: {
@@ -118,15 +126,29 @@ struct TranscriptReviewView: View {
     
     // MARK: - Background
     private var backgroundGradient: some View {
-        LinearGradient(
-            colors: [
-                Color(hex: "0f0c29"),
-                Color(hex: "302b63"),
-                Color(hex: "24243e")
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
+        Group {
+            if colorScheme == .dark {
+                LinearGradient(
+                    colors: [
+                        Color(hex: "0f0c29"),
+                        Color(hex: "302b63"),
+                        Color(hex: "24243e")
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            } else {
+                LinearGradient(
+                    colors: [
+                        Color(hex: "F0ECFF"),
+                        Color(hex: "E8E4F8"),
+                        Color(hex: "F5F3FF")
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            }
+        }
         .ignoresSafeArea()
     }
     
@@ -161,22 +183,22 @@ struct TranscriptReviewView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(selectedViewType.rawValue)
                             .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(.white)
+                            .foregroundColor(AppColors.textPrimary)
                         
                         Text(selectedViewType.description)
                             .font(.system(size: 12))
-                            .foregroundColor(.white.opacity(0.6))
+                            .foregroundColor(AppColors.textTertiary)
                     }
                     
                     Spacer()
                     
                     Image(systemName: "chevron.down")
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(AppColors.textTertiary)
                         .font(.system(size: 14))
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
-                .background(Color.white.opacity(0.1))
+                .background(AppColors.surfaceSecondary.opacity(0.8))
                 .cornerRadius(12)
             }
             .padding(.horizontal, 16)
@@ -188,7 +210,7 @@ struct TranscriptReviewView: View {
                         .tint(AppColors.primary)
                     Text("System is processing transcript...")
                         .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(AppColors.textSecondary)
                 }
                 .padding(.vertical, 8)
             }
@@ -227,11 +249,11 @@ struct TranscriptReviewView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(meeting.displayTitle)
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(AppColors.textPrimary)
                 
                 Text(meeting.formattedCreatedDate)
                     .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(AppColors.textSecondary)
             }
             
             Spacer()
@@ -243,11 +265,11 @@ struct TranscriptReviewView: View {
                     .foregroundColor(AppColors.primary)
                 Text("words")
                     .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(AppColors.textTertiary)
             }
         }
         .padding(16)
-        .background(Color.white.opacity(0.05))
+        .background(AppColors.surfaceSecondary.opacity(0.6))
         .cornerRadius(12)
     }
     
@@ -264,7 +286,7 @@ struct TranscriptReviewView: View {
             }
         }
         .padding(16)
-        .background(Color.white.opacity(0.05))
+        .background(AppColors.surfaceSecondary.opacity(0.8))
         .cornerRadius(12)
     }
     
@@ -287,18 +309,18 @@ struct TranscriptReviewView: View {
             }
             
             Divider()
-                .background(Color.white.opacity(0.1))
+                .background(AppColors.border)
             
             // Content
             if viewModel.processedTranscript.isEmpty && !viewModel.isProcessing {
                 Text("Processing will begin shortly...")
                     .font(.system(size: 15))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(AppColors.textTertiary)
                     .italic()
             } else {
                 Text(viewModel.processedTranscript.isEmpty ? rawTranscript : viewModel.processedTranscript)
                     .font(.system(size: 15, weight: .regular))
-                    .foregroundColor(.white.opacity(0.9))
+                    .foregroundColor(AppColors.textPrimary)
                     .lineSpacing(6)
             }
         }
@@ -323,7 +345,7 @@ struct TranscriptReviewView: View {
             }
             
             Divider()
-                .background(Color.white.opacity(0.1))
+                .background(AppColors.border)
             
             // Content
             if viewModel.summary.isEmpty {
@@ -331,7 +353,7 @@ struct TranscriptReviewView: View {
                     if viewModel.isGeneratingSummary {
                         Text("Generating summary...")
                             .font(.system(size: 15))
-                            .foregroundColor(.white.opacity(0.5))
+                            .foregroundColor(AppColors.textTertiary)
                             .italic()
                     } else {
                         Button {
@@ -357,7 +379,7 @@ struct TranscriptReviewView: View {
             } else {
                 Text(viewModel.summary)
                     .font(.system(size: 15, weight: .regular))
-                    .foregroundColor(.white.opacity(0.9))
+                    .foregroundColor(AppColors.textPrimary)
                     .lineSpacing(6)
             }
         }
@@ -377,20 +399,20 @@ struct TranscriptReviewView: View {
                 
                 Text("Original")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(AppColors.textTertiary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(Color.white.opacity(0.1))
+                    .background(AppColors.surfaceSecondary)
                     .cornerRadius(6)
             }
             
             Divider()
-                .background(Color.white.opacity(0.1))
+                .background(AppColors.border)
             
             // Content
             Text(rawTranscript.isEmpty ? "No transcript recorded" : rawTranscript)
                 .font(.system(size: 15, weight: .regular, design: .monospaced))
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(AppColors.textSecondary)
                 .lineSpacing(6)
         }
     }
@@ -409,24 +431,6 @@ struct TranscriptReviewView: View {
     // MARK: - Bottom Actions
     private var bottomActions: some View {
         VStack(spacing: 12) {
-            // Review Audio Button
-            if recordingURL != nil {
-                Button {
-                    showAudioReview = true
-                } label: {
-                    HStack {
-                        Image(systemName: "waveform")
-                        Text("Review Audio Recording")
-                    }
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(Color.white.opacity(0.15))
-                    .cornerRadius(12)
-                }
-            }
-            
             // Save & Continue Button
             Button {
                 Task {
@@ -455,7 +459,7 @@ struct TranscriptReviewView: View {
         .padding(16)
         .background(
             LinearGradient(
-                colors: [Color.clear, Color.black.opacity(0.3)],
+                colors: [Color.clear, colorScheme == .dark ? Color.black.opacity(0.3) : Color.white.opacity(0.8)],
                 startPoint: .top,
                 endPoint: .bottom
             )
@@ -725,6 +729,7 @@ struct AudioReviewSheet: View {
     let meeting: Meeting
     
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @StateObject private var audioPlayer = AudioPlayerViewModel()
     
     var body: some View {
@@ -749,7 +754,7 @@ struct AudioReviewSheet: View {
                 HStack {
                     Text(audioPlayer.formattedCurrentTime)
                         .font(.system(size: 14, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(AppColors.textSecondary)
                     
                     Slider(value: $audioPlayer.progress, in: 0...1) { editing in
                         if !editing {
@@ -760,7 +765,7 @@ struct AudioReviewSheet: View {
                     
                     Text(audioPlayer.formattedDuration)
                         .font(.system(size: 14, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(AppColors.textSecondary)
                 }
                 .padding(.horizontal)
                 
@@ -771,7 +776,7 @@ struct AudioReviewSheet: View {
                     } label: {
                         Image(systemName: "gobackward.15")
                             .font(.system(size: 24))
-                            .foregroundColor(.white)
+                            .foregroundColor(AppColors.textPrimary)
                     }
                     
                     Button {
@@ -787,7 +792,7 @@ struct AudioReviewSheet: View {
                     } label: {
                         Image(systemName: "goforward.15")
                             .font(.system(size: 24))
-                            .foregroundColor(.white)
+                            .foregroundColor(AppColors.textPrimary)
                     }
                 }
                 
@@ -795,11 +800,21 @@ struct AudioReviewSheet: View {
             }
             .padding(.top, 40)
             .background(
-                LinearGradient(
-                    colors: [Color(hex: "1a1a2e"), Color(hex: "16213e")],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+                Group {
+                    if colorScheme == .dark {
+                        LinearGradient(
+                            colors: [Color(hex: "1a1a2e"), Color(hex: "16213e")],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    } else {
+                        LinearGradient(
+                            colors: [Color(hex: "F0ECFF"), Color(hex: "E8E4F8")],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    }
+                }
                 .ignoresSafeArea()
             )
             .navigationTitle("Audio Recording")

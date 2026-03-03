@@ -209,7 +209,7 @@ struct TranscriptGenerationView: View {
                 Divider().background(Color.white.opacity(0.1))
                 optionRow(icon: "sparkles", title: "System Enhancement", subtitle: "Punctuation & formatting", isEnabled: true)
                 Divider().background(Color.white.opacity(0.1))
-                optionRow(icon: "person.2", title: "Speaker Detection", subtitle: "Coming soon", isEnabled: false)
+                optionRow(icon: "person.2.wave.2", title: "Speaker Diarization", subtitle: "Pyannote + Whisper", isEnabled: true)
             }
             .background(Color.white.opacity(0.05))
             .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -424,7 +424,7 @@ struct TranscriptGenerationView: View {
     
     private var stageSteps: some View {
         HStack(spacing: 4) {
-            ForEach(Array(TranscriptGenerationStage.allCases.prefix(4).enumerated()), id: \.offset) { index, stage in
+            ForEach(Array(TranscriptGenerationStage.allCases.prefix(5).enumerated()), id: \.offset) { index, stage in
                 HStack(spacing: 4) {
                     // Stage dot
                     ZStack {
@@ -445,7 +445,7 @@ struct TranscriptGenerationView: View {
                     }
                     
                     // Connector line
-                    if index < 3 {
+                    if index < 4 {
                         Rectangle()
                             .fill(stageCompleted(stage) ? AppColors.success : Color.white.opacity(0.2))
                             .frame(height: 2)
@@ -493,10 +493,13 @@ struct TranscriptGenerationView: View {
             }
             
             // Stats
-            HStack(spacing: 24) {
+            HStack(spacing: 16) {
                 statBadge(icon: "text.word.spacing", value: "\(transcript.wordCount)", label: "Words")
                 statBadge(icon: "clock", value: formatDuration(transcript.duration), label: "Duration")
-                statBadge(icon: "text.alignleft", value: "\(transcript.segments.count)", label: "Segments")
+                if transcript.isDiarized {
+                    statBadge(icon: "person.2.wave.2", value: "\(transcript.speakerCount)", label: "Speakers")
+                }
+                statBadge(icon: "text.alignleft", value: "\(transcript.speakerBlocks.isEmpty ? transcript.segments.count : transcript.speakerBlocks.count)", label: "Segments")
             }
             
             // Preview
@@ -649,6 +652,7 @@ struct TranscriptGenerationView: View {
     private var stageColor: Color {
         switch generationService.progress.stage {
         case .preparing: return .blue
+        case .diarizing: return .orange
         case .transcribing: return AppColors.primary
         case .processingAI: return .purple
         case .finalizing: return AppColors.success
@@ -719,6 +723,11 @@ struct FullTranscriptSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var searchText = ""
     
+    // Speaker colors for visual distinction
+    private let speakerColors: [Color] = [
+        .blue, .orange, .green, .purple, .pink, .cyan, .yellow, .mint, .indigo, .teal
+    ]
+    
     var body: some View {
         NavigationStack {
             ZStack {
@@ -736,24 +745,36 @@ struct FullTranscriptSheet: View {
                 
                 VStack(spacing: 0) {
                     // Stats bar
-                    HStack(spacing: 20) {
+                    HStack(spacing: 16) {
                         statItem(icon: "text.word.spacing", value: "\(transcript.wordCount)", label: "Words")
                         statItem(icon: "clock", value: formatDuration(transcript.duration), label: "Duration")
-                        statItem(icon: "text.quote", value: "\(paragraphCount)", label: "Paragraphs")
+                        if transcript.isDiarized {
+                            statItem(icon: "person.2.wave.2", value: "\(transcript.speakerCount)", label: "Speakers")
+                        }
+                        statItem(icon: "text.quote", value: "\(transcript.isDiarized ? transcript.speakerBlocks.count : paragraphCount)", label: transcript.isDiarized ? "Turns" : "Paragraphs")
                     }
                     .padding()
                     .background(Color.white.opacity(0.05))
                     
-                    // Full transcript with proper paragraph formatting
+                    // Full transcript content
                     ScrollView {
                         VStack(alignment: .leading, spacing: 0) {
-                            ForEach(Array(paragraphs.enumerated()), id: \.offset) { index, paragraph in
-                                Text(paragraph)
-                                    .font(.system(size: 16))
-                                    .foregroundColor(.white.opacity(0.9))
-                                    .lineSpacing(6)
-                                    .textSelection(.enabled)
-                                    .padding(.bottom, index < paragraphs.count - 1 ? 20 : 0)
+                            if transcript.isDiarized && !transcript.speakerBlocks.isEmpty {
+                                // Speaker-attributed diarized view
+                                ForEach(Array(transcript.speakerBlocks.enumerated()), id: \.offset) { index, block in
+                                    speakerBlockView(block: block, index: index)
+                                        .padding(.bottom, index < transcript.speakerBlocks.count - 1 ? 16 : 0)
+                                }
+                            } else {
+                                // Fallback paragraph view
+                                ForEach(Array(paragraphs.enumerated()), id: \.offset) { index, paragraph in
+                                    Text(paragraph)
+                                        .font(.system(size: 16))
+                                        .foregroundColor(.white.opacity(0.9))
+                                        .lineSpacing(6)
+                                        .textSelection(.enabled)
+                                        .padding(.bottom, index < paragraphs.count - 1 ? 20 : 0)
+                                }
                             }
                         }
                         .padding()
@@ -781,6 +802,52 @@ struct FullTranscriptSheet: View {
             }
             .searchable(text: $searchText, prompt: "Search transcript")
         }
+    }
+    
+    // MARK: - Speaker Block View
+    private func speakerBlockView(block: GeneratedTranscript.SpeakerBlock, index: Int) -> some View {
+        let speakerIndex = transcript.speakers.firstIndex(of: block.speaker) ?? 0
+        let color = speakerColors[speakerIndex % speakerColors.count]
+        
+        return VStack(alignment: .leading, spacing: 6) {
+            // Speaker header with timestamp
+            HStack(spacing: 8) {
+                // Speaker color dot
+                Circle()
+                    .fill(color)
+                    .frame(width: 10, height: 10)
+                
+                Text(block.speaker)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(color)
+                
+                Text(block.formattedTimeRange)
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.4))
+                
+                Spacer()
+                
+                if block.confidence > 0 {
+                    Text("\(Int(block.confidence * 100))%")
+                        .font(.system(size: 10))
+                        .foregroundColor(.white.opacity(0.3))
+                }
+            }
+            
+            // Content
+            Text(block.content)
+                .font(.system(size: 15))
+                .foregroundColor(.white.opacity(0.9))
+                .lineSpacing(5)
+                .textSelection(.enabled)
+        }
+        .padding(12)
+        .background(color.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(color.opacity(0.15), lineWidth: 1)
+        )
     }
     
     private var filteredText: String {

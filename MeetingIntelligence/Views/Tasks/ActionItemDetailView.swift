@@ -16,6 +16,7 @@ struct ActionItemDetailView: View {
     
     let task: TaskItem
     let onUpdate: (() -> Void)?
+    let isReadOnly: Bool
     
     @State private var isEditing = false
     @State private var editTitle: String = ""
@@ -60,9 +61,10 @@ struct ActionItemDetailView: View {
         displayedTask ?? viewModel.selectedTask ?? task
     }
     
-    init(task: TaskItem, viewModel: TaskViewModel, onUpdate: (() -> Void)? = nil) {
+    init(task: TaskItem, viewModel: TaskViewModel, isReadOnly: Bool = false, onUpdate: (() -> Void)? = nil) {
         self.task = task
         self.viewModel = viewModel
+        self.isReadOnly = isReadOnly
         self.onUpdate = onUpdate
     }
     
@@ -121,10 +123,12 @@ struct ActionItemDetailView: View {
                         .disabled(isSaving)
                     } else {
                         Menu {
-                            Button {
-                                startEditing()
-                            } label: {
-                                Label("Edit", systemImage: "pencil")
+                            if !isReadOnly {
+                                Button {
+                                    startEditing()
+                                } label: {
+                                    Label("Edit", systemImage: "pencil")
+                                }
                             }
                             
                             Button {
@@ -215,32 +219,14 @@ struct ActionItemDetailView: View {
                 }
                 
                 // Priority Badge
-                Menu {
-                    ForEach(TaskPriority.allCases, id: \.self) { priority in
-                        Button {
-                            Task {
-                                _ = await viewModel.updateTask(taskId: taskItem.id, priority: priority)
-                                onUpdate?()
-                            }
-                        } label: {
-                            HStack {
-                                Image(systemName: priority.icon)
-                                Text(priority.displayName)
-                                if taskItem.priority == priority {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                } label: {
+                if isReadOnly {
+                    // Read-only: show pill without dropdown
                     HStack(spacing: 6) {
                         Image(systemName: taskItem.priority.icon)
                             .font(.system(size: 12))
                         Text(taskItem.priority.displayName)
                             .font(.system(size: 14, weight: .medium))
                             .lineLimit(1)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 10))
                     }
                     .foregroundColor(priorityColor(for: taskItem))
                     .padding(.horizontal, 12)
@@ -248,6 +234,41 @@ struct ActionItemDetailView: View {
                     .background(priorityColor(for: taskItem).opacity(0.12))
                     .clipShape(Capsule())
                     .fixedSize(horizontal: true, vertical: false)
+                } else {
+                    Menu {
+                        ForEach(TaskPriority.allCases, id: \.self) { priority in
+                            Button {
+                                Task {
+                                    _ = await viewModel.updateTask(taskId: taskItem.id, priority: priority)
+                                    onUpdate?()
+                                }
+                            } label: {
+                                HStack {
+                                    Image(systemName: priority.icon)
+                                    Text(priority.displayName)
+                                    if taskItem.priority == priority {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: taskItem.priority.icon)
+                                .font(.system(size: 12))
+                            Text(taskItem.priority.displayName)
+                                .font(.system(size: 14, weight: .medium))
+                                .lineLimit(1)
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 10))
+                        }
+                        .foregroundColor(priorityColor(for: taskItem))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(priorityColor(for: taskItem).opacity(0.12))
+                        .clipShape(Capsule())
+                        .fixedSize(horizontal: true, vertical: false)
+                    }
                 }
                 
                 Spacer()
@@ -422,24 +443,26 @@ struct ActionItemDetailView: View {
                 
                 Spacer()
                 
-                Button {
-                    // Initialize selected with current assignees
-                    selectedAssigneeIds = Set(currentTask.assignees?.map { $0.userId } ?? [])
-                    // Fetch users if needed
-                    if viewModel.organizationUsers.isEmpty {
-                        Task {
-                            await viewModel.fetchOrganizationUsers()
+                if !isReadOnly {
+                    Button {
+                        // Initialize selected with current assignees
+                        selectedAssigneeIds = Set(currentTask.assignees?.map { $0.userId } ?? [])
+                        // Fetch users if needed
+                        if viewModel.organizationUsers.isEmpty {
+                            Task {
+                                await viewModel.fetchOrganizationUsers()
+                            }
                         }
+                        showAssigneesPicker = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text("Add")
+                                .font(.system(size: 14, weight: .medium))
+                        }
+                        .foregroundColor(AppColors.primary)
                     }
-                    showAssigneesPicker = true
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text("Add")
-                            .font(.system(size: 14, weight: .medium))
-                    }
-                    .foregroundColor(AppColors.primary)
                 }
             }
             
@@ -486,20 +509,22 @@ struct ActionItemDetailView: View {
                             
                             Spacer()
                             
-                            // Remove button
-                            Button {
-                                Task {
-                                    isUpdatingAssignees = true
-                                    _ = await viewModel.removeAssignee(taskId: currentTask.id, userId: assignee.userId)
-                                    onUpdate?()
-                                    isUpdatingAssignees = false
+                            // Remove button (hidden for read-only/assigned items)
+                            if !isReadOnly {
+                                Button {
+                                    Task {
+                                        isUpdatingAssignees = true
+                                        _ = await viewModel.removeAssignee(taskId: currentTask.id, userId: assignee.userId)
+                                        onUpdate?()
+                                        isUpdatingAssignees = false
+                                    }
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 20))
+                                        .foregroundColor(AppColors.textTertiary)
                                 }
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 20))
-                                    .foregroundColor(AppColors.textTertiary)
+                                .disabled(isUpdatingAssignees)
                             }
-                            .disabled(isUpdatingAssignees)
                         }
                         .padding(12)
                         .background(AppColors.surfaceSecondary)

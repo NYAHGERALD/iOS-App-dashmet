@@ -9,6 +9,7 @@
 import SwiftUI
 import AVFoundation
 import Combine
+import FirebaseAuth
 
 struct AISummaryView: View {
     let meeting: Meeting
@@ -16,6 +17,7 @@ struct AISummaryView: View {
     let onSummarySaved: (() -> Void)?
     
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @StateObject private var summaryService = MeetingSummaryService.shared
     @StateObject private var audioPlayer = SummaryAudioPlayer()
     
@@ -85,7 +87,7 @@ struct AISummaryView: View {
                         audioPlayer.stop()
                         dismiss()
                     }
-                    .foregroundColor(.white)
+                    .foregroundColor(AppColors.textPrimary)
                 }
                 
                 if generationPhase == .ready {
@@ -112,7 +114,7 @@ struct AISummaryView: View {
                             }
                         } label: {
                             Image(systemName: "ellipsis.circle")
-                                .foregroundColor(.white)
+                                .foregroundColor(AppColors.textPrimary)
                         }
                     }
                 }
@@ -123,21 +125,147 @@ struct AISummaryView: View {
             .onDisappear {
                 audioPlayer.stop()
             }
+            .task {
+                // Load existing saved summary if available
+                await loadExistingSummary()
+            }
+        }
+    }
+    
+    // MARK: - Load Existing Summary
+    
+    private func loadExistingSummary() async {
+        // Skip if already loaded (e.g. just generated)
+        guard generationPhase == .idle else { return }
+        
+        // Try local cache first
+        if let data = UserDefaults.standard.data(forKey: "ai_summary_\(meeting.id)"),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let narrative = json["narrative"] as? String, !narrative.isEmpty {
+            
+            localSummary = NarrativeSummary(
+                narrative: narrative,
+                briefSummary: json["briefSummary"] as? String ?? "",
+                objectives: json["objectives"] as? [String] ?? [],
+                keyDiscussions: json["keyDiscussions"] as? [String] ?? [],
+                takeaways: json["takeaways"] as? [String] ?? [],
+                tone: json["tone"] as? String ?? "",
+                generatedAt: json["generatedAt"] as? String ?? ""
+            )
+            
+            if let voiceId = json["audioVoice"] as? String,
+               let voice = TTSVoice(rawValue: voiceId) {
+                selectedVoice = voice
+            }
+            
+            // Load audio from saved URL
+            if let audioUrl = json["audioUrl"] as? String, !audioUrl.isEmpty {
+                await loadAudioFromURL(audioUrl)
+            } else {
+                // No saved audio — regenerate from narrative
+                await regenerateAudioForExisting(narrative: narrative)
+            }
+            
+            generationPhase = .ready
+            isSaved = true
+            return
+        }
+        
+        // Try fetching from backend
+        do {
+            if let summary = try await MeetingSummaryService.shared.fetchAISummary(meetingId: meeting.id) {
+                guard let narrative = summary.narrative, !narrative.isEmpty else { return }
+                
+                localSummary = NarrativeSummary(
+                    narrative: narrative,
+                    briefSummary: summary.briefSummary ?? "",
+                    objectives: summary.objectives ?? [],
+                    keyDiscussions: summary.keyDiscussions ?? [],
+                    takeaways: summary.takeaways ?? [],
+                    tone: summary.tone ?? "",
+                    generatedAt: summary.generatedAt ?? ""
+                )
+                
+                if let voiceId = summary.audioVoice,
+                   let voice = TTSVoice(rawValue: voiceId) {
+                    selectedVoice = voice
+                }
+                
+                // Load audio from saved URL
+                if let audioUrl = summary.audioUrl, !audioUrl.isEmpty {
+                    await loadAudioFromURL(audioUrl)
+                } else {
+                    // No saved audio — regenerate from narrative
+                    await regenerateAudioForExisting(narrative: narrative)
+                }
+                
+                generationPhase = .ready
+                isSaved = true
+            }
+        } catch {
+            print("⚠️ AISummaryView: Could not load saved summary: \(error.localizedDescription)")
+        }
+    }
+    
+    private func loadAudioFromURL(_ urlString: String) async {
+        guard let url = URL(string: urlString) else { return }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            await MainActor.run {
+                audioPlayer.loadFromData(data)
+            }
+            print("✅ AISummaryView: Loaded audio from saved URL")
+        } catch {
+            print("⚠️ AISummaryView: Failed to load audio from URL, regenerating: \(error.localizedDescription)")
+            // Fall back to regeneration
+            if let summary = localSummary {
+                await regenerateAudioForExisting(narrative: summary.narrative)
+            }
+        }
+    }
+    
+    private func regenerateAudioForExisting(narrative: String) async {
+        do {
+            let audioData = try await summaryService.generateAudio(
+                text: narrative,
+                voice: selectedVoice,
+                speed: 1.0
+            )
+            await MainActor.run {
+                audioPlayer.loadFromData(audioData)
+            }
+            print("✅ AISummaryView: Regenerated audio for saved summary")
+        } catch {
+            print("⚠️ AISummaryView: Failed to regenerate audio: \(error.localizedDescription)")
         }
     }
     
     // MARK: - Background
     
     private var backgroundGradient: some View {
-        LinearGradient(
-            colors: [
-                Color(hex: "0f0c29"),
-                Color(hex: "302b63"),
-                Color(hex: "24243e")
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
+        Group {
+            if colorScheme == .dark {
+                LinearGradient(
+                    colors: [
+                        Color(hex: "0f0c29"),
+                        Color(hex: "302b63"),
+                        Color(hex: "24243e")
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            } else {
+                LinearGradient(
+                    colors: [
+                        Color(hex: "F0ECFF"),
+                        Color(hex: "E8E4F8"),
+                        Color(hex: "F5F3FF")
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            }
+        }
         .ignoresSafeArea()
     }
     
@@ -166,11 +294,11 @@ struct AISummaryView: View {
             Text(meeting.title ?? "Meeting Summary")
                 .font(.title2)
                 .fontWeight(.bold)
-                .foregroundColor(.white)
+                .foregroundColor(AppColors.textPrimary)
             
             Text(meeting.createdAt.formatted(date: .abbreviated, time: .shortened))
                 .font(.subheadline)
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(AppColors.textSecondary)
         }
         .padding(.top, 20)
     }
@@ -187,12 +315,12 @@ struct AISummaryView: View {
                         .foregroundColor(.purple)
                     Text("System-Powered Summary")
                         .font(.headline)
-                        .foregroundColor(.white)
+                        .foregroundColor(AppColors.textPrimary)
                 }
                 
                 Text("Our System will analyze your meeting transcript and create a professional narrative summary. It will then speak the summary aloud using a realistic voice.")
                     .font(.subheadline)
-                    .foregroundColor(.white.opacity(0.8))
+                    .foregroundColor(AppColors.textSecondary)
                     .lineSpacing(4)
                 
                 // Features
@@ -205,14 +333,14 @@ struct AISummaryView: View {
                 .padding(.top, 8)
             }
             .padding(20)
-            .background(Color.white.opacity(0.08))
+            .background(AppColors.surfaceSecondary.opacity(0.8))
             .clipShape(RoundedRectangle(cornerRadius: 16))
             
             // Voice Selection
             VStack(alignment: .leading, spacing: 12) {
                 Text("Voice")
                     .font(.headline)
-                    .foregroundColor(.white)
+                    .foregroundColor(AppColors.textPrimary)
                 
                 Button {
                     showVoiceOptions = true
@@ -221,14 +349,14 @@ struct AISummaryView: View {
                         Image(systemName: selectedVoice.icon)
                             .foregroundColor(.purple)
                         Text(selectedVoice.displayName)
-                            .foregroundColor(.white)
+                            .foregroundColor(AppColors.textPrimary)
                         Spacer()
                         Image(systemName: "chevron.right")
                             .font(.caption)
-                            .foregroundColor(.white.opacity(0.5))
+                            .foregroundColor(AppColors.textTertiary)
                     }
                     .padding()
-                    .background(Color.white.opacity(0.08))
+                    .background(AppColors.surfaceSecondary.opacity(0.8))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
             }
@@ -266,7 +394,7 @@ struct AISummaryView: View {
                 .frame(width: 20)
             Text(text)
                 .font(.subheadline)
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(AppColors.textSecondary)
         }
     }
     
@@ -303,11 +431,11 @@ struct AISummaryView: View {
                 Text(phase)
                     .font(.title3)
                     .fontWeight(.semibold)
-                    .foregroundColor(.white)
+                    .foregroundColor(AppColors.textPrimary)
                 
                 Text(subtitle)
                     .font(.subheadline)
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(AppColors.textSecondary)
                     .multilineTextAlignment(.center)
             }
             
@@ -333,15 +461,15 @@ struct AISummaryView: View {
                 Image(systemName: "theatermasks")
                     .foregroundColor(.purple)
                 Text("Meeting Tone: ")
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(AppColors.textSecondary)
                 Text(summary.tone.capitalized)
                     .fontWeight(.medium)
-                    .foregroundColor(.white)
+                    .foregroundColor(AppColors.textPrimary)
             }
             .font(.subheadline)
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
-            .background(Color.white.opacity(0.08))
+            .background(AppColors.surfaceSecondary.opacity(0.8))
             .clipShape(Capsule())
             
             // Objectives
@@ -401,7 +529,7 @@ struct AISummaryView: View {
                         .fontWeight(.medium)
                 }
                 .font(.headline)
-                .foregroundColor(.white)
+                .foregroundColor(AppColors.textPrimary)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 16)
                 .background(Color.green.opacity(0.2))
@@ -425,7 +553,7 @@ struct AISummaryView: View {
                     .foregroundColor(.purple)
                 Text("Listen to Summary")
                     .font(.headline)
-                    .foregroundColor(.white)
+                    .foregroundColor(AppColors.textPrimary)
                 Spacer()
                 
                 // Voice indicator
@@ -435,10 +563,10 @@ struct AISummaryView: View {
                     Text(selectedVoice.rawValue.capitalized)
                         .font(.caption)
                 }
-                .foregroundColor(.white.opacity(0.6))
+                .foregroundColor(AppColors.textTertiary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(Color.white.opacity(0.1))
+                .background(AppColors.surfaceSecondary.opacity(0.8))
                 .clipShape(Capsule())
             }
             
@@ -458,11 +586,11 @@ struct AISummaryView: View {
                 HStack {
                     Text(audioPlayer.currentTimeString)
                         .font(.caption)
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(AppColors.textTertiary)
                     Spacer()
                     Text(audioPlayer.durationString)
                         .font(.caption)
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(AppColors.textTertiary)
                 }
             }
             
@@ -474,7 +602,7 @@ struct AISummaryView: View {
                 } label: {
                     Image(systemName: "gobackward.10")
                         .font(.title2)
-                        .foregroundColor(.white)
+                        .foregroundColor(AppColors.textPrimary)
                 }
                 
                 // Play/Pause
@@ -499,7 +627,7 @@ struct AISummaryView: View {
                 } label: {
                     Image(systemName: "goforward.10")
                         .font(.title2)
-                        .foregroundColor(.white)
+                        .foregroundColor(AppColors.textPrimary)
                 }
             }
             
@@ -512,17 +640,17 @@ struct AISummaryView: View {
                         Text("\(speed, specifier: speed == 1.0 ? "%.0f" : "%.2g")x")
                             .font(.caption)
                             .fontWeight(audioPlayer.playbackSpeed == Float(speed) ? .bold : .regular)
-                            .foregroundColor(audioPlayer.playbackSpeed == Float(speed) ? .white : .white.opacity(0.5))
+                            .foregroundColor(audioPlayer.playbackSpeed == Float(speed) ? .white : AppColors.textSecondary)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
-                            .background(audioPlayer.playbackSpeed == Float(speed) ? Color.purple : Color.white.opacity(0.1))
+                            .background(audioPlayer.playbackSpeed == Float(speed) ? Color.purple : AppColors.surfaceSecondary.opacity(0.8))
                             .clipShape(Capsule())
                     }
                 }
             }
         }
         .padding(20)
-        .background(Color.white.opacity(0.08))
+        .background(AppColors.surfaceSecondary.opacity(0.8))
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
     
@@ -535,17 +663,17 @@ struct AISummaryView: View {
                     .foregroundColor(.purple)
                 Text(title)
                     .font(.headline)
-                    .foregroundColor(.white)
+                    .foregroundColor(AppColors.textPrimary)
             }
             
             Text(content)
                 .font(.body)
-                .foregroundColor(.white.opacity(0.85))
+                .foregroundColor(AppColors.textSecondary)
                 .lineSpacing(4)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(20)
-        .background(Color.white.opacity(0.08))
+        .background(AppColors.surfaceSecondary.opacity(0.8))
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
     
@@ -558,7 +686,7 @@ struct AISummaryView: View {
                     .foregroundColor(color)
                 Text(title)
                     .font(.headline)
-                    .foregroundColor(.white)
+                    .foregroundColor(AppColors.textPrimary)
             }
             
             VStack(alignment: .leading, spacing: 10) {
@@ -574,7 +702,7 @@ struct AISummaryView: View {
                         
                         Text(item)
                             .font(.subheadline)
-                            .foregroundColor(.white.opacity(0.85))
+                            .foregroundColor(AppColors.textSecondary)
                             .lineSpacing(2)
                     }
                 }
@@ -582,7 +710,7 @@ struct AISummaryView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(20)
-        .background(Color.white.opacity(0.08))
+        .background(AppColors.surfaceSecondary.opacity(0.8))
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
     
@@ -595,7 +723,7 @@ struct AISummaryView: View {
                     .foregroundColor(.purple)
                 Text("Full Narrative")
                     .font(.headline)
-                    .foregroundColor(.white)
+                    .foregroundColor(AppColors.textPrimary)
                 
                 Spacer()
                 
@@ -604,18 +732,18 @@ struct AISummaryView: View {
                 } label: {
                     Image(systemName: "doc.on.doc")
                         .font(.caption)
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(AppColors.textTertiary)
                 }
             }
             
             Text(narrative)
                 .font(.body)
-                .foregroundColor(.white.opacity(0.85))
+                .foregroundColor(AppColors.textSecondary)
                 .lineSpacing(6)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(20)
-        .background(Color.white.opacity(0.08))
+        .background(AppColors.surfaceSecondary.opacity(0.8))
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
     
@@ -630,12 +758,12 @@ struct AISummaryView: View {
             Text("Generation Failed")
                 .font(.title3)
                 .fontWeight(.semibold)
-                .foregroundColor(.white)
+                .foregroundColor(AppColors.textPrimary)
             
             if let error = errorMessage {
                 Text(error)
                     .font(.subheadline)
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(AppColors.textSecondary)
                     .multilineTextAlignment(.center)
             }
             
@@ -914,6 +1042,42 @@ struct AISummaryView: View {
                     
                     // Notify parent that summary was saved
                     onSummarySaved?()
+                }
+                
+                // ─── Dashmet Audio Recording Policy ───────────────────────
+                // After AI summary is saved, delete the original meeting
+                // audio recording from Firebase Storage, the local file,
+                // and clear the URL from the backend database.
+                do {
+                    if let userId = FirebaseAuthService.shared.currentUser?.uid {
+                        try await FirebaseStorageService.shared.deleteMeetingRecording(
+                            meetingId: meeting.id,
+                            userId: userId
+                        )
+                    }
+                    try await APIService.shared.clearMeetingRecordingUrl(meetingId: meeting.id)
+                    
+                    // Also delete local recording file
+                    let fileManager = FileManager.default
+                    let documentsDirectory = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
+                    let recordingsDirectory = documentsDirectory.appendingPathComponent("Recordings")
+                    
+                    let legacyURL = recordingsDirectory.appendingPathComponent("\(meeting.id).m4a")
+                    if fileManager.fileExists(atPath: legacyURL.path) {
+                        try? fileManager.removeItem(at: legacyURL)
+                    }
+                    
+                    // Also check timestamped format
+                    if let files = try? fileManager.contentsOfDirectory(at: recordingsDirectory, includingPropertiesForKeys: nil) {
+                        let meetingPrefix = "meeting_\(meeting.id)_"
+                        for file in files where file.lastPathComponent.hasPrefix(meetingPrefix) && file.pathExtension == "m4a" {
+                            try? fileManager.removeItem(at: file)
+                        }
+                    }
+                    
+                    print("🗑️ Original recording deleted per Dashmet Audio Recording Policy")
+                } catch {
+                    print("⚠️ Failed to delete original recording: \(error.localizedDescription)")
                 }
                 
             } catch {

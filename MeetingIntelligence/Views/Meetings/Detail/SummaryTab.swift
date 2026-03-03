@@ -18,6 +18,10 @@ struct SpeakerStat: Codable, Hashable {
 
 struct SummaryTab: View {
     @ObservedObject var viewModel: MeetingDetailViewModel
+    @Binding var savedAISummary: SavedAISummary?
+    @Binding var showAISummaryAudioPlayer: Bool
+    @Binding var showAISummary: Bool
+    @Binding var rawTranscript: String
     @State private var expandedSections: Set<SummarySection> = Set(SummarySection.allCases)
     
     // Parsed speaker stats
@@ -27,48 +31,73 @@ struct SummaryTab: View {
         return (try? JSONDecoder().decode([SpeakerStat].self, from: data)) ?? []
     }
     
+    /// Check if the summary record has actual AI-generated content (not just a rawTranscript placeholder)
+    private var summaryHasRealContent: Bool {
+        guard let summary = viewModel.summary else { return false }
+        // Check for actual AI summary fields — not just the rawTranscript stored during transcript save
+        if let exec = summary.executiveSummary, !exec.isEmpty { return true }
+        if let overview = summary.overview, !overview.isEmpty { return true }
+        if !summary.allKeyPoints.isEmpty { return true }
+        if !summary.allDecisions.isEmpty { return true }
+        if !summary.allNextSteps.isEmpty { return true }
+        if let sentiment = summary.sentiment, !sentiment.isEmpty { return true }
+        if let score = summary.engagementScore, score > 0 { return true }
+        return false
+    }
+    
+    private var hasAnyContent: Bool {
+        (savedAISummary != nil && !(savedAISummary?.briefSummary.isEmpty ?? true)) || summaryHasRealContent
+    }
+    
     var body: some View {
-        if let summary = viewModel.summary {
+        if hasAnyContent {
             ScrollView {
                 VStack(spacing: AppSpacing.lg) {
-                    // Overview Card
-                    overviewCard(summary)
-                    
-                    // Engagement Score
-                    if let score = summary.engagementScore {
-                        engagementScoreCard(score)
+                    // AI-Generated Summary (System Summary with audio)
+                    if let aiSummary = savedAISummary, !aiSummary.briefSummary.isEmpty {
+                        aiSummaryCard(aiSummary)
                     }
                     
-                    // Sentiment Card
-                    if let sentiment = summary.sentiment {
-                        sentimentCard(sentiment)
-                    }
-                    
-                    // Key Points Section
-                    if !summary.allKeyPoints.isEmpty {
-                        collapsibleSection(.keyPoints) {
-                            keyPointsContent(summary.allKeyPoints)
+                    if let summary = viewModel.summary, summaryHasRealContent {
+                        // Overview Card
+                        overviewCard(summary)
+                        
+                        // Engagement Score
+                        if let score = summary.engagementScore {
+                            engagementScoreCard(score)
                         }
-                    }
-                    
-                    // Decisions Section
-                    if !summary.allDecisions.isEmpty {
-                        collapsibleSection(.decisions) {
-                            decisionsContent(summary.allDecisions)
+                        
+                        // Sentiment Card
+                        if let sentiment = summary.sentiment {
+                            sentimentCard(sentiment)
                         }
-                    }
-                    
-                    // Next Steps Section (renamed from Topics)
-                    if !summary.allNextSteps.isEmpty {
-                        collapsibleSection(.topics) {
-                            topicsContent(summary.allNextSteps)
+                        
+                        // Key Points Section
+                        if !summary.allKeyPoints.isEmpty {
+                            collapsibleSection(.keyPoints) {
+                                keyPointsContent(summary.allKeyPoints)
+                            }
                         }
-                    }
-                    
-                    // Speaker Stats
-                    if !parsedSpeakerStats.isEmpty {
-                        collapsibleSection(.speakerStats) {
-                            speakerStatsContent(parsedSpeakerStats)
+                        
+                        // Decisions Section
+                        if !summary.allDecisions.isEmpty {
+                            collapsibleSection(.decisions) {
+                                decisionsContent(summary.allDecisions)
+                            }
+                        }
+                        
+                        // Next Steps Section
+                        if !summary.allNextSteps.isEmpty {
+                            collapsibleSection(.topics) {
+                                topicsContent(summary.allNextSteps)
+                            }
+                        }
+                        
+                        // Speaker Stats
+                        if !parsedSpeakerStats.isEmpty {
+                            collapsibleSection(.speakerStats) {
+                                speakerStatsContent(parsedSpeakerStats)
+                            }
                         }
                     }
                 }
@@ -83,6 +112,177 @@ struct SummaryTab: View {
         }
     }
     
+    // MARK: - AI Summary Card (System Summary with Audio)
+    private func aiSummaryCard(_ summary: SavedAISummary) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack {
+                Image(systemName: "sparkles")
+                    .foregroundColor(AppColors.primary)
+                Text("System Summary")
+                    .font(AppTypography.headline)
+                
+                Spacer()
+                
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 12))
+                    Text("Saved")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundColor(AppColors.success)
+            }
+            .padding(16)
+            
+            // Audio Player Button (if available)
+            if let audioUrl = summary.audioUrl, !audioUrl.isEmpty {
+                Button {
+                    showAISummaryAudioPlayer = true
+                } label: {
+                    HStack(spacing: 12) {
+                        ZStack {
+                            Circle()
+                                .fill(LinearGradient(
+                                    colors: [Color.purple, Color.blue],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ))
+                                .frame(width: 48, height: 48)
+                            
+                            Image(systemName: "headphones")
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundColor(.white)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Listen to System Summary")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundColor(AppColors.textPrimary)
+                            Text("Audio narration available")
+                                .font(.system(size: 14))
+                                .foregroundColor(AppColors.textSecondary)
+                        }
+                        
+                        Spacer()
+                        
+                        Image(systemName: "play.circle.fill")
+                            .font(.system(size: 32))
+                            .foregroundColor(.purple)
+                    }
+                    .padding(14)
+                    .background(Color.purple.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 14)
+            }
+            
+            // Brief Summary
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Summary")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(AppColors.textTertiary)
+                    .textCase(.uppercase)
+                
+                Text(summary.briefSummary)
+                    .font(.system(size: 16))
+                    .foregroundColor(AppColors.textPrimary)
+                    .lineSpacing(5)
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
+            
+            // Tone
+            if !summary.tone.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "face.smiling")
+                        .font(.system(size: 14))
+                    Text("Tone:")
+                        .font(.system(size: 14, weight: .medium))
+                    Text(summary.tone)
+                        .font(.system(size: 14))
+                }
+                .foregroundColor(AppColors.textSecondary)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 14)
+            }
+            
+            // Objectives
+            if !summary.objectives.isEmpty {
+                aiSummaryListSection(title: "Objectives", icon: "target", items: summary.objectives, color: .blue)
+            }
+            
+            // Key Discussions
+            if !summary.keyDiscussions.isEmpty {
+                aiSummaryListSection(title: "Key Discussions", icon: "bubble.left.and.bubble.right", items: summary.keyDiscussions, color: .orange)
+            }
+            
+            // Key Takeaways
+            if !summary.takeaways.isEmpty {
+                aiSummaryListSection(title: "Key Takeaways", icon: "lightbulb", items: summary.takeaways, color: .yellow)
+            }
+            
+            // Detailed Narrative
+            if !summary.narrative.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "doc.text")
+                            .font(.system(size: 14))
+                            .foregroundColor(.green)
+                        Text("Detailed Narrative")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(AppColors.textTertiary)
+                            .textCase(.uppercase)
+                    }
+                    
+                    Text(summary.narrative)
+                        .font(.system(size: 15))
+                        .foregroundColor(AppColors.textSecondary)
+                        .lineSpacing(5)
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
+            }
+        }
+        .background(AppColors.surface)
+        .clipShape(RoundedRectangle(cornerRadius: AppCornerRadius.large))
+    }
+    
+    // Helper for AI summary list sections
+    private func aiSummaryListSection(title: String, icon: String, items: [String], color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 14))
+                    .foregroundColor(color)
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(AppColors.textTertiary)
+                    .textCase(.uppercase)
+            }
+            
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(items, id: \.self) { item in
+                    HStack(alignment: .top, spacing: 10) {
+                        Circle()
+                            .fill(color.opacity(0.8))
+                            .frame(width: 7, height: 7)
+                            .padding(.top, 7)
+                        
+                        Text(item)
+                            .font(.system(size: 15))
+                            .foregroundColor(AppColors.textSecondary)
+                            .lineSpacing(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 16)
+    }
+    
     // MARK: - Empty State
     private var emptyState: some View {
         VStack(spacing: AppSpacing.lg) {
@@ -94,13 +294,13 @@ struct SummaryTab: View {
                 .font(AppTypography.title3)
                 .foregroundColor(AppColors.textPrimary)
             
-            Text("System-generated insights will appear here once the meeting has been processed.")
-                .font(AppTypography.body)
-                .foregroundColor(AppColors.textSecondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, AppSpacing.xl)
-            
             if viewModel.meeting.safeStatus == .processing {
+                Text("System-generated insights will appear here once the meeting has been processed.")
+                    .font(AppTypography.body)
+                    .foregroundColor(AppColors.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, AppSpacing.xl)
+                
                 HStack(spacing: AppSpacing.sm) {
                     ProgressView()
                         .progressViewStyle(CircularProgressViewStyle(tint: AppColors.primary))
@@ -109,6 +309,43 @@ struct SummaryTab: View {
                         .foregroundColor(AppColors.primary)
                 }
                 .padding(.top, AppSpacing.md)
+            } else if !rawTranscript.isEmpty {
+                Text("Generate an AI-powered summary from your meeting transcript.")
+                    .font(AppTypography.body)
+                    .foregroundColor(AppColors.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, AppSpacing.xl)
+                
+                Button {
+                    showAISummary = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 16, weight: .semibold))
+                        Text("Generate AI Summary")
+                            .font(.system(size: 16, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 14)
+                    .background(
+                        LinearGradient(
+                            colors: [Color.purple, Color.purple.opacity(0.7)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .shadow(color: Color.purple.opacity(0.3), radius: 8, y: 4)
+                }
+                .buttonStyle(.plain)
+                .padding(.top, AppSpacing.md)
+            } else {
+                Text("System-generated insights will appear here once the meeting has been processed.")
+                    .font(AppTypography.body)
+                    .foregroundColor(AppColors.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, AppSpacing.xl)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -448,7 +448,7 @@ struct ActionGenerationView: View {
             HStack {
                 labeledText("Date:", doc.documentDate)
                 Spacer()
-                labeledText("Employees:", doc.employeeNames.joined(separator: ", "))
+                labeledText("Employee:", doc.employeeNames.joined(separator: ", "))
             }
             .padding()
             .background(innerCardBackground)
@@ -539,7 +539,7 @@ struct ActionGenerationView: View {
             
             // Employees
             HStack {
-                Text("Employees:")
+                Text("Employee:")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(textSecondary)
                 Text(doc.employeeNames.joined(separator: ", "))

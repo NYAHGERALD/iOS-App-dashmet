@@ -86,14 +86,18 @@ class PolicyMatchingService {
         
         // Build policy sections
         let policySectionsData: [[String: Any]] = policySections.map { section in
-            [
+            var dict: [String: Any] = [
                 "id": section.id.uuidString,
                 "sectionNumber": section.sectionNumber,
                 "title": section.title,
                 "content": section.content,
-                "type": section.type.rawValue,
-                "keywords": section.keywords
+                "type": section.type.rawValue
             ]
+            if let v = section.firstProgression { dict["firstProgression"] = v }
+            if let v = section.secondProgression { dict["secondProgression"] = v }
+            if let v = section.thirdProgression { dict["thirdProgression"] = v }
+            if let v = section.fourthProgression { dict["fourthProgression"] = v }
+            return dict
         }
         
         // Build full request body

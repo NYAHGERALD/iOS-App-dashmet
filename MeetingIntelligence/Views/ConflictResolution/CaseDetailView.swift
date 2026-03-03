@@ -83,15 +83,28 @@ struct CaseDetailView: View {
     
     // Phase 7: Decision Support State
     @State private var selectedRecommendation: RecommendationOption? = nil
+    // Per-employee selected recommendations: [employeeName: RecommendationOption]
+    @State private var selectedRecommendations: [String: RecommendationOption] = [:]
     
-    // Phase 8: Action Generation State
-    @State private var showActionGeneration = false
-    @State private var generatedDocument: GeneratedDocumentResult? = nil
+    // Phase 8: Action Generation State — per-employee
+    @State private var actionGenerationEmployee: String? = nil  // Which employee doc is being generated
+    @State private var generatedDocuments: [String: GeneratedDocumentResult] = [:]  // per-employee
     @State private var showRegenerateWarning = false
+    @State private var regenerateEmployee: String? = nil  // Which employee's regen warning
     @State private var continueToReviewPulse = false
     
-    // Phase 9: Supervisor Review State
-    @State private var showSupervisorReview = false
+    // Phase 9: Supervisor Review State — per-employee
+    @State private var reviewingEmployee: String? = nil  // Which employee is being reviewed
+    @State private var approvedEmployees: Set<String> = []  // Employee names with approved documents
+    
+    // Delete Document State
+    @State private var deleteTargetEmployee: String? = nil
+    @State private var showDocumentDeleteConfirmation = false
+    @State private var showDocumentDeleteSuccess = false
+    
+    // Reopen Case State
+    @State private var isReopening = false
+    @State private var reopenError: String? = nil
     
     // Phase 10: Finalization State
     @State private var showFinalization = false
@@ -127,31 +140,36 @@ struct CaseDetailView: View {
                 AppColors.background.ignoresSafeArea()
                 
                 if let caseItem = conflictCase {
-                    ScrollViewReader { scrollProxy in
-                        ScrollView(.vertical, showsIndicators: true) {
-                            LazyVStack(spacing: 20) {
-                                // Case Header
-                                caseHeaderSection(caseItem)
-                                
-                                // Status Progress
-                                statusProgressSection(caseItem)
-                                
-                                // Tab Selector
-                                tabSelector
-                                
-                                // Tab Content
-                                tabContent(caseItem)
-                                    .id("analysisContent")
+                    if caseItem.status == .closed || caseItem.isLocked {
+                        // CLOSED CASE OVERLAY — block access until re-opened
+                        closedCaseOverlay(caseItem)
+                    } else {
+                        ScrollViewReader { scrollProxy in
+                            ScrollView(.vertical, showsIndicators: true) {
+                                LazyVStack(spacing: 20) {
+                                    // Case Header
+                                    caseHeaderSection(caseItem)
+                                    
+                                    // Status Progress
+                                    statusProgressSection(caseItem)
+                                    
+                                    // Tab Selector
+                                    tabSelector
+                                    
+                                    // Tab Content
+                                    tabContent(caseItem)
+                                        .id("analysisContent")
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 16)
                             }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 16)
-                        }
-                        .scrollDismissesKeyboard(.interactively)
-                        .onChange(of: isDownstreamAnalyzing) { newValue in
-                            if newValue {
-                                // Auto-scroll to analysis content when downstream analysis starts
-                                withAnimation(.easeInOut(duration: 0.5)) {
-                                    scrollProxy.scrollTo("analysisContent", anchor: .top)
+                            .scrollDismissesKeyboard(.interactively)
+                            .onChange(of: isDownstreamAnalyzing) { newValue in
+                                if newValue {
+                                    // Auto-scroll to analysis content when downstream analysis starts
+                                    withAnimation(.easeInOut(duration: 0.5)) {
+                                        scrollProxy.scrollTo("analysisContent", anchor: .top)
+                                    }
                                 }
                             }
                         }
@@ -316,6 +334,12 @@ struct CaseDetailView: View {
                 if let caseItem = conflictCase {
                     restoreGeneratedDocument(from: caseItem)
                 }
+                // Refresh case from API to ensure documents and data are up-to-date
+                if let caseItem = conflictCase, let backendId = caseItem.backendId {
+                    Task {
+                        await manager.refreshCase(backendId: backendId)
+                    }
+                }
             }
         }
     }
@@ -365,67 +389,137 @@ struct CaseDetailView: View {
         
         // Restore full generated document result for complete UI display
         if let fullResult = caseItem.fullGeneratedDocumentResult {
-            generatedDocument = fullResult
+            // Try to restore per-employee documents from the saved data
+            // For backward compat, store under the first target employee name
+            if let empName = caseItem.involvedEmployees.first(where: { caseItem.selectedTargetEmployeeIds.contains($0.id) })?.name {
+                generatedDocuments[empName] = fullResult
+            } else if let firstComplainant = caseItem.involvedEmployees.first(where: { $0.isComplainant })?.name {
+                generatedDocuments[firstComplainant] = fullResult
+            }
+        }
+        // Restore per-employee documents if available
+        if let empDocs = caseItem.employeeGeneratedDocuments {
+            for (empName, doc) in empDocs {
+                generatedDocuments[empName] = doc
+            }
+        }
+        
+        // Restore approved employee names
+        if !caseItem.approvedEmployeeNames.isEmpty {
+            approvedEmployees = Set(caseItem.approvedEmployeeNames)
+        }
+        
+        // Restore per-employee selectedRecommendations from employeeGeneratedDocuments
+        // Each generated doc has an actionType that maps to a RecommendationType
+        if let empDocs = caseItem.employeeGeneratedDocuments,
+           let recResult = caseItem.recommendationResult {
+            var restoredRecs: [String: RecommendationOption] = [:]
+            for (empName, doc) in empDocs {
+                let docActionType = doc.actionType.rawValue.lowercased()
+                // Find matching recommendation by type
+                if let matchingRec = recResult.recommendations.first(where: { rec in
+                    let recType = rec.type.rawValue.lowercased()
+                    return recType == docActionType
+                }) {
+                    restoredRecs[empName] = matchingRec
+                } else if let firstRec = recResult.recommendations.first {
+                    // Fallback: use first recommendation if no type match
+                    restoredRecs[empName] = firstRec
+                }
+            }
+            if !restoredRecs.isEmpty {
+                selectedRecommendations = restoredRecs
+            }
         }
     }
     
     // MARK: - Case Header Section
     private func caseHeaderSection(_ caseItem: ConflictCase) -> some View {
-        VStack(spacing: 16) {
-            // Case Type Icon
-            ZStack {
-                Circle()
-                    .fill(caseItem.type.color.opacity(0.15))
-                    .frame(width: 64, height: 64)
+        VStack(spacing: 0) {
+            // Row 1: Icon + Case Number/Type + Status Badge
+            HStack(alignment: .center, spacing: 12) {
+                // Type Icon Box
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(caseItem.type.color.opacity(0.15))
+                        .frame(width: 48, height: 48)
+                    
+                    Image(systemName: caseItem.type.icon)
+                        .font(.system(size: 22))
+                        .foregroundColor(caseItem.type.color)
+                }
                 
-                Image(systemName: caseItem.type.icon)
-                    .font(.system(size: 28))
-                    .foregroundColor(caseItem.type.color)
-            }
-            
-            // Case Number & Title
-            VStack(spacing: 6) {
-                Text(caseItem.caseNumber)
-                    .font(.system(size: 13, weight: .medium))
+                // Case Number + Type
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(caseItem.caseNumber)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(textPrimary)
+                        .lineLimit(1)
+                    
+                    Text(caseItem.type.displayName)
+                        .font(.system(size: 13))
+                        .foregroundColor(textSecondary)
+                }
+                
+                Spacer()
+                
+                // Status Badge
+                Text(caseItem.status.displayName)
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundColor(textSecondary)
                     .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
+                    .padding(.vertical, 5)
                     .background(cardBackground)
-                    .clipShape(Capsule())
-                
-                Text(caseItem.type.displayName)
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundColor(textPrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(cardBorder, lineWidth: 1)
+                    )
             }
+            .padding(.bottom, 14)
             
-            // Meta Info
-            HStack(spacing: 16) {
+            // Row 2: Detail Chips
+            HStack(spacing: 12) {
                 metaItem(icon: "calendar", value: caseItem.incidentDate.formatted(date: .abbreviated, time: .omitted))
                 metaItem(icon: "mappin", value: caseItem.location)
                 metaItem(icon: "building.2", value: caseItem.department)
             }
+            .padding(.bottom, 14)
             
-            // Status Badge
-            HStack(spacing: 8) {
-                Image(systemName: caseItem.status.icon)
-                    .font(.system(size: 12))
-                Text(caseItem.status.displayName)
-                    .font(.system(size: 13, weight: .semibold))
+            // Divider
+            Rectangle()
+                .fill(cardBorder)
+                .frame(height: 1)
+                .padding(.bottom, 14)
+            
+            // Row 3: Bottom Stats
+            HStack(spacing: 0) {
+                bottomStatItem(value: "\(caseItem.documents.count)", label: "Documents")
+                Spacer()
+                bottomStatItem(value: "\(caseItem.involvedEmployees.count)", label: "People")
+                Spacer()
+                bottomStatItem(value: "\(daysSinceCreation(caseItem))", label: "Days Open")
             }
-            .foregroundColor(caseItem.status.color)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(caseItem.status.color.opacity(0.15))
-            .clipShape(Capsule())
         }
+        .padding(16)
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 20)
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
             RoundedRectangle(cornerRadius: 16)
                 .stroke(cardBorder, lineWidth: 1)
         )
+    }
+    
+    private func bottomStatItem(value: String, label: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.system(size: 18, weight: .bold))
+                .foregroundColor(textPrimary)
+            Text(label)
+                .font(.system(size: 11))
+                .foregroundColor(textTertiary)
+        }
     }
     
     private func metaItem(icon: String, value: String) -> some View {
@@ -441,39 +535,83 @@ struct CaseDetailView: View {
     
     // MARK: - Status Progress Section
     private func statusProgressSection(_ caseItem: ConflictCase) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("CASE PROGRESS")
-                .font(.system(size: 12, weight: .semibold))
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Case Progress")
+                .font(.system(size: 12, weight: .bold))
                 .foregroundColor(textTertiary)
+                .kerning(0.5)
             
-            HStack(spacing: 2) {
-                ForEach(CaseStatus.allCases, id: \.self) { status in
-                    if status != CaseStatus.allCases.first {
-                        Rectangle()
-                            .fill(statusLineColor(for: status, current: caseItem.status))
-                            .frame(height: 2)
-                            .frame(maxWidth: .infinity)
-                    }
+            HStack(spacing: 0) {
+                let steps: [(CaseStatus, String)] = [
+                    (.draft, "Draft"),
+                    (.inProgress, "Progress"),
+                    (.pendingReview, "Review"),
+                    (.awaitingAction, "Action"),
+                    (.closed, "Closed")
+                ]
+                let currentIndex = steps.firstIndex(where: { $0.0 == caseItem.status }) ?? 0
+                let isEscalated = caseItem.status == .escalated
+                
+                ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                    let isCompleted = index < currentIndex
+                    let isCurrent = index == currentIndex
+                    let stepColor: Color = {
+                        if isEscalated && isCurrent { return AppColors.error }
+                        if isCompleted { return AppColors.success }
+                        if isCurrent { return AppColors.primary }
+                        return textTertiary.opacity(0.3)
+                    }()
                     
                     VStack(spacing: 4) {
-                        Circle()
-                            .fill(statusDotColor(for: status, current: caseItem.status))
-                            .frame(width: 10, height: 10)
+                        ZStack {
+                            Circle()
+                                .fill(isCompleted || isCurrent ? stepColor : stepColor)
+                                .frame(width: isCurrent ? 28 : 24, height: isCurrent ? 28 : 24)
+                            
+                            if isCompleted {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundColor(.white)
+                            } else if isCurrent {
+                                Circle()
+                                    .fill(Color.white)
+                                    .frame(width: 8, height: 8)
+                            }
+                        }
                         
-                        Text(shortStatusName(status))
-                            .font(.system(size: 8))
-                            .foregroundColor(status == caseItem.status ? status.color : textTertiary)
+                        Text(step.1)
+                            .font(.system(size: 10, weight: isCurrent ? .semibold : .regular))
+                            .foregroundColor(isCompleted || isCurrent ? stepColor : textTertiary)
                             .lineLimit(1)
-                            .minimumScaleFactor(0.7)
                     }
-                    .frame(minWidth: 0)
+                    .frame(maxWidth: .infinity)
                 }
+            }
+            
+            // Escalated warning
+            if caseItem.status == .escalated {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(AppColors.error)
+                    Text("Case has been escalated to HR")
+                        .font(.system(size: 13))
+                        .foregroundColor(AppColors.error)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(AppColors.error.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
             }
         }
         .padding(16)
         .frame(maxWidth: .infinity)
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(cardBorder, lineWidth: 1)
+        )
     }
     
     private func shortStatusName(_ status: CaseStatus) -> String {
@@ -675,12 +813,75 @@ struct CaseDetailView: View {
                 aiRecommendationCard(recommendation)
             }
             
-            // Quick Stats
-            quickStatsSection(caseItem)
+            // Case Information
+            caseInformationSection(caseItem)
             
             // Workflow Progress Card
             workflowProgressCard(caseItem)
         }
+    }
+    
+    // MARK: - Case Information Section
+    private func caseInformationSection(_ caseItem: ConflictCase) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("CASE INFORMATION")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(textTertiary)
+                .kerning(0.5)
+            
+            VStack(spacing: 0) {
+                caseInfoRow(label: "Created", value: caseItem.createdAt.formatted(date: .abbreviated, time: .shortened))
+                
+                if let creatorName = caseItem.creatorName, !creatorName.isEmpty {
+                    Divider().padding(.vertical, 2)
+                    caseInfoRow(label: "Created By", value: creatorName)
+                }
+                
+                if let shift = caseItem.shift, !shift.isEmpty {
+                    Divider().padding(.vertical, 2)
+                    caseInfoRow(label: "Shift", value: shift)
+                }
+                
+                if let facilityName = caseItem.facilityName, !facilityName.isEmpty {
+                    Divider().padding(.vertical, 2)
+                    caseInfoRow(label: "Facility", value: facilityName)
+                }
+                
+                Divider().padding(.vertical, 2)
+                caseInfoRow(label: "Last Updated", value: caseItem.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                
+                if let closedAt = caseItem.closedAt {
+                    Divider().padding(.vertical, 2)
+                    caseInfoRow(label: "Closed", value: closedAt.formatted(date: .abbreviated, time: .shortened))
+                }
+                
+                if let closureReason = caseItem.closureReason, !closureReason.isEmpty {
+                    Divider().padding(.vertical, 2)
+                    caseInfoRow(label: "Closure Reason", value: closureReason)
+                }
+            }
+            .padding(16)
+            .background(cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(cardBorder, lineWidth: 1)
+            )
+        }
+    }
+    
+    private func caseInfoRow(label: String, value: String) -> some View {
+        HStack {
+            Text(label)
+                .font(.system(size: 13))
+                .foregroundColor(textSecondary)
+            Spacer()
+            Text(value)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(textPrimary)
+                .multilineTextAlignment(.trailing)
+        }
+        .padding(.vertical, 6)
     }
     
     // MARK: - Workflow Progress Card
@@ -735,15 +936,14 @@ struct CaseDetailView: View {
                 
             case .awaitingAction:
                 // Document generated, need review or finalization
-                if let _ = generatedDocument {
+                if !generatedDocuments.isEmpty {
+                    let unreviewedEmployee = generatedDocuments.first(where: { _ in true })?.key
                     nextStepRow(
                         icon: "doc.text.magnifyingglass",
-                        title: "Review & Approve Document",
-                        description: "Complete supervisor review before finalization",
+                        title: "Review & Approve Documents",
+                        description: "Complete supervisor review for each employee",
                         action: {
-                            if let doc = generatedDocument, let rec = selectedRecommendation, let comparison = caseItem.comparisonResult {
-                                showSupervisorReview = true
-                            }
+                            selectedTab = 2
                         }
                     )
                 } else {
@@ -1092,12 +1292,16 @@ struct CaseDetailView: View {
                         },
                         onSelectRecommendation: { recommendation in
                             selectedRecommendation = recommendation
+                            // Store per-employee selection
+                            // Determine which employee this recommendation is for
+                            let empName = caseItem.involvedEmployees.first(where: { recommendation.targetEmployeeIds.contains($0.id) })?.name ?? recommendation.title.components(separatedBy: " for ").last?.trimmingCharacters(in: .whitespaces) ?? "Employee"
+                            selectedRecommendations[empName] = recommendation
                             // Update status to awaiting action when recommendation is selected
                             Task {
                                 await manager.updateCaseStatus(caseItem.id, to: .awaitingAction)
                             }
-                            // Move to action generation phase
-                            showActionGeneration = true
+                            // Move to action generation phase for this employee
+                            actionGenerationEmployee = empName
                         },
                         onSkip: {
                             selectedTab = 3 // Timeline tab
@@ -1105,9 +1309,35 @@ struct CaseDetailView: View {
                     )
                     .id("decision-\(reanalysisVersion)")
                     
-                    // Phase 8: Action Generation (shown after recommendation selected)
-                    if let recommendation = selectedRecommendation {
-                        actionGenerationSection(caseItem: caseItem, comparison: comparison, recommendation: recommendation)
+                    // Phase 8: Action Generation — per-employee sections
+                    if !selectedRecommendations.isEmpty {
+                        ForEach(Array(selectedRecommendations.keys.sorted()), id: \.self) { empName in
+                            if let rec = selectedRecommendations[empName] {
+                                perEmployeeActionSection(
+                                    caseItem: caseItem,
+                                    comparison: comparison,
+                                    recommendation: rec,
+                                    employeeName: empName
+                                )
+                            }
+                        }
+                        
+                        // Phase 9.5: Continue to Finalization
+                        // Visible only when ALL involved employees have approved documents
+                        let allInvolvedNames = Set(caseItem.involvedEmployees.map { $0.name })
+                        if !allInvolvedNames.isEmpty &&
+                            allInvolvedNames.allSatisfy({ approvedEmployees.contains($0) }) {
+                            confirmApprovalButton(caseItem: caseItem)
+                        }
+                    } else if let recommendation = selectedRecommendation {
+                        // Backward compat: single recommendation
+                        let empName = caseItem.involvedEmployees.first(where: { recommendation.targetEmployeeIds.contains($0.id) })?.name ?? "Employee"
+                        perEmployeeActionSection(
+                            caseItem: caseItem,
+                            comparison: comparison,
+                            recommendation: recommendation,
+                            employeeName: empName
+                        )
                     }
                 } else {
                     pendingAnalysisView(caseItem)
@@ -1118,32 +1348,50 @@ struct CaseDetailView: View {
             .disabled(isDownstreamAnalyzing)
     }
     
-    // MARK: - Phase 8: Action Generation Section
-    private func actionGenerationSection(caseItem: ConflictCase, comparison: AIComparisonResult, recommendation: RecommendationOption) -> some View {
-        VStack(spacing: 16) {
-            // Header
+    // MARK: - Phase 8: Per-Employee Action Generation Section
+    private func perEmployeeActionSection(caseItem: ConflictCase, comparison: AIComparisonResult, recommendation: RecommendationOption, employeeName: String) -> some View {
+        let empDocument = generatedDocuments[employeeName]
+        let isApproved = approvedEmployees.contains(employeeName)
+        
+        return VStack(spacing: 16) {
+            // Header with employee name
             HStack(spacing: 12) {
                 ZStack {
                     Circle()
-                        .fill(recommendation.type.color.opacity(0.15))
+                        .fill(isApproved ? Color.green.opacity(0.15) : recommendation.type.color.opacity(0.15))
                         .frame(width: 48, height: 48)
                     
-                    Image(systemName: "doc.text.fill")
+                    Image(systemName: isApproved ? "checkmark.seal.fill" : "doc.text.fill")
                         .font(.system(size: 22))
-                        .foregroundColor(recommendation.type.color)
+                        .foregroundColor(isApproved ? .green : recommendation.type.color)
                 }
                 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Phase 8: Action Generation")
+                    Text("Action Generation")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(textPrimary)
                     
-                    Text("Generate \(recommendation.type.displayName.lowercased()) document")
-                        .font(.system(size: 13))
-                        .foregroundColor(textSecondary)
+                    Text("for \(employeeName)")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.indigo)
                 }
                 
                 Spacer()
+                
+                // Approved badge
+                if isApproved {
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 12))
+                        Text("Approved")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundColor(.green)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.green.opacity(0.12))
+                    .clipShape(Capsule())
+                }
             }
             
             // Selected Action Display
@@ -1162,13 +1410,18 @@ struct CaseDetailView: View {
                     
                     Spacer()
                     
-                    Button {
-                        selectedRecommendation = nil
-                        generatedDocument = nil
-                    } label: {
-                        Text("Change")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(.blue)
+                    if !isApproved {
+                        Button {
+                            selectedRecommendations.removeValue(forKey: employeeName)
+                            generatedDocuments.removeValue(forKey: employeeName)
+                            if selectedRecommendation?.targetEmployeeIds == recommendation.targetEmployeeIds {
+                                selectedRecommendation = nil
+                            }
+                        } label: {
+                            Text("Change")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(.blue)
+                        }
                     }
                 }
             }
@@ -1176,9 +1429,70 @@ struct CaseDetailView: View {
             .background(recommendation.type.color.opacity(0.1))
             .clipShape(RoundedRectangle(cornerRadius: 10))
             
-            // Status based on generated document
-            if let document = generatedDocument {
-                // Document generated - show success state
+            // Status based on approval and generation state
+            if isApproved {
+                // Document approved state
+                VStack(spacing: 8) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.seal.fill")
+                            .foregroundColor(.green)
+                        Text("Document Approved")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.green)
+                    }
+                    
+                    Text("This document has been reviewed and approved.")
+                        .font(.system(size: 12))
+                        .foregroundColor(textSecondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(Color.green.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                
+                // View Document button
+                Button {
+                    reviewingEmployee = employeeName
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "doc.text.magnifyingglass")
+                        Text("View Document")
+                    }
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.green)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color.green.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.green.opacity(0.3), lineWidth: 1)
+                    )
+                }
+                
+                // Delete Document button
+                Button {
+                    deleteTargetEmployee = employeeName
+                    showDocumentDeleteConfirmation = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "trash")
+                        Text("Delete Document")
+                    }
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.red)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color.red.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.red.opacity(0.3), lineWidth: 1)
+                    )
+                }
+            } else if let document = empDocument {
+                // Document generated but not yet approved
                 VStack(spacing: 12) {
                     HStack(spacing: 8) {
                         Image(systemName: "checkmark.circle.fill")
@@ -1189,12 +1503,8 @@ struct CaseDetailView: View {
                     }
                     
                     Button {
-                        // Check if document already exists in database
-                        if caseItem.fullGeneratedDocumentResult != nil {
-                            showRegenerateWarning = true
-                        } else {
-                            showActionGeneration = true
-                        }
+                        regenerateEmployee = employeeName
+                        showRegenerateWarning = true
                     } label: {
                         HStack(spacing: 8) {
                             Image(systemName: "arrow.clockwise")
@@ -1208,10 +1518,9 @@ struct CaseDetailView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
                     
-                    // Animated Continue to Review button
+                    // Continue to Review for this employee
                     Button {
-                        // Continue to Phase 9: Supervisor Review
-                        showSupervisorReview = true
+                        reviewingEmployee = employeeName
                     } label: {
                         HStack(spacing: 8) {
                             Image(systemName: "arrow.right.circle.fill")
@@ -1241,19 +1550,43 @@ struct CaseDetailView: View {
                             continueToReviewPulse = true
                         }
                     }
+                    
+                    // Delete Document button
+                    Button {
+                        deleteTargetEmployee = employeeName
+                        showDocumentDeleteConfirmation = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "trash")
+                            Text("Delete Document")
+                        }
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.red)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Color.red.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.red.opacity(0.3), lineWidth: 1)
+                        )
+                    }
                 }
                 .alert("Re-Generate Document?", isPresented: $showRegenerateWarning) {
-                    Button("Cancel", role: .cancel) { }
+                    Button("Cancel", role: .cancel) { regenerateEmployee = nil }
                     Button("Continue", role: .destructive) {
-                        showActionGeneration = true
+                        if let emp = regenerateEmployee {
+                            actionGenerationEmployee = emp
+                        }
+                        regenerateEmployee = nil
                     }
                 } message: {
                     Text("A document has already been generated and saved. If you re-generate and click 'Accept & Continue' after reviewing the new document, it will override the current saved data.")
                 }
             } else {
-                // No document yet - show generate button
+                // No document yet
                 Button {
-                    showActionGeneration = true
+                    actionGenerationEmployee = employeeName
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "sparkles")
@@ -1271,7 +1604,14 @@ struct CaseDetailView: View {
         .padding()
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
-        .sheet(isPresented: $showActionGeneration) {
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(isApproved ? Color.green.opacity(0.3) : Color.clear, lineWidth: 1.5)
+        )
+        .sheet(isPresented: Binding(
+            get: { actionGenerationEmployee == employeeName },
+            set: { if !$0 { actionGenerationEmployee = nil } }
+        )) {
             NavigationView {
                 ActionGenerationView(
                     conflictCase: caseItem,
@@ -1279,13 +1619,16 @@ struct CaseDetailView: View {
                     analysisResult: comparison,
                     policyMatches: policyMatchResults.isEmpty ? nil : policyMatchResults,
                     onDocumentGenerated: { result in
-                        generatedDocument = result
-                        showActionGeneration = false
+                        generatedDocuments[employeeName] = result
+                        actionGenerationEmployee = nil
                         
-                        // Save generated document to case for database persistence
+                        // Clear approval since this is a new/regenerated document
+                        approvedEmployees.remove(employeeName)
+                        
+                        // Save to case for persistence
                         var updatedCase = caseItem
                         updatedCase.generatedDocument = result.toGeneratedActionDocument()
-                        updatedCase.fullGeneratedDocumentResult = result  // Save full result for UI restoration
+                        updatedCase.fullGeneratedDocumentResult = result
                         updatedCase.selectedAction = {
                             switch result.actionType {
                             case .coaching: return .coaching
@@ -1294,76 +1637,226 @@ struct CaseDetailView: View {
                             case .escalate: return .escalateToHR
                             }
                         }()
-                        // Save target employee IDs for restoration
                         updatedCase.selectedTargetEmployeeIds = recommendation.targetEmployeeIds
-                        print("🎯 Saving document - recommendation.targetEmployeeIds: \(recommendation.targetEmployeeIds)")
-                        print("🎯 Saving document - updatedCase.selectedTargetEmployeeIds: \(updatedCase.selectedTargetEmployeeIds)")
-                        manager.updateCaseSync(updatedCase)
+                        // Save per-employee documents map
+                        updatedCase.employeeGeneratedDocuments = generatedDocuments
+                        updatedCase.approvedEmployeeNames = Array(approvedEmployees)
+                        
+                        Task {
+                            await manager.updateCase(updatedCase)
+                        }
                     },
                     onBack: {
-                        showActionGeneration = false
+                        actionGenerationEmployee = nil
                     }
                 )
             }
         }
-        .fullScreenCover(isPresented: $showSupervisorReview) {
-            if let document = generatedDocument {
+        .fullScreenCover(isPresented: Binding(
+            get: { reviewingEmployee == employeeName },
+            set: { if !$0 { reviewingEmployee = nil } }
+        )) {
+            if let document = empDocument {
                 SupervisorReviewView(
                     conflictCase: caseItem,
                     generatedResult: document,
-                    targetEmployeeIds: selectedRecommendation?.targetEmployeeIds ?? [],
+                    targetEmployeeIds: recommendation.targetEmployeeIds,
+                    isAlreadyApproved: isApproved,
                     onApprove: { updatedResult, edits in
-                        // Handle approval - update case status and proceed to finalization
-                        generatedDocument = updatedResult
-                        showSupervisorReview = false
+                        // Store updated document
+                        generatedDocuments[employeeName] = updatedResult
                         
-                        // Update case with approved document
+                        // Mark this employee as approved
+                        approvedEmployees.insert(employeeName)
+                        
+                        // Dismiss review — go back to case detail (NOT finalization)
+                        reviewingEmployee = nil
+                        
+                        // Save approval to database
                         var updatedCase = caseItem
                         var approvedDoc = updatedResult.toGeneratedActionDocument()
                         approvedDoc.isApproved = true
                         approvedDoc.approvedAt = Date()
                         updatedCase.generatedDocument = approvedDoc
+                        updatedCase.employeeGeneratedDocuments = generatedDocuments
+                        updatedCase.approvedEmployeeNames = Array(approvedEmployees)
                         
                         Task {
                             await manager.updateCase(updatedCase)
                             await manager.updateCaseStatus(caseItem.id, to: .awaitingAction)
                         }
-                        showFinalization = true
                     },
                     onRequestChanges: { comments in
-                        // Handle request changes - keep in review state
-                        showSupervisorReview = false
+                        reviewingEmployee = nil
                     },
                     onReject: { reason in
-                        // Handle rejection - reset document and clear from case
-                        generatedDocument = nil
-                        selectedRecommendation = nil
-                        showSupervisorReview = false
+                        generatedDocuments.removeValue(forKey: employeeName)
+                        selectedRecommendations.removeValue(forKey: employeeName)
+                        approvedEmployees.remove(employeeName)
+                        reviewingEmployee = nil
                         
                         var updatedCase = caseItem
-                        updatedCase.generatedDocument = nil
-                        updatedCase.selectedAction = nil
+                        updatedCase.employeeGeneratedDocuments = generatedDocuments
+                        updatedCase.approvedEmployeeNames = Array(approvedEmployees)
                         manager.updateCaseSync(updatedCase)
                     },
                     onBack: {
-                        showSupervisorReview = false
+                        reviewingEmployee = nil
                     }
                 )
             }
         }
+        .alert("Delete Document?", isPresented: Binding(
+            get: { showDocumentDeleteConfirmation && deleteTargetEmployee == employeeName },
+            set: { if !$0 { showDocumentDeleteConfirmation = false; deleteTargetEmployee = nil } }
+        )) {
+            Button("Cancel", role: .cancel) {
+                deleteTargetEmployee = nil
+            }
+            Button("Delete", role: .destructive) {
+                let targetEmp = employeeName
+                generatedDocuments.removeValue(forKey: targetEmp)
+                selectedRecommendations.removeValue(forKey: targetEmp)
+                approvedEmployees.remove(targetEmp)
+                
+                var updatedCase = caseItem
+                updatedCase.employeeGeneratedDocuments = generatedDocuments
+                updatedCase.approvedEmployeeNames = Array(approvedEmployees)
+                
+                Task {
+                    await manager.updateCase(updatedCase)
+                }
+                
+                deleteTargetEmployee = nil
+                
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.6)) {
+                    showDocumentDeleteSuccess = true
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                    withAnimation(.easeOut(duration: 0.4)) {
+                        showDocumentDeleteSuccess = false
+                    }
+                }
+            }
+        } message: {
+            Text("Are you sure you want to delete the generated document for \(employeeName)? This will remove the document and its approval status. This action cannot be undone.")
+        }
+        .overlay {
+            if showDocumentDeleteSuccess {
+                deleteSuccessOverlay
+            }
+        }
+    }
+    
+    // MARK: - Delete Success Overlay
+    private var deleteSuccessOverlay: some View {
+        VStack(spacing: 16) {
+            ZStack {
+                Circle()
+                    .fill(Color.green.opacity(0.15))
+                    .frame(width: 80, height: 80)
+                    .scaleEffect(showDocumentDeleteSuccess ? 1.0 : 0.3)
+                    .animation(.spring(response: 0.5, dampingFraction: 0.5), value: showDocumentDeleteSuccess)
+                
+                Circle()
+                    .fill(Color.green.opacity(0.08))
+                    .frame(width: 100, height: 100)
+                    .scaleEffect(showDocumentDeleteSuccess ? 1.0 : 0.1)
+                    .animation(.spring(response: 0.6, dampingFraction: 0.4).delay(0.1), value: showDocumentDeleteSuccess)
+                
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 44))
+                    .foregroundColor(.green)
+                    .scaleEffect(showDocumentDeleteSuccess ? 1.0 : 0.0)
+                    .rotationEffect(.degrees(showDocumentDeleteSuccess ? 0 : -90))
+                    .animation(.spring(response: 0.4, dampingFraction: 0.5).delay(0.15), value: showDocumentDeleteSuccess)
+            }
+            
+            VStack(spacing: 4) {
+                Text("Document Deleted")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundColor(.white)
+                
+                Text("Successfully removed")
+                    .font(.system(size: 13))
+                    .foregroundColor(.white.opacity(0.8))
+            }
+            .opacity(showDocumentDeleteSuccess ? 1.0 : 0.0)
+            .offset(y: showDocumentDeleteSuccess ? 0 : 10)
+            .animation(.easeOut(duration: 0.3).delay(0.2), value: showDocumentDeleteSuccess)
+        }
+        .padding(32)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(.ultraThinMaterial)
+                .shadow(color: Color.black.opacity(0.3), radius: 20)
+        )
+        .scaleEffect(showDocumentDeleteSuccess ? 1.0 : 0.8)
+        .opacity(showDocumentDeleteSuccess ? 1.0 : 0.0)
+        .animation(.spring(response: 0.4, dampingFraction: 0.7), value: showDocumentDeleteSuccess)
+        .transition(.scale.combined(with: .opacity))
+    }
+    
+    // MARK: - Confirm Approval & Continue to Finalization Button
+    private func confirmApprovalButton(caseItem: ConflictCase) -> some View {
+        VStack(spacing: 16) {
+            // All approved celebration
+            VStack(spacing: 8) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 36))
+                    .foregroundColor(.green)
+                
+                Text("All Documents Approved")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(textPrimary)
+                
+                Text("All \(caseItem.involvedEmployees.count) employee documents have been reviewed and approved. You can now proceed to finalize the case.")
+                    .font(.system(size: 13))
+                    .foregroundColor(textSecondary)
+                    .multilineTextAlignment(.center)
+            }
+            
+            Button {
+                showFinalization = true
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "flag.checkered")
+                        .font(.system(size: 16))
+                    Text("Continue to Finalization")
+                        .font(.system(size: 15, weight: .bold))
+                }
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .background(
+                    LinearGradient(
+                        colors: [Color.green, Color(red: 0.1, green: 0.6, blue: 0.3)],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .shadow(color: Color.green.opacity(0.4), radius: 8, y: 4)
+            }
+        }
+        .padding()
+        .background(cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(Color.green.opacity(0.3), lineWidth: 1)
+        )
         .fullScreenCover(isPresented: $showFinalization) {
             CaseFinalizationView(
                 conflictCase: caseItem,
-                generatedDocument: generatedDocument,
+                generatedDocument: generatedDocuments.values.first,
                 onFinalize: {
-                    // Finalize and close the case
                     Task {
                         await manager.finalizeCase(caseItem)
                     }
                     showFinalization = false
                 },
                 onExport: {
-                    // Export handled in view, just close
                     showFinalization = false
                 },
                 onBack: {
@@ -1649,6 +2142,183 @@ struct CaseDetailView: View {
         .padding()
     }
     
+    // MARK: - Closed Case Overlay
+    
+    @ViewBuilder
+    private func closedCaseOverlay(_ caseItem: ConflictCase) -> some View {
+        ScrollView {
+            VStack(spacing: 24) {
+                Spacer().frame(height: 40)
+                
+                // Lock Icon
+                ZStack {
+                    Circle()
+                        .fill(Color.red.opacity(0.15))
+                        .frame(width: 100, height: 100)
+                    
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 44))
+                        .foregroundColor(.red.opacity(0.8))
+                }
+                
+                // Title
+                Text("Case Closed")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundColor(textPrimary)
+                
+                Text("This case has been closed and locked. You must re-open it before you can view or edit its contents.")
+                    .font(.system(size: 15))
+                    .foregroundColor(textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+                
+                // Case Info Card
+                VStack(spacing: 12) {
+                    HStack {
+                        Text("Case Number")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(textSecondary)
+                        Spacer()
+                        Text(caseItem.caseNumber)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(textPrimary)
+                    }
+                    
+                    Divider()
+                    
+                    HStack {
+                        Text("Type")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(textSecondary)
+                        Spacer()
+                        Text(caseItem.type.displayName)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(textPrimary)
+                    }
+                    
+                    Divider()
+                    
+                    HStack {
+                        Text("Status")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(textSecondary)
+                        Spacer()
+                        HStack(spacing: 6) {
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 11))
+                            Text("Closed & Locked")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .foregroundColor(.red)
+                    }
+                    
+                    if let closedAt = caseItem.closedAt {
+                        Divider()
+                        HStack {
+                            Text("Closed On")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(textSecondary)
+                            Spacer()
+                            Text(closedAt, style: .date)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(textPrimary)
+                        }
+                    }
+                    
+                    if let closedByName = caseItem.closedByName, !closedByName.isEmpty {
+                        Divider()
+                        HStack {
+                            Text("Closed By")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(textSecondary)
+                            Spacer()
+                            Text(closedByName)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(textPrimary)
+                        }
+                    }
+                    
+                    if let reason = caseItem.closureReason, !reason.isEmpty {
+                        Divider()
+                        HStack(alignment: .top) {
+                            Text("Reason")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(textSecondary)
+                            Spacer()
+                            Text(reason)
+                                .font(.system(size: 13))
+                                .foregroundColor(textPrimary)
+                                .multilineTextAlignment(.trailing)
+                        }
+                    }
+                }
+                .padding(16)
+                .background(cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(cardBorder, lineWidth: 1)
+                )
+                .padding(.horizontal, 24)
+                
+                // Error message
+                if let error = reopenError {
+                    Text(error)
+                        .font(.system(size: 13))
+                        .foregroundColor(.red)
+                        .padding(.horizontal, 24)
+                }
+                
+                // Re-Open Case Button
+                Button {
+                    Task {
+                        isReopening = true
+                        reopenError = nil
+                        do {
+                            try await manager.reopenCase(caseItem.id)
+                        } catch {
+                            reopenError = "Failed to re-open case: \(error.localizedDescription)"
+                        }
+                        isReopening = false
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        if isReopening {
+                            ProgressView()
+                                .tint(.white)
+                        } else {
+                            Image(systemName: "lock.open.fill")
+                                .font(.system(size: 16))
+                        }
+                        Text("Re-Open Case")
+                            .font(.system(size: 16, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(isReopening ? Color.orange.opacity(0.6) : Color.orange)
+                    )
+                }
+                .disabled(isReopening)
+                .padding(.horizontal, 24)
+                
+                // Back Button
+                Button {
+                    dismiss()
+                } label: {
+                    Text("Go Back to Cases")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(textSecondary)
+                }
+                .padding(.top, 8)
+                
+                Spacer().frame(height: 40)
+            }
+        }
+    }
+    
     // MARK: - Helper Methods
     
     private func updateEmployee(_ updatedEmployee: InvolvedEmployee, in caseItem: ConflictCase) async {
@@ -1816,6 +2486,8 @@ struct CaseDetailView: View {
         // Reset local state
         policyMatchResults = []
         selectedRecommendation = nil
+        selectedRecommendations = [:]
+        generatedDocuments = [:]
         
         // Run ALL analyses sequentially in a single Task
         Task {
@@ -2725,10 +3397,16 @@ struct CaseDocumentCard: View {
                                 .foregroundColor(textSecondary)
                             
                             if let language = document.detectedLanguage, language.lowercased() != "english" {
-                                Text("• \(language)")
+                                Text(language)
                                     .font(.system(size: 11))
                                     .foregroundColor(AppColors.primary)
                             }
+                        }
+                        
+                        if document.isHandwritten == true {
+                            Text("Handwritten")
+                                .font(.system(size: 11))
+                                .foregroundColor(.orange)
                         }
                     }
                     

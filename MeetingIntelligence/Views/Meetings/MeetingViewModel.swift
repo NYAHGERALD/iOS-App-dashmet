@@ -295,13 +295,12 @@ class MeetingViewModel: ObservableObject {
             let response = try await APIService.shared.getMeeting(meetingId: meetingId)
             
             if response.success, let meeting = response.meeting {
-                selectedMeeting = meeting
                 return meeting
             } else {
-                errorMessage = response.error ?? "Failed to fetch meeting details"
+                print("⚠️ Failed to fetch meeting details: \(response.error ?? "Unknown error")")
             }
         } catch {
-            handleError(error, context: "Error fetching meeting details")
+            print("⚠️ Error fetching meeting details: \(error.localizedDescription)")
         }
         
         return nil

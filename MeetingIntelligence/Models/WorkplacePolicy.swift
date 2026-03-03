@@ -82,9 +82,13 @@ struct PolicySection: Identifiable, Codable, Hashable {
     var title: String
     var content: String
     var type: PolicySectionType
-    var keywords: [String]          // For searchability
-    var parentSectionId: UUID?      // For nested sections
     var orderIndex: Int
+    
+    // Progressive Discipline — 4 Fixed Columns
+    var firstProgression: String?   // 1st Offense (e.g., Verbal Warning)
+    var secondProgression: String?  // 2nd Offense (e.g., Written Warning)
+    var thirdProgression: String?   // 3rd Offense (e.g., Suspension)
+    var fourthProgression: String?  // 4th Offense (e.g., Discharge/Termination)
     
     init(
         id: UUID = UUID(),
@@ -92,18 +96,22 @@ struct PolicySection: Identifiable, Codable, Hashable {
         title: String,
         content: String,
         type: PolicySectionType = .other,
-        keywords: [String] = [],
-        parentSectionId: UUID? = nil,
-        orderIndex: Int = 0
+        orderIndex: Int = 0,
+        firstProgression: String? = nil,
+        secondProgression: String? = nil,
+        thirdProgression: String? = nil,
+        fourthProgression: String? = nil
     ) {
         self.id = id
         self.sectionNumber = sectionNumber
         self.title = title
         self.content = content
         self.type = type
-        self.keywords = keywords
-        self.parentSectionId = parentSectionId
         self.orderIndex = orderIndex
+        self.firstProgression = firstProgression
+        self.secondProgression = secondProgression
+        self.thirdProgression = thirdProgression
+        self.fourthProgression = fourthProgression
     }
     
     var displayTitle: String {
@@ -111,6 +119,12 @@ struct PolicySection: Identifiable, Codable, Hashable {
             return "\(sectionNumber) \(title)"
         }
         return title
+    }
+    
+    /// Whether this section has any progressive discipline data
+    var hasProgression: Bool {
+        firstProgression != nil || secondProgression != nil ||
+        thirdProgression != nil || fourthProgression != nil
     }
     
     func hash(into hasher: inout Hasher) {
@@ -252,48 +266,16 @@ struct WorkplacePolicy: Identifiable, Codable {
         sections.filter { $0.type == type }
     }
     
-    // Search sections by keyword
+    // Search sections
     func searchSections(query: String) -> [PolicySection] {
         let lowercasedQuery = query.lowercased()
         return sections.filter { section in
             section.title.lowercased().contains(lowercasedQuery) ||
             section.content.lowercased().contains(lowercasedQuery) ||
-            section.keywords.contains { $0.lowercased().contains(lowercasedQuery) }
+            section.firstProgression?.lowercased().contains(lowercasedQuery) == true ||
+            section.secondProgression?.lowercased().contains(lowercasedQuery) == true ||
+            section.thirdProgression?.lowercased().contains(lowercasedQuery) == true ||
+            section.fourthProgression?.lowercased().contains(lowercasedQuery) == true
         }
-    }
-    
-    // Get top-level sections (no parent)
-    var topLevelSections: [PolicySection] {
-        sections.filter { $0.parentSectionId == nil }
-            .sorted { $0.orderIndex < $1.orderIndex }
-    }
-    
-    // Get child sections for a given parent
-    func childSections(for parentId: UUID) -> [PolicySection] {
-        sections.filter { $0.parentSectionId == parentId }
-            .sorted { $0.orderIndex < $1.orderIndex }
-    }
-}
-
-// MARK: - Policy Processing Result
-struct PolicyProcessingResult {
-    var extractedText: String
-    var detectedSections: [PolicySection]
-    var suggestedKeywords: [String: [String]]  // sectionId: keywords
-    var processingTime: TimeInterval
-    var confidence: Double
-    
-    init(
-        extractedText: String = "",
-        detectedSections: [PolicySection] = [],
-        suggestedKeywords: [String: [String]] = [:],
-        processingTime: TimeInterval = 0,
-        confidence: Double = 0
-    ) {
-        self.extractedText = extractedText
-        self.detectedSections = detectedSections
-        self.suggestedKeywords = suggestedKeywords
-        self.processingTime = processingTime
-        self.confidence = confidence
     }
 }

@@ -38,40 +38,56 @@ struct TaskListView: View {
     
     @State private var selectedTask: TaskItem?
     @State private var showAssignedItems = false
+    @State private var showCreateItem = false
     @State private var expandedGroups: Set<String> = []
+    @State private var showErrorAlert = false
     
     var onMenuTap: (() -> Void)?
     
-    // Group tasks by meeting
+    // Group tasks by their meeting title so users know which meeting each action item came from.
+    // Tasks without a meeting go into "Standalone Items".
     private var meetingGroups: [MeetingGroup] {
-        let grouped = Dictionary(grouping: viewModel.tasks) { $0.meetingId ?? "no-meeting" }
+        // Separate meeting tasks from standalone tasks
+        let meetingTasks = viewModel.tasks.filter { $0.meetingId != nil }
+        let standaloneTasks = viewModel.tasks.filter { $0.meetingId == nil }
         
-        return grouped.compactMap { (meetingId, tasks) -> MeetingGroup? in
-            guard let firstTask = tasks.first else { return nil }
-            
-            if meetingId == "no-meeting" {
-                return MeetingGroup(
-                    id: "no-meeting",
-                    title: "Standalone Items",
-                    meetingType: "No Meeting",
-                    meetingDate: nil,
-                    tasks: tasks.sorted { ($0.dueDate ?? .distantFuture) < ($1.dueDate ?? .distantFuture) }
-                )
-            }
+        // Group meeting tasks by their actual meeting title
+        let groupedByMeeting = Dictionary(grouping: meetingTasks) { task -> String in
+            task.meeting?.id ?? task.meetingId ?? "unknown"
+        }
+        
+        var groups: [MeetingGroup] = groupedByMeeting.compactMap { (meetingId, tasks) -> MeetingGroup? in
+            guard !tasks.isEmpty else { return nil }
+            let meetingTitle = tasks.first?.meeting?.displayTitle ?? "Meeting"
+            let meetingType = tasks.first?.meeting?.formattedType ?? "Meeting"
+            let meetingDate = tasks.first?.meeting?.formattedDate
             
             return MeetingGroup(
                 id: meetingId,
-                title: firstTask.meeting?.displayTitle ?? "Unknown Meeting",
-                meetingType: firstTask.meeting?.formattedType ?? "Meeting",
-                meetingDate: firstTask.meeting?.formattedDate,
+                title: meetingTitle,
+                meetingType: meetingType,
+                meetingDate: meetingDate,
                 tasks: tasks.sorted { ($0.dueDate ?? .distantFuture) < ($1.dueDate ?? .distantFuture) }
             )
-        }.sorted { 
-            // Put "no-meeting" at the end
-            if $0.id == "no-meeting" { return false }
-            if $1.id == "no-meeting" { return true }
-            return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending 
+        }.sorted {
+            // Sort meetings by most recent task first
+            let date0 = $0.tasks.first?.createdAt ?? .distantPast
+            let date1 = $1.tasks.first?.createdAt ?? .distantPast
+            return date0 > date1
         }
+        
+        // Add standalone group at the end if any
+        if !standaloneTasks.isEmpty {
+            groups.append(MeetingGroup(
+                id: "standalone",
+                title: "Standalone Items",
+                meetingType: "Standalone",
+                meetingDate: nil,
+                tasks: standaloneTasks.sorted { ($0.dueDate ?? .distantFuture) < ($1.dueDate ?? .distantFuture) }
+            ))
+        }
+        
+        return groups
     }
     
     var body: some View {
@@ -87,6 +103,29 @@ struct TaskListView: View {
                         ActionItemsEmptyStateView()
                     } else {
                         groupedActionItemsList
+                    }
+                }
+                
+                // Floating + Button
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Button {
+                            showCreateItem = true
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.system(size: 24, weight: .semibold))
+                                .foregroundColor(.white)
+                                .frame(width: 56, height: 56)
+                                .background(
+                                    Circle()
+                                        .fill(AppGradients.primary)
+                                        .shadow(color: AppColors.primary.opacity(0.4), radius: 8, x: 0, y: 4)
+                                )
+                        }
+                        .padding(.trailing, 20)
+                        .padding(.bottom, 20)
                     }
                 }
             }
@@ -145,7 +184,21 @@ struct TaskListView: View {
             .sheet(isPresented: $showAssignedItems) {
                 AssignedActionItemsView(viewModel: viewModel)
             }
-            .alert("Error", isPresented: .constant(viewModel.errorMessage != nil)) {
+            .sheet(isPresented: $showCreateItem) {
+                CreateActionItemView(
+                    viewModel: viewModel,
+                    meetingGroups: meetingGroups,
+                    onCreated: { newTask in
+                        // Expand the group the new task belongs to
+                        let groupId = newTask.meeting?.id ?? newTask.meetingId ?? "standalone"
+                        expandedGroups.insert(groupId)
+                    }
+                )
+            }
+            .onChange(of: viewModel.errorMessage) { _, newValue in
+                showErrorAlert = newValue != nil
+            }
+            .alert("Error", isPresented: $showErrorAlert) {
                 Button("OK") {
                     viewModel.clearError()
                 }
@@ -217,27 +270,12 @@ struct MeetingGroupCard: View {
                         .foregroundColor(AppColors.textSecondary)
                         .frame(width: 20)
                     
-                    // Meeting Info
+                    // Group Info
                     VStack(alignment: .leading, spacing: 2) {
                         Text(group.title)
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundColor(AppColors.textPrimary)
                             .lineLimit(1)
-                        
-                        HStack(spacing: 4) {
-                            Text(group.meetingType)
-                                .font(.system(size: 12))
-                                .foregroundColor(AppColors.textSecondary)
-                            
-                            if let date = group.meetingDate {
-                                Text("•")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(AppColors.textTertiary)
-                                Text(date)
-                                    .font(.system(size: 12))
-                                    .foregroundColor(AppColors.textSecondary)
-                            }
-                        }
                     }
                     
                     Spacer()
@@ -444,6 +482,7 @@ struct AssignedActionItemsView: View {
                 ActionItemDetailView(
                     task: task,
                     viewModel: viewModel,
+                    isReadOnly: true,
                     onUpdate: {
                         Task {
                             await fetchAssignedTasks()

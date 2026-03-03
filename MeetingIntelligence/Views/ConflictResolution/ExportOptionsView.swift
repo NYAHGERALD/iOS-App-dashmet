@@ -19,6 +19,7 @@ struct ExportOptionsView: View {
     @State private var selectedDestination: ExportDestination = .download
     @State private var isExporting = false
     @State private var exportError: String?
+    @State private var showExportErrorAlert = false
     @State private var includeSignatures = false
     
     @Environment(\.colorScheme) private var colorScheme
@@ -70,7 +71,10 @@ struct ExportOptionsView: View {
                     }
                 }
             }
-            .alert("Export Error", isPresented: .constant(exportError != nil)) {
+            .onChange(of: exportError) { _, newValue in
+                showExportErrorAlert = newValue != nil
+            }
+            .alert("Export Error", isPresented: $showExportErrorAlert) {
                 Button("OK") {
                     exportError = nil
                 }
