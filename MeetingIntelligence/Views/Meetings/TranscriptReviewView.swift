@@ -568,20 +568,22 @@ class TranscriptReviewViewModel: ObservableObject {
             )
             
             // 4. Also keep local cache in UserDefaults (for offline access)
-            // Save in both formats that different parts of the app use
-            let transcriptData: [String: Any] = [
-                "rawTranscript": rawTranscript,
-                "processedTranscript": processedTranscript,
-                "summary": summary,
-                "processedAt": Date().ISO8601Format(),
+            // Save in ALL formats that different parts of the app read
+            
+            // Primary key: "transcript_processed_" — read first by all loaders
+            let processedCacheData: [String: Any] = [
+                "type": "processed",
+                "rawText": rawTranscript,
+                "processedText": processedTranscript.isEmpty ? rawTranscript : processedTranscript,
+                "wordCount": rawTranscript.split(separator: " ").count,
+                "savedAt": Date().timeIntervalSince1970,
                 "savedToServer": true
             ]
-            
-            if let data = try? JSONSerialization.data(withJSONObject: transcriptData) {
-                UserDefaults.standard.set(data, forKey: "transcript_\(meeting.id)")
+            if let data = try? JSONSerialization.data(withJSONObject: processedCacheData) {
+                UserDefaults.standard.set(data, forKey: "transcript_processed_\(meeting.id)")
             }
             
-            // Also save the raw transcript in the format OverviewTab reads
+            // Legacy key: "rawTranscript_" — fallback read by loaders
             let rawData: [String: Any] = [
                 "rawText": rawTranscript,
                 "timestamp": Date().timeIntervalSince1970,
@@ -597,19 +599,21 @@ class TranscriptReviewViewModel: ObservableObject {
             errorMessage = "Failed to save transcript: \(error.localizedDescription)"
             
             // Still save locally even if server fails
-            let transcriptData: [String: Any] = [
-                "rawTranscript": rawTranscript,
-                "processedTranscript": processedTranscript,
-                "summary": summary,
-                "processedAt": Date().ISO8601Format(),
+            
+            // Primary key: "transcript_processed_" — read first by all loaders
+            let processedCacheData: [String: Any] = [
+                "type": "processed",
+                "rawText": rawTranscript,
+                "processedText": processedTranscript.isEmpty ? rawTranscript : processedTranscript,
+                "wordCount": rawTranscript.split(separator: " ").count,
+                "savedAt": Date().timeIntervalSince1970,
                 "savedToServer": false
             ]
-            
-            if let data = try? JSONSerialization.data(withJSONObject: transcriptData) {
-                UserDefaults.standard.set(data, forKey: "transcript_\(meeting.id)")
+            if let data = try? JSONSerialization.data(withJSONObject: processedCacheData) {
+                UserDefaults.standard.set(data, forKey: "transcript_processed_\(meeting.id)")
             }
             
-            // Also save raw transcript locally
+            // Legacy key: "rawTranscript_" — fallback read by loaders
             let rawData: [String: Any] = [
                 "rawText": rawTranscript,
                 "timestamp": Date().timeIntervalSince1970,

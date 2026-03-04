@@ -305,7 +305,36 @@ struct OverviewTab: View {
                     meeting: viewModel.meeting,
                     onComplete: { generatedTranscript in
                         // Save generated transcript and navigate to review
-                        rawTranscript = generatedTranscript.processedText.isEmpty ? generatedTranscript.rawText : generatedTranscript.processedText
+                        let text = generatedTranscript.processedText.isEmpty ? generatedTranscript.rawText : generatedTranscript.processedText
+                        rawTranscript = text
+                        
+                        // Persist to UserDefaults immediately so transcript survives
+                        // view dismissal and fresh opens (don't rely on "Save & Continue")
+                        let meetingId = viewModel.meeting.id
+                        
+                        // Write to "rawTranscript_" key (legacy, read by all loaders)
+                        let rawData: [String: Any] = [
+                            "rawText": generatedTranscript.rawText,
+                            "timestamp": Date().timeIntervalSince1970,
+                            "wordCount": generatedTranscript.wordCount
+                        ]
+                        if let data = try? JSONSerialization.data(withJSONObject: rawData) {
+                            UserDefaults.standard.set(data, forKey: "rawTranscript_\(meetingId)")
+                        }
+                        
+                        // Write to "transcript_processed_" key (primary key read by loaders)
+                        let processedData: [String: Any] = [
+                            "type": "processed",
+                            "rawText": generatedTranscript.rawText,
+                            "processedText": generatedTranscript.processedText,
+                            "wordCount": generatedTranscript.wordCount,
+                            "duration": generatedTranscript.duration,
+                            "savedAt": Date().timeIntervalSince1970
+                        ]
+                        if let data = try? JSONSerialization.data(withJSONObject: processedData) {
+                            UserDefaults.standard.set(data, forKey: "transcript_processed_\(meetingId)")
+                        }
+                        
                         showTranscriptGeneration = false
                         
                         // Navigate to transcript review after a brief delay
