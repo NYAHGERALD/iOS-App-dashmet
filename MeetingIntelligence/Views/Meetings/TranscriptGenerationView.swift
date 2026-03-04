@@ -16,6 +16,7 @@ struct TranscriptGenerationView: View {
     let onCancel: () -> Void
     
     @StateObject private var generationService = TranscriptGenerationService.shared
+    @Environment(\.colorScheme) private var colorScheme
     @State private var selectedLanguage: SupportedLanguage?
     @State private var showLanguagePicker = false
     @State private var isGenerating = false
@@ -54,7 +55,7 @@ struct TranscriptGenerationView: View {
                         }
                         onCancel()
                     }
-                    .foregroundColor(.white)
+                    .foregroundColor(AppColors.primary)
                 }
             }
             .sheet(isPresented: $showLanguagePicker) {
@@ -79,15 +80,29 @@ struct TranscriptGenerationView: View {
     
     // MARK: - Background
     private var backgroundGradient: some View {
-        LinearGradient(
-            colors: [
-                Color(hex: "0f0c29"),
-                Color(hex: "302b63"),
-                Color(hex: "24243e")
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
+        Group {
+            if colorScheme == .dark {
+                LinearGradient(
+                    colors: [
+                        Color(hex: "0f0c29"),
+                        Color(hex: "302b63"),
+                        Color(hex: "24243e")
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            } else {
+                LinearGradient(
+                    colors: [
+                        Color(hex: "F0ECFF"),
+                        Color(hex: "E8E4F8"),
+                        Color(hex: "F5F3FF")
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            }
+        }
         .ignoresSafeArea()
     }
     
@@ -141,11 +156,11 @@ struct TranscriptGenerationView: View {
                 Text("Recording Ready")
                     .font(.title2)
                     .fontWeight(.bold)
-                    .foregroundColor(.white)
+                    .foregroundColor(AppColors.textPrimary)
                 
                 Text(meeting.title ?? "Meeting Recording")
                     .font(.subheadline)
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(AppColors.textSecondary)
             }
             
             // Duration badge
@@ -163,7 +178,7 @@ struct TranscriptGenerationView: View {
             .clipShape(Capsule())
         }
         .padding(24)
-        .background(Color.white.opacity(0.05))
+        .background(AppColors.surface)
         .clipShape(RoundedRectangle(cornerRadius: 20))
     }
     
@@ -175,14 +190,14 @@ struct TranscriptGenerationView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Transcription Language")
                         .font(.caption)
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(AppColors.textTertiary)
                     
                     HStack(spacing: 8) {
                         Text(selectedLanguage?.flag ?? "🌍")
                             .font(.title2)
                         Text(selectedLanguage?.displayName ?? "Select Language")
                             .font(.headline)
-                            .foregroundColor(.white)
+                            .foregroundColor(AppColors.textPrimary)
                     }
                 }
                 
@@ -190,10 +205,10 @@ struct TranscriptGenerationView: View {
                 
                 Image(systemName: "chevron.right")
                     .font(.caption)
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(AppColors.textTertiary)
             }
             .padding()
-            .background(Color.white.opacity(0.05))
+            .background(AppColors.surface)
             .clipShape(RoundedRectangle(cornerRadius: 12))
         }
     }
@@ -202,16 +217,14 @@ struct TranscriptGenerationView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Processing Options")
                 .font(.caption)
-                .foregroundColor(.white.opacity(0.6))
+                .foregroundColor(AppColors.textTertiary)
             
             VStack(spacing: 0) {
                 optionRow(icon: "text.bubble", title: "Speech Recognition", subtitle: "Convert audio to text", isEnabled: true)
-                Divider().background(Color.white.opacity(0.1))
+                Divider().background(AppColors.border)
                 optionRow(icon: "sparkles", title: "System Enhancement", subtitle: "Punctuation & formatting", isEnabled: true)
-                Divider().background(Color.white.opacity(0.1))
-                optionRow(icon: "person.2.wave.2", title: "Speaker Diarization", subtitle: "Pyannote + Whisper", isEnabled: true)
             }
-            .background(Color.white.opacity(0.05))
+            .background(AppColors.surface)
             .clipShape(RoundedRectangle(cornerRadius: 12))
         }
     }
@@ -220,18 +233,18 @@ struct TranscriptGenerationView: View {
         HStack(spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 18))
-                .foregroundColor(isEnabled ? AppColors.primary : .white.opacity(0.3))
+                .foregroundColor(isEnabled ? AppColors.primary : AppColors.textTertiary)
                 .frame(width: 24)
             
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.subheadline)
                     .fontWeight(.medium)
-                    .foregroundColor(isEnabled ? .white : .white.opacity(0.5))
+                    .foregroundColor(isEnabled ? AppColors.textPrimary : AppColors.textTertiary)
                 
                 Text(subtitle)
                     .font(.caption)
-                    .foregroundColor(isEnabled ? .white.opacity(0.6) : .white.opacity(0.3))
+                    .foregroundColor(isEnabled ? AppColors.textSecondary : AppColors.textTertiary)
             }
             
             Spacer()
@@ -242,10 +255,10 @@ struct TranscriptGenerationView: View {
             } else {
                 Text("Soon")
                     .font(.caption2)
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(AppColors.textTertiary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(Color.white.opacity(0.1))
+                    .background(AppColors.surfaceSecondary)
                     .clipShape(Capsule())
             }
         }
@@ -300,10 +313,10 @@ struct TranscriptGenerationView: View {
             } label: {
                 Text("Cancel")
                     .font(.headline)
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(AppColors.textSecondary)
                     .padding(.vertical, 12)
                     .padding(.horizontal, 32)
-                    .background(Color.white.opacity(0.1))
+                    .background(AppColors.surfaceSecondary)
                     .clipShape(Capsule())
             }
         }
@@ -337,11 +350,11 @@ struct TranscriptGenerationView: View {
                 Text(generationService.progress.stage.rawValue)
                     .font(.title2)
                     .fontWeight(.bold)
-                    .foregroundColor(.white)
+                    .foregroundColor(AppColors.textPrimary)
                 
                 Text(generationService.progress.statusMessage)
                     .font(.subheadline)
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(AppColors.textSecondary)
             }
         }
     }
@@ -353,7 +366,7 @@ struct TranscriptGenerationView: View {
                 HStack {
                     Text("Overall Progress")
                         .font(.caption)
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(AppColors.textTertiary)
                     Spacer()
                     Text("\(Int(generationService.progress.overallProgress * 100))%")
                         .font(.caption)
@@ -365,7 +378,7 @@ struct TranscriptGenerationView: View {
                     ZStack(alignment: .leading) {
                         // Background
                         RoundedRectangle(cornerRadius: 6)
-                            .fill(Color.white.opacity(0.1))
+                            .fill(AppColors.surfaceSecondary)
                             .frame(height: 12)
                         
                         // Progress
@@ -389,19 +402,19 @@ struct TranscriptGenerationView: View {
                 HStack {
                     Text("Stage Progress")
                         .font(.caption)
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(AppColors.textTertiary)
                     Spacer()
                     Text("\(Int(generationService.progress.stageProgress * 100))%")
                         .font(.caption)
                         .fontWeight(.medium)
-                        .foregroundColor(.white.opacity(0.8))
+                        .foregroundColor(AppColors.textSecondary)
                 }
                 
                 GeometryReader { geometry in
                     ZStack(alignment: .leading) {
                         // Background
                         RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.white.opacity(0.1))
+                            .fill(AppColors.surfaceSecondary)
                             .frame(height: 6)
                         
                         // Progress
@@ -418,7 +431,7 @@ struct TranscriptGenerationView: View {
             stageSteps
         }
         .padding()
-        .background(Color.white.opacity(0.05))
+        .background(AppColors.surface)
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
     
@@ -430,7 +443,7 @@ struct TranscriptGenerationView: View {
                     ZStack {
                         Circle()
                             .fill(stageCompleted(stage) ? AppColors.success : 
-                                  (stageCurrent(stage) ? stageColor : Color.white.opacity(0.2)))
+                                  (stageCurrent(stage) ? stageColor : AppColors.surfaceSecondary))
                             .frame(width: 24, height: 24)
                         
                         if stageCompleted(stage) {
@@ -447,7 +460,7 @@ struct TranscriptGenerationView: View {
                     // Connector line
                     if index < 4 {
                         Rectangle()
-                            .fill(stageCompleted(stage) ? AppColors.success : Color.white.opacity(0.2))
+                            .fill(stageCompleted(stage) ? AppColors.success : AppColors.surfaceSecondary)
                             .frame(height: 2)
                     }
                 }
@@ -464,7 +477,7 @@ struct TranscriptGenerationView: View {
                     Text("Estimated time: \(formatDuration(timeRemaining))")
                         .font(.caption)
                 }
-                .foregroundColor(.white.opacity(0.6))
+                .foregroundColor(AppColors.textTertiary)
             }
         }
     }
@@ -489,7 +502,7 @@ struct TranscriptGenerationView: View {
                 Text("Transcript Generated!")
                     .font(.title2)
                     .fontWeight(.bold)
-                    .foregroundColor(.white)
+                    .foregroundColor(AppColors.textPrimary)
             }
             
             // Stats
@@ -507,7 +520,7 @@ struct TranscriptGenerationView: View {
                 HStack {
                     Text("Preview")
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(AppColors.textSecondary)
                     
                     Spacer()
                     
@@ -532,13 +545,13 @@ struct TranscriptGenerationView: View {
                 ScrollView {
                     Text(transcript.processedText.prefix(500) + (transcript.processedText.count > 500 ? "..." : ""))
                         .font(.subheadline)
-                        .foregroundColor(.white.opacity(0.9))
+                        .foregroundColor(AppColors.textPrimary)
                         .lineSpacing(6)
                 }
                 .frame(maxHeight: 180)
             }
             .padding()
-            .background(Color.white.opacity(0.05))
+            .background(AppColors.surface)
             .clipShape(RoundedRectangle(cornerRadius: 12))
             .sheet(isPresented: $showFullTranscript) {
                 FullTranscriptSheet(transcript: transcript)
@@ -547,7 +560,7 @@ struct TranscriptGenerationView: View {
             // Info text
             Text("Tap 'Continue to Review' to process and save your transcript")
                 .font(.caption)
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(AppColors.textTertiary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
             
@@ -587,15 +600,15 @@ struct TranscriptGenerationView: View {
             
             Text(value)
                 .font(.headline)
-                .foregroundColor(.white)
+                .foregroundColor(AppColors.textPrimary)
             
             Text(label)
                 .font(.caption2)
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(AppColors.textTertiary)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
-        .background(Color.white.opacity(0.05))
+        .background(AppColors.surface)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
     
@@ -721,6 +734,7 @@ struct TranscriptGenerationView: View {
 struct FullTranscriptSheet: View {
     let transcript: GeneratedTranscript
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @State private var searchText = ""
     
     // Speaker colors for visual distinction
@@ -732,15 +746,29 @@ struct FullTranscriptSheet: View {
         NavigationStack {
             ZStack {
                 // Background
-                LinearGradient(
-                    colors: [
-                        Color(hex: "0f0c29"),
-                        Color(hex: "302b63"),
-                        Color(hex: "24243e")
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
+                Group {
+                    if colorScheme == .dark {
+                        LinearGradient(
+                            colors: [
+                                Color(hex: "0f0c29"),
+                                Color(hex: "302b63"),
+                                Color(hex: "24243e")
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    } else {
+                        LinearGradient(
+                            colors: [
+                                Color(hex: "F0ECFF"),
+                                Color(hex: "E8E4F8"),
+                                Color(hex: "F5F3FF")
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    }
+                }
                 .ignoresSafeArea()
                 
                 VStack(spacing: 0) {
@@ -754,7 +782,7 @@ struct FullTranscriptSheet: View {
                         statItem(icon: "text.quote", value: "\(transcript.isDiarized ? transcript.speakerBlocks.count : paragraphCount)", label: transcript.isDiarized ? "Turns" : "Paragraphs")
                     }
                     .padding()
-                    .background(Color.white.opacity(0.05))
+                    .background(AppColors.surface)
                     
                     // Full transcript content
                     ScrollView {
@@ -770,7 +798,7 @@ struct FullTranscriptSheet: View {
                                 ForEach(Array(paragraphs.enumerated()), id: \.offset) { index, paragraph in
                                     Text(paragraph)
                                         .font(.system(size: 16))
-                                        .foregroundColor(.white.opacity(0.9))
+                                        .foregroundColor(AppColors.textPrimary)
                                         .lineSpacing(6)
                                         .textSelection(.enabled)
                                         .padding(.bottom, index < paragraphs.count - 1 ? 20 : 0)
@@ -823,21 +851,21 @@ struct FullTranscriptSheet: View {
                 
                 Text(block.formattedTimeRange)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(AppColors.textTertiary)
                 
                 Spacer()
                 
                 if block.confidence > 0 {
                     Text("\(Int(block.confidence * 100))%")
                         .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.3))
+                        .foregroundColor(AppColors.textTertiary)
                 }
             }
             
             // Content
             Text(block.content)
                 .font(.system(size: 15))
-                .foregroundColor(.white.opacity(0.9))
+                .foregroundColor(AppColors.textPrimary)
                 .lineSpacing(5)
                 .textSelection(.enabled)
         }
@@ -877,10 +905,10 @@ struct FullTranscriptSheet: View {
                 .foregroundColor(AppColors.primary)
             Text(value)
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundColor(AppColors.textPrimary)
             Text(label)
                 .font(.system(size: 10))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(AppColors.textTertiary)
         }
     }
     
