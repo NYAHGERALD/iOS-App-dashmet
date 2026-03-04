@@ -22,6 +22,9 @@ struct MeetingListView: View {
     @State private var searchText = ""
     @State private var showFilterMenu = false
     @State private var showErrorAlert = false
+    @State private var meetingToDelete: Meeting?
+    @State private var showDeleteMeetingAlert = false
+    @State private var isDeletingMeeting = false
     
     var onMenuTap: (() -> Void)?
     
@@ -318,41 +321,90 @@ struct MeetingListView: View {
     
     // MARK: - Meeting List
     private var meetingList: some View {
-        ScrollView {
-            LazyVStack(spacing: AppSpacing.sm) {
-                ForEach(viewModel.filteredMeetings) { meeting in
-                    EnterpriseMeetingRow(meeting: meeting) {
-                        selectedMeeting = meeting
+        List {
+            ForEach(viewModel.filteredMeetings) { meeting in
+                EnterpriseMeetingRow(meeting: meeting) {
+                    selectedMeeting = meeting
+                }
+                .contentShape(Rectangle())
+                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    Button(role: .destructive) {
+                        meetingToDelete = meeting
+                        showDeleteMeetingAlert = true
+                    } label: {
+                        Label("Delete", systemImage: "trash.fill")
                     }
-                    .contextMenu {
+                    .tint(.red)
+                }
+                .contextMenu {
+                    Button {
+                        selectedMeeting = meeting
+                    } label: {
+                        Label("View Details", systemImage: "eye")
+                    }
+                    
+                    if meeting.safeStatus == .draft {
                         Button {
-                            selectedMeeting = meeting
+                            // Start recording
                         } label: {
-                            Label("View Details", systemImage: "eye")
+                            Label("Start Recording", systemImage: "mic.fill")
                         }
-                        
-                        if meeting.safeStatus == .draft {
-                            Button {
-                                // Start recording
-                            } label: {
-                                Label("Start Recording", systemImage: "mic.fill")
-                            }
-                        }
-                        
-                        Divider()
-                        
-                        Button(role: .destructive) {
-                            Task {
-                                await viewModel.deleteMeeting(meetingId: meeting.id)
-                            }
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
+                    }
+                    
+                    Divider()
+                    
+                    Button(role: .destructive) {
+                        meetingToDelete = meeting
+                        showDeleteMeetingAlert = true
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                }
+                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(AppColors.background)
+        .alert("Delete Meeting", isPresented: $showDeleteMeetingAlert) {
+            Button("Cancel", role: .cancel) {
+                meetingToDelete = nil
+            }
+            Button("Delete", role: .destructive) {
+                if let meeting = meetingToDelete {
+                    isDeletingMeeting = true
+                    Task {
+                        await viewModel.deleteMeeting(meetingId: meeting.id)
+                        isDeletingMeeting = false
+                        meetingToDelete = nil
                     }
                 }
             }
-            .padding(.horizontal, AppSpacing.md)
-            .padding(.vertical, AppSpacing.sm)
+        } message: {
+            if let meeting = meetingToDelete {
+                Text("⚠️ This will permanently delete \"\(meeting.displayTitle)\" and all its transcripts, summaries, and action items.\n\nThis action cannot be reversed.")
+            }
+        }
+        .overlay {
+            if isDeletingMeeting {
+                ZStack {
+                    Color.black.opacity(0.3)
+                        .ignoresSafeArea()
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .scaleEffect(1.3)
+                            .tint(.white)
+                        Text("Deleting meeting...")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.white)
+                    }
+                    .padding(24)
+                    .background(.ultraThinMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                }
+            }
         }
     }
 }
