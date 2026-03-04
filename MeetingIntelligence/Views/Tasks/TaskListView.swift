@@ -254,7 +254,8 @@ struct TaskListView: View {
                         selectedTask = task
                     }
                 )
-                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                .contentShape(Rectangle())
+                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                     Button(role: .destructive) {
                         groupToDelete = group
                         showDeleteGroupAlert = true
@@ -393,11 +394,13 @@ struct MeetingGroupCard: View {
                 .background(AppColors.surface.opacity(0.5))
             }
         }
+        .background(AppColors.surface)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
             RoundedRectangle(cornerRadius: 16)
                 .stroke(AppColors.surfaceSecondary, lineWidth: 1)
         )
+        .contentShape(RoundedRectangle(cornerRadius: 16))
     }
 }
 
