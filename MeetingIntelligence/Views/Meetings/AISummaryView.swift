@@ -148,6 +148,7 @@ struct AISummaryView: View {
                 briefSummary: json["briefSummary"] as? String ?? "",
                 objectives: json["objectives"] as? [String] ?? [],
                 keyDiscussions: json["keyDiscussions"] as? [String] ?? [],
+                actionItems: json["actionItems"] as? [String] ?? [],
                 takeaways: json["takeaways"] as? [String] ?? [],
                 tone: json["tone"] as? String ?? "",
                 generatedAt: json["generatedAt"] as? String ?? ""
@@ -181,6 +182,7 @@ struct AISummaryView: View {
                     briefSummary: summary.briefSummary ?? "",
                     objectives: summary.objectives ?? [],
                     keyDiscussions: summary.keyDiscussions ?? [],
+                    actionItems: summary.actionItems ?? [],
                     takeaways: summary.takeaways ?? [],
                     tone: summary.tone ?? "",
                     generatedAt: summary.generatedAt ?? ""
@@ -480,6 +482,11 @@ struct AISummaryView: View {
             // Key Discussions
             if !summary.keyDiscussions.isEmpty {
                 listCard(title: "Key Discussions", icon: "bubble.left.and.bubble.right", items: summary.keyDiscussions, color: .purple)
+            }
+            
+            // Action Items
+            if !summary.actionItems.isEmpty {
+                listCard(title: "Action Items", icon: "checkmark.circle", items: summary.actionItems, color: .red)
             }
             
             // Takeaways
@@ -957,8 +964,8 @@ struct AISummaryView: View {
                     speed: 1.0
                 )
                 
-                // Load audio into player
-                audioPlayer.loadFromData(audioData)
+                // Load audio into player and auto-play
+                audioPlayer.loadFromData(audioData, autoPlay: true)
                 
                 // Done!
                 generationPhase = .ready
@@ -1024,6 +1031,7 @@ struct AISummaryView: View {
                     "tone": summary.tone,
                     "objectives": summary.objectives,
                     "keyDiscussions": summary.keyDiscussions,
+                    "actionItems": summary.actionItems,
                     "takeaways": summary.takeaways,
                     "audioUrl": savedSummary.audioUrl ?? "",
                     "audioVoice": selectedVoice.rawValue,
@@ -1095,12 +1103,13 @@ struct AISummaryView: View {
 // MARK: - Summary Audio Player
 
 @MainActor
-class SummaryAudioPlayer: ObservableObject {
+class SummaryAudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegate {
     @Published var isPlaying = false
     @Published var progress: Double = 0
     @Published var currentTime: TimeInterval = 0
     @Published var duration: TimeInterval = 0
     @Published var playbackSpeed: Float = 1.0
+    @Published var isLoaded = false
     
     private var player: AVAudioPlayer?
     private var timer: Timer?
@@ -1116,32 +1125,57 @@ class SummaryAudioPlayer: ObservableObject {
         formatTime(duration)
     }
     
-    func loadFromData(_ data: Data) {
+    func loadFromData(_ data: Data, autoPlay: Bool = false) {
         // Store the data for later upload
         self.audioData = data
         do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [])
             try AVAudioSession.sharedInstance().setActive(true)
             
             player = try AVAudioPlayer(data: data)
+            player?.delegate = self
             player?.enableRate = true
             player?.prepareToPlay()
             player?.rate = playbackSpeed
             duration = player?.duration ?? 0
+            isLoaded = true
             
-            print("✅ Summary audio loaded: \(duration)s")
+            print("✅ Summary audio loaded: \(duration)s, autoPlay: \(autoPlay)")
+            
+            if autoPlay {
+                player?.play()
+                isPlaying = true
+                startTimer()
+            }
         } catch {
             print("❌ Failed to load audio: \(error)")
+            isLoaded = false
         }
     }
     
     func togglePlayPause() {
-        guard let player = player else { return }
+        guard let player = player else {
+            print("⚠️ SummaryAudioPlayer: No player available")
+            return
+        }
+        
+        // If playback finished, reset to beginning
+        if !isPlaying && currentTime >= duration - 0.2 {
+            player.currentTime = 0
+            currentTime = 0
+            progress = 0
+        }
         
         if isPlaying {
             player.pause()
             stopTimer()
         } else {
+            // Re-activate audio session before playing
+            do {
+                try AVAudioSession.sharedInstance().setActive(true)
+            } catch {
+                print("⚠️ Failed to activate audio session: \(error)")
+            }
             player.play()
             startTimer()
         }
@@ -1181,7 +1215,30 @@ class SummaryAudioPlayer: ObservableObject {
         if wasPlaying { player.play() }
     }
     
+    // MARK: - AVAudioPlayerDelegate
+    
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor in
+            self.isPlaying = false
+            self.stopTimer()
+            if flag {
+                self.progress = 1.0
+                self.currentTime = self.duration
+            }
+            print("🔊 Audio playback finished (success: \(flag))")
+        }
+    }
+    
+    nonisolated func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+        Task { @MainActor in
+            self.isPlaying = false
+            self.stopTimer()
+            print("❌ Audio decode error: \(error?.localizedDescription ?? "unknown")")
+        }
+    }
+    
     private func startTimer() {
+        stopTimer()
         timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.updateProgress()

@@ -218,6 +218,11 @@ struct SummaryTab: View {
                 aiSummaryListSection(title: "Key Discussions", icon: "bubble.left.and.bubble.right", items: summary.keyDiscussions, color: .orange)
             }
             
+            // Action Items
+            if !summary.actionItems.isEmpty {
+                aiSummaryListSection(title: "Action Items", icon: "checkmark.circle", items: summary.actionItems, color: .red)
+            }
+            
             // Key Takeaways
             if !summary.takeaways.isEmpty {
                 aiSummaryListSection(title: "Key Takeaways", icon: "lightbulb", items: summary.takeaways, color: .yellow)

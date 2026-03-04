@@ -31,9 +31,34 @@ struct NarrativeSummary: Codable {
     let briefSummary: String
     let objectives: [String]
     let keyDiscussions: [String]
+    let actionItems: [String]
     let takeaways: [String]
     let tone: String
     let generatedAt: String
+    
+    // Backwards compatibility: decode gracefully if actionItems is missing
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        narrative = try container.decode(String.self, forKey: .narrative)
+        briefSummary = try container.decode(String.self, forKey: .briefSummary)
+        objectives = try container.decodeIfPresent([String].self, forKey: .objectives) ?? []
+        keyDiscussions = try container.decodeIfPresent([String].self, forKey: .keyDiscussions) ?? []
+        actionItems = try container.decodeIfPresent([String].self, forKey: .actionItems) ?? []
+        takeaways = try container.decodeIfPresent([String].self, forKey: .takeaways) ?? []
+        tone = try container.decodeIfPresent(String.self, forKey: .tone) ?? ""
+        generatedAt = try container.decodeIfPresent(String.self, forKey: .generatedAt) ?? ""
+    }
+    
+    init(narrative: String, briefSummary: String, objectives: [String], keyDiscussions: [String], actionItems: [String] = [], takeaways: [String], tone: String, generatedAt: String) {
+        self.narrative = narrative
+        self.briefSummary = briefSummary
+        self.objectives = objectives
+        self.keyDiscussions = keyDiscussions
+        self.actionItems = actionItems
+        self.takeaways = takeaways
+        self.tone = tone
+        self.generatedAt = generatedAt
+    }
 }
 
 /// Response from narrative summary API
@@ -333,6 +358,7 @@ class MeetingSummaryService: ObservableObject {
             tone: summary.tone,
             objectives: summary.objectives,
             keyDiscussions: summary.keyDiscussions,
+            actionItems: summary.actionItems,
             takeaways: summary.takeaways,
             audioUrl: audioUrl,
             audioVoice: voice.rawValue,
@@ -529,6 +555,7 @@ struct SaveAISummaryRequest: Codable {
     let tone: String
     let objectives: [String]
     let keyDiscussions: [String]
+    let actionItems: [String]
     let takeaways: [String]
     let audioUrl: String?
     let audioVoice: String?
@@ -543,6 +570,7 @@ struct SavedAISummaryResponse: Codable {
     let tone: String?
     let objectives: [String]?
     let keyDiscussions: [String]?
+    let actionItems: [String]?
     let takeaways: [String]?
     let audioUrl: String?
     let audioVoice: String?

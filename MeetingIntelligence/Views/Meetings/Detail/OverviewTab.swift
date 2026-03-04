@@ -18,6 +18,7 @@ struct SavedAISummary {
     let tone: String
     let objectives: [String]
     let keyDiscussions: [String]
+    let actionItems: [String]
     let takeaways: [String]
     let audioUrl: String?
     let audioVoice: String?
@@ -1522,6 +1523,7 @@ struct OverviewTab: View {
                 tone: json["tone"] as? String ?? "",
                 objectives: json["objectives"] as? [String] ?? [],
                 keyDiscussions: json["keyDiscussions"] as? [String] ?? [],
+                actionItems: json["actionItems"] as? [String] ?? [],
                 takeaways: json["takeaways"] as? [String] ?? [],
                 audioUrl: json["audioUrl"] as? String,
                 audioVoice: json["audioVoice"] as? String,
@@ -1545,6 +1547,7 @@ struct OverviewTab: View {
                             tone: summary.tone ?? "",
                             objectives: summary.objectives ?? [],
                             keyDiscussions: summary.keyDiscussions ?? [],
+                            actionItems: summary.actionItems ?? [],
                             takeaways: summary.takeaways ?? [],
                             audioUrl: summary.audioUrl,
                             audioVoice: summary.audioVoice,
@@ -1560,6 +1563,7 @@ struct OverviewTab: View {
                             "tone": summary.tone ?? "",
                             "objectives": summary.objectives ?? [],
                             "keyDiscussions": summary.keyDiscussions ?? [],
+                            "actionItems": summary.actionItems ?? [],
                             "takeaways": summary.takeaways ?? [],
                             "audioUrl": summary.audioUrl ?? "",
                             "audioVoice": summary.audioVoice ?? "",
