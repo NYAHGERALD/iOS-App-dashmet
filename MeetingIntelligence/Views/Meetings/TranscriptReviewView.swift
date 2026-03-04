@@ -116,8 +116,9 @@ struct TranscriptReviewView: View {
                     AudioReviewSheet(recordingURL: url, meeting: meeting)
                 }
             }
-            .onAppear {
-                Task {
+            .task {
+                // Backup trigger in case init processing was skipped
+                if viewModel.processedTranscript.isEmpty {
                     await viewModel.processTranscript()
                 }
             }
@@ -313,10 +314,11 @@ struct TranscriptReviewView: View {
             
             // Content
             if viewModel.processedTranscript.isEmpty && !viewModel.isProcessing {
-                Text("Processing will begin shortly...")
-                    .font(.system(size: 15))
-                    .foregroundColor(AppColors.textTertiary)
-                    .italic()
+                // Show raw transcript as fallback while processing
+                Text(rawTranscript.isEmpty ? "No transcript available" : rawTranscript)
+                    .font(.system(size: 15, weight: .regular))
+                    .foregroundColor(AppColors.textPrimary)
+                    .lineSpacing(6)
             } else {
                 Text(viewModel.processedTranscript.isEmpty ? rawTranscript : viewModel.processedTranscript)
                     .font(.system(size: 15, weight: .regular))
@@ -490,6 +492,11 @@ class TranscriptReviewViewModel: ObservableObject {
     init(meeting: Meeting, rawTranscript: String) {
         self.meeting = meeting
         self.rawTranscript = rawTranscript
+        // Process immediately since it's all local (no API call)
+        if !rawTranscript.isEmpty {
+            self.processedTranscript = TranscriptReviewViewModel.correctTranscriptText(rawTranscript)
+            print("✅ Transcript processed in init (\(rawTranscript.split(separator: " ").count) words)")
+        }
     }
     
     // MARK: - Process Transcript with AI
@@ -623,7 +630,7 @@ class TranscriptReviewViewModel: ObservableObject {
         
         switch type {
         case "correct":
-            return correctTranscript(text)
+            return Self.correctTranscriptText(text)
         case "summarize":
             return generateLocalSummary(text)
         default:
@@ -632,7 +639,7 @@ class TranscriptReviewViewModel: ObservableObject {
     }
     
     // MARK: - Local Transcript Correction
-    private func correctTranscript(_ text: String) -> String {
+    static func correctTranscriptText(_ text: String) -> String {
         var corrected = text
         
         // Basic corrections
