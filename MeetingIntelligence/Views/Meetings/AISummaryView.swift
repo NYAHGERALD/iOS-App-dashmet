@@ -42,13 +42,20 @@ struct AISummaryView: View {
         self.onSummarySaved = onSummarySaved
     }
     
-    enum GenerationPhase {
+    enum GenerationPhase: Equatable {
         case idle
         case generatingSummary
         case generatingAudio
+        case completing
         case ready
         case error
     }
+    
+    // Progress simulation
+    @State private var simulatedProgress: Double = 0
+    @State private var statusMessage: String = ""
+    @State private var showCompletionCheck: Bool = false
+    @State private var glowPulse: Bool = false
     
     var body: some View {
         NavigationStack {
@@ -64,10 +71,8 @@ struct AISummaryView: View {
                         switch generationPhase {
                         case .idle:
                             generatePrompt
-                        case .generatingSummary:
-                            generatingView(phase: "Analyzing Meeting", subtitle: "System is reading and understanding your transcript...")
-                        case .generatingAudio:
-                            generatingView(phase: "Creating Voice", subtitle: "Generating realistic speech narration...")
+                        case .generatingSummary, .generatingAudio, .completing:
+                            dashmetProgressView
                         case .ready:
                             if let summary = localSummary {
                                 summaryContent(summary)
@@ -315,12 +320,12 @@ struct AISummaryView: View {
                     Image(systemName: "brain.head.profile")
                         .font(.title2)
                         .foregroundColor(.purple)
-                    Text("System-Powered Summary")
+                    Text("Dashmet-Powered Summary")
                         .font(.headline)
                         .foregroundColor(AppColors.textPrimary)
                 }
                 
-                Text("Our System will analyze your meeting transcript and create a professional narrative summary. It will then speak the summary aloud using a realistic voice.")
+                Text("Dashmet will analyze your meeting transcript and create a professional narrative summary with key insights, action items, and a realistic voice narration.")
                     .font(.subheadline)
                     .foregroundColor(AppColors.textSecondary)
                     .lineSpacing(4)
@@ -328,7 +333,7 @@ struct AISummaryView: View {
                 // Features
                 VStack(alignment: .leading, spacing: 10) {
                     featureRow(icon: "doc.text.magnifyingglass", text: "Intelligent transcript analysis")
-                    featureRow(icon: "list.bullet.rectangle", text: "Key points and takeaways")
+                    featureRow(icon: "list.bullet.rectangle", text: "Key points, takeaways & action items")
                     featureRow(icon: "target", text: "Meeting objectives identified")
                     featureRow(icon: "speaker.wave.3", text: "Realistic voice narration")
                 }
@@ -369,7 +374,7 @@ struct AISummaryView: View {
             } label: {
                 HStack {
                     Image(systemName: "sparkles")
-                    Text("Generate System Summary")
+                    Text("Generate Dashmet Summary")
                 }
                 .font(.headline)
                 .foregroundColor(.white)
@@ -400,52 +405,228 @@ struct AISummaryView: View {
         }
     }
     
-    // MARK: - Generating View
+    // MARK: - Dashmet Progress View
     
-    private func generatingView(phase: String, subtitle: String) -> some View {
-        VStack(spacing: 24) {
-            // Animated pulse
+    private var dashmetProgressView: some View {
+        VStack(spacing: 28) {
+            Spacer().frame(height: 10)
+            
+            // ── Circular Progress Ring ──────────────────────
             ZStack {
-                ForEach(0..<3) { i in
+                // Pulsing ambient glow
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [Color.purple.opacity(0.25), Color.clear],
+                            center: .center,
+                            startRadius: 50,
+                            endRadius: 155
+                        )
+                    )
+                    .frame(width: 290, height: 290)
+                    .scaleEffect(glowPulse ? 1.12 : 0.88)
+                    .opacity(glowPulse ? 0.55 : 0.2)
+                    .onAppear {
+                        glowPulse = false
+                        withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
+                            glowPulse = true
+                        }
+                    }
+
+                // Orbiting particle dots
+                ForEach(0..<3, id: \.self) { i in
                     Circle()
-                        .stroke(Color.purple.opacity(0.3), lineWidth: 2)
-                        .frame(width: CGFloat(100 + i * 40), height: CGFloat(100 + i * 40))
-                        .scaleEffect(generationPhase == .idle ? 1.0 : 1.2)
-                        .opacity(generationPhase == .idle ? 1.0 : 0.0)
+                        .fill(Color.cyan.opacity(0.5))
+                        .frame(width: CGFloat(6 - i), height: CGFloat(6 - i))
+                        .offset(y: -106)
+                        .rotationEffect(.degrees(glowPulse ? 360 : 0) + .degrees(Double(i) * 120))
                         .animation(
-                            .easeInOut(duration: 1.5)
-                            .repeatForever(autoreverses: true)
-                            .delay(Double(i) * 0.2),
-                            value: generationPhase
+                            .linear(duration: Double(8 + i * 4)).repeatForever(autoreverses: false),
+                            value: glowPulse
                         )
                 }
                 
+                // Background track ring
                 Circle()
-                    .fill(LinearGradient(colors: [.purple, .blue], startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .frame(width: 80, height: 80)
+                    .stroke(
+                        colorScheme == .dark
+                            ? Color.white.opacity(0.06)
+                            : Color.purple.opacity(0.1),
+                        lineWidth: 12
+                    )
+                    .frame(width: 200, height: 200)
                 
-                Image(systemName: generationPhase == .generatingSummary ? "brain" : "waveform")
-                    .font(.system(size: 32))
-                    .foregroundColor(.white)
+                // Progress arc with gradient
+                Circle()
+                    .trim(from: 0, to: simulatedProgress)
+                    .stroke(
+                        AngularGradient(
+                            gradient: Gradient(colors: [
+                                Color(hex: "8B5CF6"),
+                                Color(hex: "7C3AED"),
+                                Color(hex: "6366F1"),
+                                Color(hex: "06B6D4"),
+                                Color(hex: "8B5CF6")
+                            ]),
+                            center: .center
+                        ),
+                        style: StrokeStyle(lineWidth: 12, lineCap: .round)
+                    )
+                    .frame(width: 200, height: 200)
+                    .rotationEffect(.degrees(-90))
+                    .shadow(color: .purple.opacity(0.5), radius: 8)
+                
+                // Glowing tip dot
+                if simulatedProgress > 0.01 && !showCompletionCheck {
+                    Circle()
+                        .fill(Color.cyan)
+                        .frame(width: 18, height: 18)
+                        .shadow(color: .cyan.opacity(0.8), radius: 8)
+                        .offset(y: -100)
+                        .rotationEffect(.degrees(360 * simulatedProgress - 90))
+                }
+                
+                // Center content
+                VStack(spacing: 2) {
+                    if showCompletionCheck {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 52))
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [.green, .teal],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .transition(.scale.combined(with: .opacity))
+                    } else {
+                        Text("\(Int(simulatedProgress * 100))")
+                            .font(.system(size: 52, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundColor(AppColors.textPrimary)
+                        
+                        Text("%")
+                            .font(.system(size: 16, weight: .semibold, design: .rounded))
+                            .foregroundColor(AppColors.textTertiary)
+                    }
+                }
+                .animation(.spring(response: 0.5, dampingFraction: 0.6), value: showCompletionCheck)
             }
             
-            VStack(spacing: 8) {
-                Text(phase)
-                    .font(.title3)
-                    .fontWeight(.semibold)
-                    .foregroundColor(AppColors.textPrimary)
+            // ── Stage Info ──────────────────────────────────
+            VStack(spacing: 14) {
+                HStack(spacing: 10) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.purple.opacity(0.15))
+                            .frame(width: 36, height: 36)
+                        
+                        Image(systemName: currentStageIcon)
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.purple)
+                    }
+                    
+                    Text(currentStageTitle)
+                        .font(.headline)
+                        .foregroundColor(AppColors.textPrimary)
+                }
+                .animation(.easeInOut(duration: 0.3), value: generationPhase)
                 
-                Text(subtitle)
+                // Rotating friendly message
+                Text(statusMessage)
                     .font(.subheadline)
                     .foregroundColor(AppColors.textSecondary)
                     .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+                    .id(statusMessage)
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .move(edge: .bottom)),
+                        removal: .opacity.combined(with: .move(edge: .top))
+                    ))
+            }
+            .animation(.easeInOut(duration: 0.4), value: statusMessage)
+            
+            // ── Stage Progress Pills ────────────────────────
+            HStack(spacing: 8) {
+                progressPill(
+                    title: "Analyze",
+                    icon: "brain.head.profile",
+                    isActive: generationPhase == .generatingSummary,
+                    isComplete: generationPhase == .generatingAudio || generationPhase == .completing
+                )
+                
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundColor(AppColors.textTertiary)
+                
+                progressPill(
+                    title: "Narrate",
+                    icon: "waveform",
+                    isActive: generationPhase == .generatingAudio,
+                    isComplete: generationPhase == .completing
+                )
+                
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundColor(AppColors.textTertiary)
+                
+                progressPill(
+                    title: "Complete",
+                    icon: "checkmark",
+                    isActive: generationPhase == .completing,
+                    isComplete: showCompletionCheck
+                )
             }
             
-            ProgressView()
-                .progressViewStyle(CircularProgressViewStyle(tint: .purple))
-                .scaleEffect(1.2)
+            Spacer().frame(height: 10)
         }
-        .padding(.vertical, 60)
+        .padding(.vertical, 20)
+    }
+    
+    // Stage icon based on phase
+    private var currentStageIcon: String {
+        switch generationPhase {
+        case .generatingSummary: return "brain.head.profile"
+        case .generatingAudio: return "waveform"
+        case .completing: return showCompletionCheck ? "checkmark.seal.fill" : "sparkles"
+        default: return "sparkles"
+        }
+    }
+    
+    // Stage title based on phase
+    private var currentStageTitle: String {
+        switch generationPhase {
+        case .generatingSummary: return "Analyzing Meeting"
+        case .generatingAudio: return "Creating Narration"
+        case .completing: return showCompletionCheck ? "Summary Complete!" : "Finalizing..."
+        default: return "Processing"
+        }
+    }
+    
+    // Stage pill component
+    private func progressPill(title: String, icon: String, isActive: Bool, isComplete: Bool) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: isComplete ? "checkmark.circle.fill" : icon)
+                .font(.system(size: 10))
+            Text(title)
+                .font(.caption2)
+                .fontWeight(.medium)
+        }
+        .foregroundColor(
+            isComplete ? .green :
+            isActive ? .white :
+            AppColors.textTertiary
+        )
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            isComplete ? Color.green.opacity(0.2) :
+            isActive ? Color.purple :
+            AppColors.surfaceSecondary.opacity(0.5)
+        )
+        .clipShape(Capsule())
+        .animation(.easeInOut(duration: 0.3), value: isActive)
+        .animation(.easeInOut(duration: 0.3), value: isComplete)
     }
     
     // MARK: - Summary Content
@@ -942,8 +1123,18 @@ struct AISummaryView: View {
     private func generateSummaryWithAudio() {
         Task {
             do {
+                // Reset progress state
+                await MainActor.run {
+                    simulatedProgress = 0
+                    statusMessage = "Hang on while Dashmet analyzes your meeting..."
+                    showCompletionCheck = false
+                }
+                
                 // Phase 1: Generate summary
                 generationPhase = .generatingSummary
+                
+                // Start progress simulation concurrently
+                let progressTask = Task { await simulateProgress() }
                 
                 let summary = try await summaryService.generateNarrativeSummary(
                     meetingTitle: meeting.title ?? "Meeting",
@@ -956,7 +1147,9 @@ struct AISummaryView: View {
                 localSummary = summary
                 
                 // Phase 2: Generate audio
-                generationPhase = .generatingAudio
+                await MainActor.run {
+                    generationPhase = .generatingAudio
+                }
                 
                 let audioData = try await summaryService.generateAudio(
                     text: summary.narrative,
@@ -964,18 +1157,161 @@ struct AISummaryView: View {
                     speed: 1.0
                 )
                 
-                // Load audio into player and auto-play
-                audioPlayer.loadFromData(audioData, autoPlay: true)
+                // Stop simulation
+                progressTask.cancel()
                 
-                // Done!
-                generationPhase = .ready
+                // Phase 3: Professional completion animation
+                await MainActor.run {
+                    generationPhase = .completing
+                }
+                
+                await animateCompletion()
+                
+                // Load audio with auto-play and transition to ready
+                await MainActor.run {
+                    audioPlayer.loadFromData(audioData, autoPlay: true)
+                    generationPhase = .ready
+                }
                 
             } catch {
-                errorMessage = error.localizedDescription
-                generationPhase = .error
+                await MainActor.run {
+                    errorMessage = error.localizedDescription
+                    generationPhase = .error
+                }
                 print("❌ Summary generation failed: \(error)")
             }
         }
+    }
+    
+    // MARK: - Progress Simulation
+    
+    private func simulateProgress() async {
+        let summaryMessages = [
+            "Hang on while Dashmet analyzes your meeting...",
+            "Dashmet is reading through your transcript...",
+            "Identifying key discussion points...",
+            "Extracting meeting objectives and outcomes...",
+            "Analyzing conversation patterns and insights...",
+            "Dashmet is organizing your meeting data...",
+            "Crafting a comprehensive narrative..."
+        ]
+        
+        let audioMessages = [
+            "Dashmet is preparing voice narration...",
+            "Generating realistic speech output...",
+            "Creating your audio summary..."
+        ]
+        
+        var tickCount = 0
+        var msgIndex = 0
+        
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 250_000_000) // 0.25s
+            guard !Task.isCancelled else { break }
+            
+            await MainActor.run {
+                let maxProgress: Double
+                let increment: Double
+                let messages: [String]
+                
+                switch generationPhase {
+                case .generatingSummary:
+                    maxProgress = 0.52
+                    increment = Double.random(in: 0.004...0.016)
+                    messages = summaryMessages
+                case .generatingAudio:
+                    maxProgress = 0.80
+                    increment = Double.random(in: 0.008...0.022)
+                    messages = audioMessages
+                default:
+                    return
+                }
+                
+                if simulatedProgress < maxProgress {
+                    withAnimation(.easeInOut(duration: 0.35)) {
+                        simulatedProgress = min(simulatedProgress + increment, maxProgress)
+                    }
+                }
+                
+                // Rotate message every ~12 ticks (3 seconds)
+                tickCount += 1
+                if tickCount % 12 == 0 {
+                    msgIndex += 1
+                    statusMessage = messages[msgIndex % messages.count]
+                }
+            }
+        }
+    }
+    
+    // MARK: - Completion Animation
+    
+    private func animateCompletion() async {
+        let startProgress = await MainActor.run { simulatedProgress }
+        
+        // Phase A: Ramp to ~92%
+        await MainActor.run {
+            statusMessage = "Wrapping up the final details..."
+        }
+        
+        let targetA = 0.92
+        if startProgress < targetA {
+            let steps = 20
+            let stepAmount = (targetA - startProgress) / Double(steps)
+            for i in 1...steps {
+                guard !Task.isCancelled else { break }
+                try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+                let value = startProgress + stepAmount * Double(i)
+                await MainActor.run {
+                    withAnimation(.easeInOut(duration: 0.08)) {
+                        simulatedProgress = min(value, targetA)
+                    }
+                }
+            }
+        }
+        
+        // Brief pause
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        
+        // Phase B: Slow ease-out push to 100%
+        await MainActor.run {
+            statusMessage = "Almost there..."
+        }
+        
+        let steps2 = 16
+        let startB = await MainActor.run { simulatedProgress }
+        let remainingB = 1.0 - startB
+        for i in 1...steps2 {
+            guard !Task.isCancelled else { break }
+            try? await Task.sleep(nanoseconds: 60_000_000) // 60ms
+            let t = Double(i) / Double(steps2)
+            let easedT = 1 - pow(1 - t, 2.5) // cubic ease-out
+            let value = startB + remainingB * easedT
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.1)) {
+                    simulatedProgress = min(value, 1.0)
+                }
+            }
+        }
+        
+        // Ensure 100%
+        await MainActor.run {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                simulatedProgress = 1.0
+            }
+        }
+        
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        
+        // Show completion checkmark
+        await MainActor.run {
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.6)) {
+                showCompletionCheck = true
+                statusMessage = "Your Dashmet summary is ready!"
+            }
+        }
+        
+        // Hold for a moment to admire the success
+        try? await Task.sleep(nanoseconds: 1_800_000_000)
     }
     
     private func regenerateSummary() {
