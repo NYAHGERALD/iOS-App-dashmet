@@ -23,6 +23,11 @@ struct TranscriptGenerationView: View {
     @State private var showError = false
     @State private var audioDuration: TimeInterval = 0
     @State private var showFullTranscript = false
+    @State private var wavePhase: CGFloat = 0
+    @State private var tipIndex: Int = 0
+    @State private var tipOpacity: Double = 1.0
+    @State private var elapsedSeconds: Int = 0
+    @State private var elapsedTimer: Timer?
     
     private let languageManager = LanguageManager.shared
     
@@ -292,194 +297,332 @@ struct TranscriptGenerationView: View {
     
     // MARK: - Generating Content
     private var generatingContent: some View {
-        VStack(spacing: 32) {
+        VStack(spacing: 0) {
             Spacer()
             
-            // Stage indicator with animated icon
-            stageIndicator
+            // Circular progress ring with waveform
+            circularProgressRing
+                .padding(.bottom, 28)
             
-            // Progress bars
-            progressSection
+            // Stage label + message
+            VStack(spacing: 6) {
+                Text(generationService.progress.stage.rawValue)
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .foregroundColor(AppColors.textPrimary)
+                    .contentTransition(.numericText())
+                    .animation(.easeInOut(duration: 0.4), value: generationService.progress.stage)
+                
+                Text(generationService.progress.statusMessage)
+                    .font(.system(size: 14))
+                    .foregroundColor(AppColors.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .animation(.easeInOut, value: generationService.progress.statusMessage)
+            }
+            .padding(.bottom, 24)
             
-            // Status details
-            statusDetails
+            // Stage timeline pills
+            stageTimelinePills
+                .padding(.horizontal, 24)
+                .padding(.bottom, 20)
+            
+            // Live stats strip
+            liveStatsStrip
+                .padding(.horizontal, 20)
+                .padding(.bottom, 20)
+            
+            // Animated tips carousel
+            tipsCarousel
+                .padding(.horizontal, 20)
             
             Spacer()
             
             // Cancel button
             Button {
+                elapsedTimer?.invalidate()
                 generationService.cancel()
                 onCancel()
             } label: {
                 Text("Cancel")
-                    .font(.headline)
+                    .font(.system(size: 15, weight: .medium))
                     .foregroundColor(AppColors.textSecondary)
                     .padding(.vertical, 12)
-                    .padding(.horizontal, 32)
+                    .padding(.horizontal, 40)
                     .background(AppColors.surfaceSecondary)
                     .clipShape(Capsule())
             }
+            .padding(.bottom, 8)
+        }
+        .onAppear {
+            // Start wave animation
+            withAnimation(.linear(duration: 2).repeatForever(autoreverses: false)) {
+                wavePhase = .pi * 2
+            }
+            // Start elapsed timer
+            elapsedSeconds = 0
+            elapsedTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+                elapsedSeconds += 1
+            }
+            // Start tip rotation
+            startTipRotation()
+        }
+        .onDisappear {
+            elapsedTimer?.invalidate()
         }
     }
     
-    private var stageIndicator: some View {
-        VStack(spacing: 20) {
-            // Animated stage icon
-            ZStack {
-                // Outer pulse
-                Circle()
-                    .stroke(stageColor.opacity(0.3), lineWidth: 2)
-                    .frame(width: 120, height: 120)
-                    .scaleEffect(isGenerating ? 1.2 : 1.0)
-                    .opacity(isGenerating ? 0 : 1)
-                    .animation(.easeInOut(duration: 1.5).repeatForever(autoreverses: false), value: isGenerating)
+    // MARK: - Circular Progress Ring
+    private var circularProgressRing: some View {
+        let progress = generationService.progress.overallProgress
+        let size: CGFloat = 180
+        
+        return ZStack {
+            // Outer glow
+            Circle()
+                .stroke(stageColor.opacity(0.08), lineWidth: 24)
+                .frame(width: size, height: size)
+            
+            // Track
+            Circle()
+                .stroke(AppColors.surfaceSecondary, style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                .frame(width: size, height: size)
+            
+            // Progress arc
+            Circle()
+                .trim(from: 0, to: progress)
+                .stroke(
+                    AngularGradient(
+                        gradient: Gradient(colors: [stageColor.opacity(0.4), stageColor, stageColor]),
+                        center: .center,
+                        startAngle: .degrees(0),
+                        endAngle: .degrees(360)
+                    ),
+                    style: StrokeStyle(lineWidth: 10, lineCap: .round)
+                )
+                .frame(width: size, height: size)
+                .rotationEffect(.degrees(-90))
+                .animation(.easeInOut(duration: 0.5), value: progress)
+            
+            // Glowing dot at end of arc
+            Circle()
+                .fill(stageColor)
+                .frame(width: 16, height: 16)
+                .shadow(color: stageColor.opacity(0.6), radius: 6)
+                .offset(y: -size / 2)
+                .rotationEffect(.degrees(360 * progress - 90))
+                .animation(.easeInOut(duration: 0.5), value: progress)
+            
+            // Center content
+            VStack(spacing: 4) {
+                // Animated waveform inside ring
+                audioWaveform
+                    .frame(width: 80, height: 36)
+                    .padding(.bottom, 4)
                 
-                // Inner circle
-                Circle()
-                    .fill(stageColor.opacity(0.15))
-                    .frame(width: 100, height: 100)
+                // Percentage
+                Text("\(Int(progress * 100))%")
+                    .font(.system(size: 36, weight: .bold, design: .rounded))
+                    .foregroundColor(AppColors.textPrimary)
+                    .contentTransition(.numericText())
+                    .animation(.easeInOut(duration: 0.3), value: Int(progress * 100))
                 
-                // Icon
+                // Stage icon
                 Image(systemName: generationService.progress.stage.icon)
-                    .font(.system(size: 40))
+                    .font(.system(size: 14))
                     .foregroundColor(stageColor)
                     .symbolEffect(.pulse, options: .repeating, value: isGenerating)
             }
-            
-            VStack(spacing: 8) {
-                Text(generationService.progress.stage.rawValue)
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(AppColors.textPrimary)
-                
-                Text(generationService.progress.statusMessage)
-                    .font(.subheadline)
-                    .foregroundColor(AppColors.textSecondary)
+        }
+    }
+    
+    // MARK: - Audio Waveform Animation
+    private var audioWaveform: some View {
+        HStack(spacing: 3) {
+            ForEach(0..<12, id: \.self) { i in
+                let normalizedHeight = waveBarHeight(index: i)
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(
+                        LinearGradient(
+                            colors: [stageColor.opacity(0.5), stageColor],
+                            startPoint: .bottom,
+                            endPoint: .top
+                        )
+                    )
+                    .frame(width: 3.5, height: normalizedHeight)
+                    .animation(
+                        .easeInOut(duration: 0.4 + Double(i) * 0.05)
+                        .repeatForever(autoreverses: true)
+                        .delay(Double(i) * 0.07),
+                        value: wavePhase
+                    )
             }
         }
     }
     
-    private var progressSection: some View {
-        VStack(spacing: 24) {
-            // Overall progress
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Overall Progress")
-                        .font(.caption)
-                        .foregroundColor(AppColors.textTertiary)
-                    Spacer()
-                    Text("\(Int(generationService.progress.overallProgress * 100))%")
-                        .font(.caption)
-                        .fontWeight(.bold)
-                        .foregroundColor(AppColors.primary)
-                }
-                
-                GeometryReader { geometry in
-                    ZStack(alignment: .leading) {
-                        // Background
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(AppColors.surfaceSecondary)
-                            .frame(height: 12)
-                        
-                        // Progress
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(
-                                LinearGradient(
-                                    colors: [AppColors.primary, AppColors.accent],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                            .frame(width: geometry.size.width * generationService.progress.overallProgress, height: 12)
-                            .animation(.easeInOut(duration: 0.3), value: generationService.progress.overallProgress)
-                    }
-                }
-                .frame(height: 12)
-            }
-            
-            // Stage progress
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Stage Progress")
-                        .font(.caption)
-                        .foregroundColor(AppColors.textTertiary)
-                    Spacer()
-                    Text("\(Int(generationService.progress.stageProgress * 100))%")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundColor(AppColors.textSecondary)
-                }
-                
-                GeometryReader { geometry in
-                    ZStack(alignment: .leading) {
-                        // Background
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(AppColors.surfaceSecondary)
-                            .frame(height: 6)
-                        
-                        // Progress
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(stageColor)
-                            .frame(width: geometry.size.width * generationService.progress.stageProgress, height: 6)
-                            .animation(.easeInOut(duration: 0.3), value: generationService.progress.stageProgress)
-                    }
-                }
-                .frame(height: 6)
-            }
-            
-            // Stage steps
-            stageSteps
-        }
-        .padding()
-        .background(AppColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+    private func waveBarHeight(index: Int) -> CGFloat {
+        let phase = wavePhase + CGFloat(index) * 0.5
+        let base: CGFloat = 8
+        let amplitude: CGFloat = 20
+        return base + amplitude * abs(sin(phase))
     }
     
-    private var stageSteps: some View {
-        HStack(spacing: 4) {
-            ForEach(Array(TranscriptGenerationStage.allCases.prefix(5).enumerated()), id: \.offset) { index, stage in
+    // MARK: - Stage Timeline Pills
+    private var stageTimelinePills: some View {
+        let stages: [(TranscriptGenerationStage, String, String)] = [
+            (.preparing, "Prepare", "waveform"),
+            (.transcribing, "Transcribe", "text.bubble"),
+            (.processingAI, "Enhance", "sparkles"),
+            (.finalizing, "Finalize", "checkmark.circle"),
+        ]
+        
+        return HStack(spacing: 6) {
+            ForEach(Array(stages.enumerated()), id: \.offset) { index, item in
+                let (stage, label, icon) = item
+                let isComplete = stageCompleted(stage)
+                let isCurrent = stageCurrent(stage)
+                
                 HStack(spacing: 4) {
-                    // Stage dot
-                    ZStack {
-                        Circle()
-                            .fill(stageCompleted(stage) ? AppColors.success : 
-                                  (stageCurrent(stage) ? stageColor : AppColors.surfaceSecondary))
-                            .frame(width: 24, height: 24)
-                        
-                        if stageCompleted(stage) {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(.white)
-                        } else if stageCurrent(stage) {
-                            Circle()
-                                .fill(Color.white)
-                                .frame(width: 8, height: 8)
-                        }
+                    if isComplete {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(.white)
+                            .transition(.scale.combined(with: .opacity))
+                    } else {
+                        Image(systemName: icon)
+                            .font(.system(size: 10))
+                            .foregroundColor(isCurrent ? .white : AppColors.textTertiary)
                     }
                     
-                    // Connector line
-                    if index < 4 {
-                        Rectangle()
-                            .fill(stageCompleted(stage) ? AppColors.success : AppColors.surfaceSecondary)
-                            .frame(height: 2)
+                    Text(label)
+                        .font(.system(size: 11, weight: isCurrent || isComplete ? .semibold : .regular))
+                        .foregroundColor(isCurrent ? .white : isComplete ? .white : AppColors.textTertiary)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(
+                    Group {
+                        if isComplete {
+                            AppColors.success
+                        } else if isCurrent {
+                            stageColor
+                        } else {
+                            AppColors.surfaceSecondary
+                        }
                     }
+                )
+                .clipShape(Capsule())
+                .animation(.spring(response: 0.4), value: generationService.progress.stage)
+                
+                if index < stages.count - 1 {
+                    // Connector dash
+                    Rectangle()
+                        .fill(isComplete ? AppColors.success : AppColors.border)
+                        .frame(width: 8, height: 2)
                 }
             }
         }
     }
     
-    private var statusDetails: some View {
-        VStack(spacing: 12) {
-            if let timeRemaining = generationService.progress.estimatedTimeRemaining, timeRemaining > 0 {
-                HStack {
-                    Image(systemName: "clock")
-                        .font(.caption)
-                    Text("Estimated time: \(formatDuration(timeRemaining))")
-                        .font(.caption)
-                }
+    // MARK: - Live Stats Strip
+    private var liveStatsStrip: some View {
+        HStack(spacing: 0) {
+            liveStatItem(
+                icon: "clock",
+                value: formatElapsed(elapsedSeconds),
+                label: "Elapsed"
+            )
+            
+            Divider()
+                .frame(height: 32)
+                .background(AppColors.border)
+            
+            liveStatItem(
+                icon: "bolt.fill",
+                value: generationService.progress.stage == .complete ? "Done" :
+                       generationService.progress.stage == .preparing ? "Starting" : "Active",
+                label: "Status"
+            )
+            
+            Divider()
+                .frame(height: 32)
+                .background(AppColors.border)
+            
+            liveStatItem(
+                icon: "chart.bar.fill",
+                value: "\(Int(generationService.progress.stageProgress * 100))%",
+                label: "Stage"
+            )
+        }
+        .padding(.vertical, 14)
+        .background(AppColors.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+    
+    private func liveStatItem(icon: String, value: String, label: String) -> some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 10))
+                    .foregroundColor(stageColor)
+                Text(value)
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .foregroundColor(AppColors.textPrimary)
+                    .contentTransition(.numericText())
+                    .animation(.easeInOut(duration: 0.3), value: value)
+            }
+            Text(label)
+                .font(.system(size: 10))
                 .foregroundColor(AppColors.textTertiary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+    
+    // MARK: - Tips Carousel
+    private let processingTips: [String] = [
+        "Whisper AI analyzes audio spectrograms to recognize speech patterns",
+        "Tip: Shorter recordings process faster — try splitting long meetings",
+        "Your transcript will include punctuation and proper formatting",
+        "Audio is processed securely and never stored on external servers",
+        "System Enhancement corrects common speech recognition errors automatically",
+        "You can search and edit your transcript after processing",
+        "Pro tip: Clear audio with minimal background noise gives best results",
+    ]
+    
+    private var tipsCarousel: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "lightbulb.fill")
+                .font(.system(size: 13))
+                .foregroundColor(.orange)
+            
+            Text(processingTips[tipIndex % processingTips.count])
+                .font(.system(size: 12))
+                .foregroundColor(AppColors.textSecondary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .opacity(tipOpacity)
+                .animation(.easeInOut(duration: 0.4), value: tipOpacity)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppColors.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+    
+    private func startTipRotation() {
+        Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
+            withAnimation { tipOpacity = 0 }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                tipIndex += 1
+                withAnimation { tipOpacity = 1 }
             }
         }
+    }
+    
+    private func formatElapsed(_ totalSeconds: Int) -> String {
+        let m = totalSeconds / 60
+        let s = totalSeconds % 60
+        return String(format: "%d:%02d", m, s)
     }
     
     // MARK: - Completed Content
