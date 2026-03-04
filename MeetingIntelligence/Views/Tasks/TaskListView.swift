@@ -53,6 +53,9 @@ struct TaskListView: View {
     @State private var showCreateItem = false
     @State private var expandedGroups: Set<String> = []
     @State private var showErrorAlert = false
+    @State private var groupToDelete: MeetingGroup?
+    @State private var showDeleteGroupAlert = false
+    @State private var isDeletingGroup = false
     
     var onMenuTap: (() -> Void)?
     
@@ -236,22 +239,29 @@ struct TaskListView: View {
         ScrollView {
             LazyVStack(spacing: 16) {
                 ForEach(meetingGroups) { group in
-                    MeetingGroupCard(
-                        group: group,
-                        isExpanded: expandedGroups.contains(group.id),
-                        onToggle: {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                if expandedGroups.contains(group.id) {
-                                    expandedGroups.remove(group.id)
-                                } else {
-                                    expandedGroups.insert(group.id)
-                                }
-                            }
-                        },
-                        onTaskTap: { task in
-                            selectedTask = task
+                    SwipeToDeleteWrapper(
+                        onDelete: {
+                            groupToDelete = group
+                            showDeleteGroupAlert = true
                         }
-                    )
+                    ) {
+                        MeetingGroupCard(
+                            group: group,
+                            isExpanded: expandedGroups.contains(group.id),
+                            onToggle: {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    if expandedGroups.contains(group.id) {
+                                        expandedGroups.remove(group.id)
+                                    } else {
+                                        expandedGroups.insert(group.id)
+                                    }
+                                }
+                            },
+                            onTaskTap: { task in
+                                selectedTask = task
+                            }
+                        )
+                    }
                 }
             }
             .padding(16)
@@ -259,6 +269,166 @@ struct TaskListView: View {
         .refreshable {
             await viewModel.refreshTasks()
         }
+        .alert("Delete Action Item Group", isPresented: $showDeleteGroupAlert) {
+            Button("Cancel", role: .cancel) {
+                groupToDelete = nil
+            }
+            Button("Delete All", role: .destructive) {
+                if let group = groupToDelete {
+                    isDeletingGroup = true
+                    Task {
+                        let _ = await viewModel.deleteTaskGroup(group: group)
+                        isDeletingGroup = false
+                        groupToDelete = nil
+                    }
+                }
+            }
+        } message: {
+            if let group = groupToDelete {
+                Text("⚠️ This will permanently delete \"\(group.title)\" and all \(group.tasks.count) action item\(group.tasks.count == 1 ? "" : "s") within it.\n\nThis action cannot be reversed.")
+            }
+        }
+        .overlay {
+            if isDeletingGroup {
+                ZStack {
+                    Color.black.opacity(0.3)
+                        .ignoresSafeArea()
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .scaleEffect(1.3)
+                            .tint(.white)
+                        Text("Deleting...")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.white)
+                    }
+                    .padding(24)
+                    .background(.ultraThinMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Swipe To Delete Wrapper
+struct SwipeToDeleteWrapper<Content: View>: View {
+    let onDelete: () -> Void
+    let content: () -> Content
+    
+    @State private var offset: CGFloat = 0
+    @State private var isShowingDelete = false
+    @State private var deleteButtonScale: CGFloat = 0.01
+    
+    private let deleteThreshold: CGFloat = -80
+    private let snapThreshold: CGFloat = -40
+    
+    init(onDelete: @escaping () -> Void, @ViewBuilder content: @escaping () -> Content) {
+        self.onDelete = onDelete
+        self.content = content
+    }
+    
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            // Delete background
+            HStack {
+                Spacer()
+                
+                Button {
+                    // Trigger haptic
+                    let impact = UIImpactFeedbackGenerator(style: .heavy)
+                    impact.impactOccurred()
+                    
+                    // Animate card away and trigger delete
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        offset = 0
+                        isShowingDelete = false
+                        deleteButtonScale = 0.01
+                    }
+                    onDelete()
+                } label: {
+                    VStack(spacing: 4) {
+                        Image(systemName: "trash.fill")
+                            .font(.system(size: 20, weight: .semibold))
+                        Text("Delete")
+                            .font(.system(size: 11, weight: .bold))
+                    }
+                    .foregroundColor(.white)
+                    .frame(width: 80, height: 80)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.red, Color.red.opacity(0.85)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
+                            .shadow(color: .red.opacity(0.4), radius: 8, x: 0, y: 2)
+                    )
+                    .scaleEffect(deleteButtonScale)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.trailing, 4)
+            
+            // Main content
+            content()
+                .offset(x: offset)
+                .gesture(
+                    DragGesture(minimumDistance: 20)
+                        .onChanged { value in
+                            let translation = value.translation.width
+                            
+                            // Only allow left swipe
+                            if translation < 0 {
+                                // Apply rubber-band effect past threshold
+                                if translation < deleteThreshold {
+                                    let extra = translation - deleteThreshold
+                                    offset = deleteThreshold + extra * 0.3
+                                } else {
+                                    offset = translation
+                                }
+                                
+                                // Show delete button when threshold reached
+                                if translation < snapThreshold && !isShowingDelete {
+                                    isShowingDelete = true
+                                    let impact = UIImpactFeedbackGenerator(style: .medium)
+                                    impact.impactOccurred()
+                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
+                                        deleteButtonScale = 1.0
+                                    }
+                                } else if translation > snapThreshold && isShowingDelete {
+                                    isShowingDelete = false
+                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
+                                        deleteButtonScale = 0.01
+                                    }
+                                }
+                            } else {
+                                // Swipe right — reset
+                                offset = translation * 0.2
+                            }
+                        }
+                        .onEnded { value in
+                            let translation = value.translation.width
+                            
+                            if translation < snapThreshold {
+                                // Snap to show delete button
+                                withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
+                                    offset = deleteThreshold
+                                }
+                            } else {
+                                // Snap back
+                                withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
+                                    offset = 0
+                                    isShowingDelete = false
+                                    deleteButtonScale = 0.01
+                                }
+                            }
+                        }
+                )
+                .animation(.interactiveSpring(response: 0.3, dampingFraction: 0.8), value: offset)
+        }
+        .clipped()
     }
 }
 

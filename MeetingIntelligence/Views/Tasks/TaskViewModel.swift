@@ -314,6 +314,40 @@ class TaskViewModel: ObservableObject {
         return false
     }
     
+    /// Delete all tasks in a meeting group
+    func deleteTaskGroup(group: MeetingGroup) async -> Bool {
+        errorMessage = nil
+        isLoading = true
+        
+        var allDeleted = true
+        for task in group.tasks {
+            do {
+                let response = try await APIService.shared.deleteTask(id: task.id)
+                if response.success {
+                    tasks.removeAll { $0.id == task.id }
+                    if selectedTask?.id == task.id {
+                        selectedTask = nil
+                    }
+                } else {
+                    allDeleted = false
+                }
+            } catch {
+                allDeleted = false
+                print("❌ Failed to delete task \(task.id): \(error)")
+            }
+        }
+        
+        isLoading = false
+        
+        if allDeleted {
+            print("✅ Deleted all \(group.tasks.count) tasks in group '\(group.title)'")
+        } else {
+            errorMessage = "Some action items could not be deleted"
+        }
+        
+        return allDeleted
+    }
+    
     // MARK: - AI Extraction
     
     /// Extract action items from a transcript using AI
