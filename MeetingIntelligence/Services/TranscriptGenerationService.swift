@@ -182,8 +182,8 @@ class TranscriptGenerationService: ObservableObject {
     
     // MARK: - Public Methods
     
-    /// Generate transcript from audio file using enterprise-grade Speaker Diarization
-    /// Pipeline: Pyannote (speaker diarization) + Whisper (word-level transcription)
+    /// Generate transcript from audio file using server-side Whisper transcription
+    /// Pipeline: Upload audio → OpenAI Whisper API → Formatted transcript
     func generateTranscript(
         from audioURL: URL,
         language: SupportedLanguage? = nil,
@@ -212,10 +212,10 @@ class TranscriptGenerationService: ObservableObject {
             
             if cancellationRequested { throw TranscriptGenerationError.cancelled }
             
-            // Stage 2+3: Speaker Diarization + Transcription (combined in one server call)
-            updateProgress(stage: .diarizing, stageProgress: 0.0, message: "Analyzing speakers & transcribing...")
+            // Stage 2: Transcription via server-side Whisper
+            updateProgress(stage: .transcribing, stageProgress: 0.0, message: "Uploading audio for transcription...")
             
-            let diarizationResult = try await transcribeWithDiarization(
+            let (transcriptText, segments) = try await transcribeWithWhisper(
                 from: audioURL,
                 language: language,
                 meetingType: meetingType
@@ -225,43 +225,28 @@ class TranscriptGenerationService: ObservableObject {
             
             if cancellationRequested { throw TranscriptGenerationError.cancelled }
             
-            // Stage 4: Process & Format
+            // Stage 3: Process & Format
             updateProgress(stage: .processingAI, stageProgress: 0.0, message: "Formatting transcript...")
             
-            let (processedText, speakerBlocks) = processeDiarizedResult(diarizationResult)
+            let processedText = processTranscript(transcriptText)
             
             updateProgress(stage: .processingAI, stageProgress: 1.0, message: "Processing complete")
             
             if cancellationRequested { throw TranscriptGenerationError.cancelled }
             
-            // Stage 5: Finalize
+            // Stage 4: Finalize
             updateProgress(stage: .finalizing, stageProgress: 0.5, message: "Creating final transcript...")
             
-            let rawText = speakerBlocks.map { $0.content }.joined(separator: " ")
-            let speakers = diarizationResult["speakers"] as? [String] ?? []
-            let speakerCount = diarizationResult["speakerCount"] as? Int ?? speakers.count
-            
-            // Build segments from speaker blocks
-            let segments = speakerBlocks.map { block in
-                GeneratedTranscript.TranscriptSegment(
-                    text: block.content,
-                    startTime: block.startTime,
-                    endTime: block.endTime,
-                    confidence: block.confidence,
-                    speakerId: nil
-                )
-            }
-            
             let transcript = GeneratedTranscript(
-                rawText: rawText,
+                rawText: transcriptText,
                 processedText: processedText,
                 segments: segments,
-                speakerBlocks: speakerBlocks,
+                speakerBlocks: [],
                 duration: audioDuration,
                 wordCount: processedText.split(separator: " ").count,
-                speakerCount: speakerCount,
-                speakers: speakers,
-                isDiarized: true,
+                speakerCount: 0,
+                speakers: [],
+                isDiarized: false,
                 generatedAt: Date()
             )
             
@@ -396,20 +381,16 @@ class TranscriptGenerationService: ObservableObject {
         
         let languageCode = language?.id.components(separatedBy: "-").first ?? "en"
         
-        // Build multipart request to diarization endpoint
+        // ── Step 1: Upload audio and get job ID ──
         let boundary = "Boundary-\(UUID().uuidString)"
         var request = URLRequest(url: URL(string: backendDiarizationURL)!)
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 900 // 15 minutes for diarization
+        request.timeoutInterval = 120 // 2 minutes for upload only
         
         // Add Firebase auth token
-        do {
-            let token = try await FirebaseAuthService.shared.getIDToken()
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        } catch {
-            throw TranscriptGenerationError.transcriptionFailed("Authentication required. Please log in again.")
-        }
+        let authToken = try await FirebaseAuthService.shared.getIDToken()
+        request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
         
         // Read audio file
         updateProgress(stage: .diarizing, stageProgress: 0.05, message: "Reading audio file...")
@@ -421,20 +402,16 @@ class TranscriptGenerationService: ObservableObject {
         
         // Build multipart body
         var body = Data()
-        
-        // audio file
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
         body.append("Content-Disposition: form-data; name=\"audio\"; filename=\"\(fileName)\"\r\n".data(using: .utf8)!)
         body.append("Content-Type: \(mimeType)\r\n\r\n".data(using: .utf8)!)
         body.append(audioData)
         body.append("\r\n".data(using: .utf8)!)
         
-        // language field
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
         body.append("Content-Disposition: form-data; name=\"language\"\r\n\r\n".data(using: .utf8)!)
         body.append("\(languageCode)\r\n".data(using: .utf8)!)
         
-        // meetingType field
         if let meetingType = meetingType {
             body.append("--\(boundary)\r\n".data(using: .utf8)!)
             body.append("Content-Disposition: form-data; name=\"meetingType\"\r\n\r\n".data(using: .utf8)!)
@@ -442,65 +419,123 @@ class TranscriptGenerationService: ObservableObject {
         }
         
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
-        
         request.httpBody = body
         
         updateProgress(stage: .diarizing, stageProgress: 0.1, message: "Uploading \(String(format: "%.1f", fileSizeMB))MB for analysis...")
         
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 900
-        config.timeoutIntervalForResource = 900
-        let session = URLSession(configuration: config)
+        let uploadConfig = URLSessionConfiguration.default
+        uploadConfig.timeoutIntervalForRequest = 120
+        uploadConfig.timeoutIntervalForResource = 120
+        let uploadSession = URLSession(configuration: uploadConfig)
         
-        print("📡 Sending to: \(backendDiarizationURL)")
+        print("📡 Submitting to: \(backendDiarizationURL)")
         
-        updateProgress(stage: .diarizing, stageProgress: 0.2, message: "Identifying speakers & transcribing...")
-        let (data, response) = try await session.data(for: request)
+        let (submitData, submitResponse) = try await uploadSession.data(for: request)
         
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw TranscriptGenerationError.transcriptionFailed("Invalid response")
+        guard let submitHttp = submitResponse as? HTTPURLResponse else {
+            throw TranscriptGenerationError.transcriptionFailed("Invalid response from server")
         }
         
-        print("📊 HTTP Status: \(httpResponse.statusCode)")
+        print("📊 Submit HTTP Status: \(submitHttp.statusCode)")
         
-        if httpResponse.statusCode == 200 {
-            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let success = json["success"] as? Bool, success else {
-                let errJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                let errorMsg = errJson?["error"] as? String ?? "Unknown diarization error"
+        guard submitHttp.statusCode == 200 else {
+            if submitHttp.statusCode == 401 {
+                throw TranscriptGenerationError.transcriptionFailed("Authentication required. Please log in again.")
+            } else if submitHttp.statusCode == 503 {
+                let errJson = try? JSONSerialization.jsonObject(with: submitData) as? [String: Any]
+                let errorMsg = errJson?["error"] as? String ?? "Speaker diarization service is not available"
+                throw TranscriptGenerationError.transcriptionFailed(errorMsg)
+            }
+            let errJson = try? JSONSerialization.jsonObject(with: submitData) as? [String: Any]
+            let errorMsg = errJson?["error"] as? String ?? "Failed to submit diarization (HTTP \(submitHttp.statusCode))"
+            throw TranscriptGenerationError.transcriptionFailed(errorMsg)
+        }
+        
+        guard let submitJson = try JSONSerialization.jsonObject(with: submitData) as? [String: Any],
+              let jobId = submitJson["jobId"] as? String else {
+            throw TranscriptGenerationError.transcriptionFailed("Server did not return a job ID")
+        }
+        
+        print("✅ Job submitted: \(jobId)")
+        updateProgress(stage: .diarizing, stageProgress: 0.2, message: "Processing audio (this may take several minutes)...")
+        
+        // ── Step 2: Poll for results ──
+        let pollURL = "\(backendDiarizationURL)/jobs/\(jobId)"
+        let pollInterval: TimeInterval = 5.0  // Poll every 5 seconds
+        let maxPollTime: TimeInterval = 1800  // 30 minutes max
+        let pollStart = Date()
+        
+        let pollConfig = URLSessionConfiguration.default
+        pollConfig.timeoutIntervalForRequest = 15
+        pollConfig.timeoutIntervalForResource = 15
+        let pollSession = URLSession(configuration: pollConfig)
+        
+        while true {
+            let elapsed = Date().timeIntervalSince(pollStart)
+            if elapsed > maxPollTime {
+                throw TranscriptGenerationError.transcriptionFailed("Diarization timed out after \(Int(maxPollTime/60)) minutes")
+            }
+            
+            // Wait before polling
+            try await Task.sleep(nanoseconds: UInt64(pollInterval * 1_000_000_000))
+            
+            // Build poll request with fresh auth token
+            var pollRequest = URLRequest(url: URL(string: pollURL)!)
+            pollRequest.httpMethod = "GET"
+            pollRequest.timeoutInterval = 15
+            let freshToken = try await FirebaseAuthService.shared.getIDToken()
+            pollRequest.setValue("Bearer \(freshToken)", forHTTPHeaderField: "Authorization")
+            
+            let (pollData, pollResponse) = try await pollSession.data(for: pollRequest)
+            
+            guard let pollHttp = pollResponse as? HTTPURLResponse,
+                  pollHttp.statusCode == 200,
+                  let pollJson = try JSONSerialization.jsonObject(with: pollData) as? [String: Any],
+                  let status = pollJson["status"] as? String else {
+                // Non-200 or parse error — keep trying
+                print("⚠️ Poll returned unexpected response, retrying...")
+                continue
+            }
+            
+            let progress = pollJson["progress"] as? String ?? ""
+            let progressPct = min(0.2 + (elapsed / maxPollTime) * 0.7, 0.9) // Scale 0.2 → 0.9
+            updateProgress(stage: .diarizing, stageProgress: progressPct, message: progress.isEmpty ? "Processing..." : progress)
+            
+            print("🔄 Job \(jobId): status=\(status) progress=\"\(progress)\" (\(Int(elapsed))s)")
+            
+            if status == "complete" {
+                guard let result = pollJson["result"] as? [String: Any],
+                      let success = result["success"] as? Bool, success else {
+                    let errorMsg = (pollJson["result"] as? [String: Any])?["error"] as? String ?? "Diarization failed"
+                    throw TranscriptGenerationError.transcriptionFailed(errorMsg)
+                }
+                
+                let blockCount = (result["blocks"] as? [[String: Any]])?.count ?? 0
+                let speakerCount = result["speakerCount"] as? Int ?? 0
+                let totalWords = result["totalWords"] as? Int ?? 0
+                let procTime = result["processingTimeSeconds"] as? Double ?? 0
+                
+                print("============================================")
+                print("✅ DIARIZATION COMPLETE")
+                print("============================================")
+                print("📝 Blocks: \(blockCount)")
+                print("🔊 Speakers: \(speakerCount)")
+                print("📊 Words: \(totalWords)")
+                print("⏱️ Processing: \(String(format: "%.1f", procTime))s")
+                print("============================================")
+                
+                updateProgress(stage: .diarizing, stageProgress: 1.0, message: "\(speakerCount) speakers identified")
+                
+                return result
+            }
+            
+            if status == "failed" {
+                let errorMsg = (pollJson["result"] as? [String: Any])?["error"] as? String ?? "Diarization processing failed"
+                print("❌ Job failed: \(errorMsg)")
                 throw TranscriptGenerationError.transcriptionFailed(errorMsg)
             }
             
-            let blockCount = (json["blocks"] as? [[String: Any]])?.count ?? 0
-            let speakerCount = json["speakerCount"] as? Int ?? 0
-            let totalWords = json["totalWords"] as? Int ?? 0
-            let procTime = json["processingTimeSeconds"] as? Double ?? 0
-            
-            print("============================================")
-            print("✅ DIARIZATION RESPONSE")
-            print("============================================")
-            print("📝 Blocks: \(blockCount)")
-            print("🔊 Speakers: \(speakerCount)")
-            print("📊 Words: \(totalWords)")
-            print("⏱️ Processing: \(String(format: "%.1f", procTime))s")
-            print("============================================")
-            
-            updateProgress(stage: .diarizing, stageProgress: 1.0, message: "\(speakerCount) speakers identified")
-            
-            return json
-        } else if httpResponse.statusCode == 401 {
-            throw TranscriptGenerationError.transcriptionFailed("Authentication required. Please log in again.")
-        } else if httpResponse.statusCode == 503 {
-            // Python diarization service not running
-            let errJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            let errorMsg = errJson?["error"] as? String ?? "Speaker diarization service is not available"
-            throw TranscriptGenerationError.transcriptionFailed(errorMsg)
-        } else {
-            // Return the actual error instead of falling back to useless single-speaker transcription
-            let errJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            let errorMsg = errJson?["error"] as? String ?? "Diarization failed (HTTP \(httpResponse.statusCode))"
-            print("❌ Diarization endpoint returned \(httpResponse.statusCode): \(errorMsg)")
-            throw TranscriptGenerationError.transcriptionFailed(errorMsg)
+            // status == "processing" — continue polling
         }
     }
     
