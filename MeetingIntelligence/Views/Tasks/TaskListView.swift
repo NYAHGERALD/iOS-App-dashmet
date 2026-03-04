@@ -236,36 +236,41 @@ struct TaskListView: View {
     
     // MARK: - Grouped Action Items List
     private var groupedActionItemsList: some View {
-        ScrollView {
-            LazyVStack(spacing: 16) {
-                ForEach(meetingGroups) { group in
-                    SwipeToDeleteWrapper(
-                        onDelete: {
-                            groupToDelete = group
-                            showDeleteGroupAlert = true
-                        }
-                    ) {
-                        MeetingGroupCard(
-                            group: group,
-                            isExpanded: expandedGroups.contains(group.id),
-                            onToggle: {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    if expandedGroups.contains(group.id) {
-                                        expandedGroups.remove(group.id)
-                                    } else {
-                                        expandedGroups.insert(group.id)
-                                    }
-                                }
-                            },
-                            onTaskTap: { task in
-                                selectedTask = task
+        List {
+            ForEach(meetingGroups) { group in
+                MeetingGroupCard(
+                    group: group,
+                    isExpanded: expandedGroups.contains(group.id),
+                    onToggle: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            if expandedGroups.contains(group.id) {
+                                expandedGroups.remove(group.id)
+                            } else {
+                                expandedGroups.insert(group.id)
                             }
-                        )
+                        }
+                    },
+                    onTaskTap: { task in
+                        selectedTask = task
                     }
+                )
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    Button(role: .destructive) {
+                        groupToDelete = group
+                        showDeleteGroupAlert = true
+                    } label: {
+                        Label("Delete", systemImage: "trash.fill")
+                    }
+                    .tint(.red)
                 }
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
             }
-            .padding(16)
         }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(AppColors.background)
         .refreshable {
             await viewModel.refreshTasks()
         }
@@ -307,128 +312,6 @@ struct TaskListView: View {
                 }
             }
         }
-    }
-}
-
-// MARK: - Swipe To Delete Wrapper
-struct SwipeToDeleteWrapper<Content: View>: View {
-    let onDelete: () -> Void
-    let content: () -> Content
-    
-    @State private var offset: CGFloat = 0
-    @State private var isShowingDelete = false
-    @State private var deleteButtonScale: CGFloat = 0.01
-    
-    private let deleteThreshold: CGFloat = -80
-    private let snapThreshold: CGFloat = -40
-    
-    init(onDelete: @escaping () -> Void, @ViewBuilder content: @escaping () -> Content) {
-        self.onDelete = onDelete
-        self.content = content
-    }
-    
-    var body: some View {
-        ZStack(alignment: .trailing) {
-            // Delete background
-            HStack {
-                Spacer()
-                
-                Button {
-                    // Trigger haptic
-                    let impact = UIImpactFeedbackGenerator(style: .heavy)
-                    impact.impactOccurred()
-                    
-                    // Animate card away and trigger delete
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                        offset = 0
-                        isShowingDelete = false
-                        deleteButtonScale = 0.01
-                    }
-                    onDelete()
-                } label: {
-                    VStack(spacing: 4) {
-                        Image(systemName: "trash.fill")
-                            .font(.system(size: 20, weight: .semibold))
-                        Text("Delete")
-                            .font(.system(size: 11, weight: .bold))
-                    }
-                    .foregroundColor(.white)
-                    .frame(width: 80, height: 80)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(
-                                LinearGradient(
-                                    colors: [Color.red, Color.red.opacity(0.85)],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                            )
-                            .shadow(color: .red.opacity(0.4), radius: 8, x: 0, y: 2)
-                    )
-                    .scaleEffect(deleteButtonScale)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.trailing, 4)
-            
-            // Main content
-            content()
-                .offset(x: offset)
-                .gesture(
-                    DragGesture(minimumDistance: 20)
-                        .onChanged { value in
-                            let translation = value.translation.width
-                            
-                            // Only allow left swipe
-                            if translation < 0 {
-                                // Apply rubber-band effect past threshold
-                                if translation < deleteThreshold {
-                                    let extra = translation - deleteThreshold
-                                    offset = deleteThreshold + extra * 0.3
-                                } else {
-                                    offset = translation
-                                }
-                                
-                                // Show delete button when threshold reached
-                                if translation < snapThreshold && !isShowingDelete {
-                                    isShowingDelete = true
-                                    let impact = UIImpactFeedbackGenerator(style: .medium)
-                                    impact.impactOccurred()
-                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
-                                        deleteButtonScale = 1.0
-                                    }
-                                } else if translation > snapThreshold && isShowingDelete {
-                                    isShowingDelete = false
-                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
-                                        deleteButtonScale = 0.01
-                                    }
-                                }
-                            } else {
-                                // Swipe right — reset
-                                offset = translation * 0.2
-                            }
-                        }
-                        .onEnded { value in
-                            let translation = value.translation.width
-                            
-                            if translation < snapThreshold {
-                                // Snap to show delete button
-                                withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
-                                    offset = deleteThreshold
-                                }
-                            } else {
-                                // Snap back
-                                withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
-                                    offset = 0
-                                    isShowingDelete = false
-                                    deleteButtonScale = 0.01
-                                }
-                            }
-                        }
-                )
-                .animation(.interactiveSpring(response: 0.3, dampingFraction: 0.8), value: offset)
-        }
-        .clipped()
     }
 }
 
