@@ -57,6 +57,12 @@ struct TaskListView: View {
     @State private var showDeleteGroupAlert = false
     @State private var isDeletingGroup = false
     
+    // Multi-select mode
+    @State private var isSelectionMode = false
+    @State private var selectedTaskIds: Set<String> = []
+    @State private var showDeleteSelectedAlert = false
+    @State private var isDeletingSelected = false
+    
     var onMenuTap: (() -> Void)?
     
     // Group tasks by their meeting title so users know which meeting each action item came from.
@@ -121,27 +127,87 @@ struct TaskListView: View {
                     }
                 }
                 
-                // Floating + Button
-                VStack {
-                    Spacer()
-                    HStack {
+                // Floating + Button (hidden in selection mode)
+                if !isSelectionMode {
+                    VStack {
                         Spacer()
-                        Button {
-                            showCreateItem = true
-                        } label: {
-                            Image(systemName: "plus")
-                                .font(.system(size: 24, weight: .semibold))
-                                .foregroundColor(.white)
-                                .frame(width: 56, height: 56)
-                                .background(
-                                    Circle()
-                                        .fill(AppGradients.primary)
-                                        .shadow(color: AppColors.primary.opacity(0.4), radius: 8, x: 0, y: 4)
-                                )
+                        HStack {
+                            Spacer()
+                            Button {
+                                showCreateItem = true
+                            } label: {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 24, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .frame(width: 56, height: 56)
+                                    .background(
+                                        Circle()
+                                            .fill(AppGradients.primary)
+                                            .shadow(color: AppColors.primary.opacity(0.4), radius: 8, x: 0, y: 4)
+                                    )
+                            }
+                            .padding(.trailing, 20)
+                            .padding(.bottom, 20)
                         }
-                        .padding(.trailing, 20)
-                        .padding(.bottom, 20)
                     }
+                }
+                
+                // Bottom bar in selection mode
+                if isSelectionMode {
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    isSelectionMode = false
+                                    selectedTaskIds.removeAll()
+                                }
+                            } label: {
+                                Text("Cancel")
+                                    .font(.system(size: 16, weight: .medium))
+                                    .foregroundColor(AppColors.textPrimary)
+                                    .padding(.horizontal, 20)
+                                    .padding(.vertical, 10)
+                                    .background(AppColors.surface)
+                                    .clipShape(Capsule())
+                                    .shadow(color: Color.black.opacity(0.1), radius: 4, y: 2)
+                            }
+                            
+                            Spacer()
+                            
+                            if !selectedTaskIds.isEmpty {
+                                Text("\(selectedTaskIds.count) selected")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundColor(AppColors.textSecondary)
+                            }
+                            
+                            Spacer()
+                            
+                            if !selectedTaskIds.isEmpty {
+                                Button {
+                                    showDeleteSelectedAlert = true
+                                } label: {
+                                    Image(systemName: "trash.fill")
+                                        .font(.system(size: 18, weight: .semibold))
+                                        .foregroundColor(.white)
+                                        .frame(width: 44, height: 44)
+                                        .background(
+                                            Circle()
+                                                .fill(Color.red)
+                                                .shadow(color: Color.red.opacity(0.4), radius: 6, y: 2)
+                                        )
+                                }
+                                .transition(.scale.combined(with: .opacity))
+                            }
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 12)
+                        .background(
+                            AppColors.surface
+                                .shadow(color: Color.black.opacity(0.08), radius: 8, y: -2)
+                        )
+                    }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
@@ -160,16 +226,35 @@ struct TaskListView: View {
                     }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Menu {
+                    if isSelectionMode {
+                        // Select All button
                         Button {
-                            showAssignedItems = true
+                            let allTaskIds = Set(meetingGroups.flatMap { $0.tasks.map { $0.id } })
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                if selectedTaskIds == allTaskIds {
+                                    selectedTaskIds.removeAll()
+                                } else {
+                                    selectedTaskIds = allTaskIds
+                                }
+                            }
                         } label: {
-                            Label("Assigned Action Items", systemImage: "person.badge.clock")
+                            let allTaskIds = Set(meetingGroups.flatMap { $0.tasks.map { $0.id } })
+                            Text(selectedTaskIds == allTaskIds ? "Deselect All" : "Select All")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(AppColors.primary)
                         }
-                    } label: {
-                        Image(systemName: "line.3.horizontal.decrease.circle")
-                            .font(.system(size: 18))
-                            .foregroundColor(AppColors.textPrimary)
+                    } else {
+                        Menu {
+                            Button {
+                                showAssignedItems = true
+                            } label: {
+                                Label("Assigned Action Items", systemImage: "person.badge.clock")
+                            }
+                        } label: {
+                            Image(systemName: "line.3.horizontal.decrease.circle")
+                                .font(.system(size: 18))
+                                .foregroundColor(AppColors.textPrimary)
+                        }
                     }
                 }
             }
@@ -220,6 +305,43 @@ struct TaskListView: View {
             } message: {
                 Text(viewModel.errorMessage ?? "")
             }
+            .alert("Delete Selected Action Items", isPresented: $showDeleteSelectedAlert) {
+                Button("Cancel", role: .cancel) { }
+                Button("Delete \(selectedTaskIds.count) Item\(selectedTaskIds.count == 1 ? "" : "s")", role: .destructive) {
+                    isDeletingSelected = true
+                    Task {
+                        for taskId in selectedTaskIds {
+                            let _ = await viewModel.deleteTask(taskId: taskId)
+                        }
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            selectedTaskIds.removeAll()
+                            isSelectionMode = false
+                            isDeletingSelected = false
+                        }
+                    }
+                }
+            } message: {
+                Text("⚠️ This will permanently delete \(selectedTaskIds.count) action item\(selectedTaskIds.count == 1 ? "" : "s").\n\nThis action cannot be reversed.")
+            }
+            .overlay {
+                if isDeletingSelected {
+                    ZStack {
+                        Color.black.opacity(0.3)
+                            .ignoresSafeArea()
+                        VStack(spacing: 12) {
+                            ProgressView()
+                                .scaleEffect(1.3)
+                                .tint(.white)
+                            Text("Deleting items...")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(.white)
+                        }
+                        .padding(24)
+                        .background(.ultraThinMaterial)
+                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                    }
+                }
+            }
             .task {
                 // Configure view model with actual logged-in user
                 if let userId = appState.currentUserID {
@@ -241,6 +363,8 @@ struct TaskListView: View {
                 MeetingGroupCard(
                     group: group,
                     isExpanded: expandedGroups.contains(group.id),
+                    isSelectionMode: isSelectionMode,
+                    selectedTaskIds: $selectedTaskIds,
                     onToggle: {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             if expandedGroups.contains(group.id) {
@@ -251,7 +375,24 @@ struct TaskListView: View {
                         }
                     },
                     onTaskTap: { task in
-                        selectedTask = task
+                        if isSelectionMode {
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                if selectedTaskIds.contains(task.id) {
+                                    selectedTaskIds.remove(task.id)
+                                } else {
+                                    selectedTaskIds.insert(task.id)
+                                }
+                            }
+                        } else {
+                            selectedTask = task
+                        }
+                    },
+                    onLongPress: {
+                        let impact = UIImpactFeedbackGenerator(style: .medium)
+                        impact.impactOccurred()
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            isSelectionMode = true
+                        }
                     }
                 )
                 .contentShape(Rectangle())
@@ -320,8 +461,11 @@ struct TaskListView: View {
 struct MeetingGroupCard: View {
     let group: MeetingGroup
     let isExpanded: Bool
+    var isSelectionMode: Bool = false
+    @Binding var selectedTaskIds: Set<String>
     let onToggle: () -> Void
     let onTaskTap: (TaskItem) -> Void
+    var onLongPress: (() -> Void)? = nil
     
     var body: some View {
         VStack(spacing: 0) {
@@ -383,11 +527,17 @@ struct MeetingGroupCard: View {
             if isExpanded {
                 VStack(spacing: 0) {
                     ForEach(group.tasks) { task in
-                        GroupedTaskRow(task: task, onTap: { onTaskTap(task) })
+                        GroupedTaskRow(
+                            task: task,
+                            isSelectionMode: isSelectionMode,
+                            isSelected: selectedTaskIds.contains(task.id),
+                            onTap: { onTaskTap(task) },
+                            onLongPress: { onLongPress?() }
+                        )
                         
                         if task.id != group.tasks.last?.id {
                             Divider()
-                                .padding(.leading, 52)
+                                .padding(.leading, isSelectionMode ? 84 : 52)
                         }
                     }
                 }
@@ -423,13 +573,25 @@ private struct TaskGroupStatusBadge: View {
 // MARK: - Grouped Task Row
 struct GroupedTaskRow: View {
     let task: TaskItem
+    var isSelectionMode: Bool = false
+    var isSelected: Bool = false
     let onTap: () -> Void
+    var onLongPress: (() -> Void)? = nil
     
     var body: some View {
         Button {
             onTap()
         } label: {
             HStack(spacing: 12) {
+                // Checkbox (selection mode)
+                if isSelectionMode {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 22))
+                        .foregroundColor(isSelected ? AppColors.primary : AppColors.textTertiary)
+                        .animation(.easeInOut(duration: 0.15), value: isSelected)
+                        .transition(.scale.combined(with: .opacity))
+                }
+                
                 // Status Icon
                 Image(systemName: task.status.icon)
                     .font(.system(size: 16))
@@ -489,15 +651,24 @@ struct GroupedTaskRow: View {
                     }
                 }
                 
-                // Chevron
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(AppColors.textTertiary)
+                // Chevron (hidden in selection mode)
+                if !isSelectionMode {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(AppColors.textTertiary)
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
+            .background(isSelected ? AppColors.primary.opacity(0.06) : Color.clear)
         }
         .buttonStyle(.plain)
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.5)
+                .onEnded { _ in
+                    onLongPress?()
+                }
+        )
     }
 }
 
