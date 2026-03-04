@@ -15,6 +15,18 @@ struct MeetingGroup: Identifiable {
     let meetingDate: String?
     let tasks: [TaskItem]
     
+    /// Earliest createdAt among tasks — represents when action items were extracted/created
+    var createdDate: Date? {
+        tasks.compactMap { $0.createdAt }.min()
+    }
+    
+    var formattedCreatedDate: String? {
+        guard let date = createdDate else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, yyyy 'at' h:mm a"
+        return formatter.string(from: date)
+    }
+    
     var pendingCount: Int {
         tasks.filter { $0.status == .pending }.count
     }
@@ -276,6 +288,12 @@ struct MeetingGroupCard: View {
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundColor(AppColors.textPrimary)
                             .lineLimit(1)
+                        
+                        if let dateStr = group.formattedCreatedDate {
+                            Text(dateStr)
+                                .font(.system(size: 12))
+                                .foregroundColor(AppColors.textTertiary)
+                        }
                     }
                     
                     Spacer()
