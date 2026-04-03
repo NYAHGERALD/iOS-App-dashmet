@@ -1173,6 +1173,11 @@ struct AISummaryView: View {
                     generationPhase = .ready
                 }
                 
+                // Auto-save to database so summary syncs across platforms
+                if let summary = localSummary {
+                    saveSummaryToDatabase(summary)
+                }
+                
             } catch {
                 await MainActor.run {
                     errorMessage = error.localizedDescription

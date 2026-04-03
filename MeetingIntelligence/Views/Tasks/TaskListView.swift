@@ -347,8 +347,6 @@ struct TaskListView: View {
                 if let userId = appState.currentUserID {
                     viewModel.configure(userId: userId, organizationId: appState.organizationId)
                     await viewModel.fetchTasks()
-                    // Expand all groups by default
-                    expandedGroups = Set(meetingGroups.map { $0.id })
                 } else {
                     print("⚠️ TaskListView: No user ID available")
                 }

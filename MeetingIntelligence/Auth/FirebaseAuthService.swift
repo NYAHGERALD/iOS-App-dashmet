@@ -97,6 +97,7 @@ class FirebaseAuthService: ObservableObject {
             throw AuthError.notAuthenticated
         }
         
+        print("🔑 Firebase user - UID: \(user.uid), email: \(user.email ?? "nil"), phone: \(user.phoneNumber ?? "nil")")
         return try await user.getIDToken()
     }
     

@@ -210,8 +210,10 @@ class TaskViewModel: ObservableObject {
             description: nil,
             status: status.rawValue,
             priority: nil,
+            startDate: nil,
             dueDate: nil,
             assigneeId: nil,
+            departmentId: nil,
             progress: nil
         )
         
@@ -243,8 +245,10 @@ class TaskViewModel: ObservableObject {
         description: String? = nil,
         status: TaskStatus? = nil,
         priority: TaskPriority? = nil,
+        startDate: Date? = nil,
         dueDate: Date? = nil,
         assigneeId: String? = nil,
+        departmentId: String? = nil,
         progress: Int? = nil
     ) async -> Bool {
         errorMessage = nil
@@ -254,8 +258,10 @@ class TaskViewModel: ObservableObject {
             description: description,
             status: status?.rawValue,
             priority: priority?.rawValue,
+            startDate: startDate?.ISO8601Format(),
             dueDate: dueDate?.ISO8601Format(),
             assigneeId: assigneeId,
+            departmentId: departmentId,
             progress: progress
         )
         

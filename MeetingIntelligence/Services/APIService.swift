@@ -1233,6 +1233,311 @@ class APIService {
             throw APIServiceError.serverError(error?.error ?? "Failed to delete profile picture")
         }
     }
+    
+    // MARK: - Workplace Safety Assessments
+    
+    /// Get all workplace safety assessments
+    func getWorkplaceSafetyAssessments() async throws -> SafetyAssessmentsResponse {
+        let url = URL(string: "\(baseURL)/workplace-safety")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = try? await FirebaseAuthService.shared.getIDToken() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIServiceError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            let decoder = JSONDecoder()
+            return try decoder.decode(SafetyAssessmentsResponse.self, from: data)
+        } else {
+            let error = try? JSONDecoder().decode(APIError.self, from: data)
+            throw APIServiceError.serverError(error?.error ?? "Failed to fetch assessments")
+        }
+    }
+    
+    /// Get a single workplace safety assessment by ID
+    func getWorkplaceSafetyAssessment(id: String) async throws -> SafetyAssessmentResponse {
+        let url = URL(string: "\(baseURL)/workplace-safety/\(id)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = try? await FirebaseAuthService.shared.getIDToken() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIServiceError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            return try JSONDecoder().decode(SafetyAssessmentResponse.self, from: data)
+        } else {
+            let error = try? JSONDecoder().decode(APIError.self, from: data)
+            throw APIServiceError.serverError(error?.error ?? "Failed to fetch assessment")
+        }
+    }
+    
+    /// Get a draft assessment by assessment number
+    func getWorkplaceSafetyDraft(assessmentNumber: String) async throws -> SafetyAssessmentResponse {
+        let encoded = assessmentNumber.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? assessmentNumber
+        let url = URL(string: "\(baseURL)/workplace-safety/by-number/\(encoded)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = try? await FirebaseAuthService.shared.getIDToken() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIServiceError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            return try JSONDecoder().decode(SafetyAssessmentResponse.self, from: data)
+        } else {
+            let error = try? JSONDecoder().decode(APIError.self, from: data)
+            throw APIServiceError.serverError(error?.error ?? "No draft found")
+        }
+    }
+    
+    /// Create or update a workplace safety assessment (auto-save draft)
+    func saveWorkplaceSafetyAssessment(payload: [String: Any]) async throws -> SafetyAssessmentResponse {
+        let url = URL(string: "\(baseURL)/workplace-safety")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = try? await FirebaseAuthService.shared.getIDToken() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIServiceError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 || httpResponse.statusCode == 201 {
+            return try JSONDecoder().decode(SafetyAssessmentResponse.self, from: data)
+        } else {
+            let error = try? JSONDecoder().decode(APIError.self, from: data)
+            throw APIServiceError.serverError(error?.error ?? "Failed to save assessment")
+        }
+    }
+    
+    /// Update an existing workplace safety assessment by ID
+    func updateWorkplaceSafetyAssessment(id: String, payload: [String: Any]) async throws -> SafetyAssessmentResponse {
+        let url = URL(string: "\(baseURL)/workplace-safety/\(id)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = try? await FirebaseAuthService.shared.getIDToken() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIServiceError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            return try JSONDecoder().decode(SafetyAssessmentResponse.self, from: data)
+        } else {
+            let error = try? JSONDecoder().decode(APIError.self, from: data)
+            throw APIServiceError.serverError(error?.error ?? "Failed to update assessment")
+        }
+    }
+    
+    /// Submit a workplace safety assessment
+    func submitWorkplaceSafetyAssessment(id: String, employeeSignatureUrl: String? = nil, teamLeaderSignatureUrl: String? = nil) async throws -> SafetyAssessmentResponse {
+        let url = URL(string: "\(baseURL)/workplace-safety/\(id)/submit")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = try? await FirebaseAuthService.shared.getIDToken() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        // Build body with signature data
+        var body: [String: Any] = [:]
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime]
+        let now = isoFormatter.string(from: Date())
+        
+        if let empSig = employeeSignatureUrl {
+            body["employeeSignatureUrl"] = empSig
+            body["employeeSignedAt"] = now
+        }
+        if let tlSig = teamLeaderSignatureUrl {
+            body["teamLeaderSignatureUrl"] = tlSig
+            body["teamLeaderSignedAt"] = now
+        }
+        
+        if !body.isEmpty {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIServiceError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            return try JSONDecoder().decode(SafetyAssessmentResponse.self, from: data)
+        } else {
+            let error = try? JSONDecoder().decode(APIError.self, from: data)
+            throw APIServiceError.serverError(error?.error ?? "Failed to submit assessment")
+        }
+    }
+    
+    /// Revert a submitted assessment back to draft for editing
+    func editWorkplaceSafetyAssessment(id: String) async throws -> SafetyAssessmentResponse {
+        let url = URL(string: "\(baseURL)/workplace-safety/\(id)/edit")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = try? await FirebaseAuthService.shared.getIDToken() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIServiceError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            return try JSONDecoder().decode(SafetyAssessmentResponse.self, from: data)
+        } else {
+            let error = try? JSONDecoder().decode(APIError.self, from: data)
+            throw APIServiceError.serverError(error?.error ?? "Failed to edit assessment")
+        }
+    }
+    
+    /// Permanently delete a workplace safety assessment (requires confirmation number)
+    func deleteWorkplaceSafetyAssessment(id: String, confirmNumber: String) async throws {
+        let encodedConfirm = confirmNumber.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? confirmNumber
+        let url = URL(string: "\(baseURL)/workplace-safety/\(id)?confirmNumber=\(encodedConfirm)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = try? await FirebaseAuthService.shared.getIDToken() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        print("🗑️ DELETE request: \(url.absoluteString)")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIServiceError.invalidResponse
+        }
+        
+        let responseBody = String(data: data, encoding: .utf8) ?? "(no body)"
+        print("🗑️ DELETE response status: \(httpResponse.statusCode), body: \(responseBody)")
+        
+        if httpResponse.statusCode != 200 {
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                let error = json["error"] as? String ?? "Unknown error"
+                let details = json["details"] as? String
+                let fullError = details != nil ? "\(error): \(details!)" : error
+                throw APIServiceError.serverError(fullError)
+            }
+            throw APIServiceError.serverError("Failed to delete assessment (HTTP \(httpResponse.statusCode))")
+        }
+    }
+    
+    /// Add a photo record to an assessment (after Firebase upload)
+    func addPhotoToAssessment(assessmentId: String, fileName: String, fileUrl: String, fileSize: Int?, mimeType: String?, itemId: String?, sectionId: String?) async throws -> WSAPhotoResponse {
+        let url = URL(string: "\(baseURL)/workplace-safety/\(assessmentId)/photos")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = try? await FirebaseAuthService.shared.getIDToken() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        var body: [String: Any] = [
+            "fileName": fileName,
+            "fileUrl": fileUrl,
+        ]
+        if let fileSize = fileSize { body["fileSize"] = fileSize }
+        if let mimeType = mimeType { body["mimeType"] = mimeType }
+        if let itemId = itemId { body["itemId"] = itemId }
+        if let sectionId = sectionId { body["sectionId"] = sectionId }
+        
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIServiceError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 201 || httpResponse.statusCode == 200 {
+            return try JSONDecoder().decode(WSAPhotoResponse.self, from: data)
+        } else {
+            let error = try? JSONDecoder().decode(APIError.self, from: data)
+            throw APIServiceError.serverError(error?.error ?? "Failed to add photo")
+        }
+    }
+    
+    /// Delete a photo from an assessment
+    func deletePhotoFromAssessment(assessmentId: String, photoId: String) async throws {
+        let url = URL(string: "\(baseURL)/workplace-safety/\(assessmentId)/photos/\(photoId)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = try? await FirebaseAuthService.shared.getIDToken() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let (_, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIServiceError.invalidResponse
+        }
+        
+        if httpResponse.statusCode != 200 {
+            throw APIServiceError.serverError("Failed to delete photo")
+        }
+    }
+}
+
+// MARK: - WSAPhoto Response
+struct WSAPhotoResponse: Codable {
+    let success: Bool
+    let data: WSAPhotoData
+    let message: String?
+}
+
+struct WSAPhotoData: Codable {
+    let photo: WSAPhoto
 }
 
 // MARK: - User Profile Response Models
@@ -1291,7 +1596,7 @@ struct DepartmentInfo: Codable, Identifiable, Hashable {
     let id: String
     let name: String
     let description: String?
-    let facilityId: String
+    let facilityId: String?
     let createdAt: String?
     let updatedAt: String?
     let Facility: DepartmentFacility?

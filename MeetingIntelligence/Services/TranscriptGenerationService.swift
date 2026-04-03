@@ -158,6 +158,9 @@ class TranscriptGenerationService: ObservableObject {
     private var transcriptionStartTime: Date?
     private var audioDuration: TimeInterval = 0
     private var currentTask: URLSessionTask?
+    private var downloadedTempURL: URL?  // Temp file for remote audio downloads
+    private var progressSimulationTask: Task<Void, Never>?
+    private var realWorkDone = false
     
     // Backend API endpoints
     private let backendTranscriptionURL = "https://dashmet-rca-api.onrender.com/api/transcripts/transcribe"
@@ -198,16 +201,27 @@ class TranscriptGenerationService: ObservableObject {
         cancellationRequested = false
         error = nil
         generatedTranscript = nil
+        realWorkDone = false
         transcriptionStartTime = Date()
         
-        defer {
-            isGenerating = false
-        }
+        // Start smooth progress simulation (replaces discrete jumps)
+        startProgressSimulation()
         
         do {
-            // Stage 1: Prepare audio
-            updateProgress(stage: .preparing, stageProgress: 0.0, message: "Validating audio file...")
-            try await prepareAudio(from: audioURL)
+            // Stage 1: Prepare audio (handle both local and remote URLs)
+            updateProgress(stage: .preparing, stageProgress: 0.0, message: "Preparing audio...")
+            
+            let localAudioURL: URL
+            if audioURL.scheme == "https" || audioURL.scheme == "http" {
+                // Remote URL (e.g. Firebase Storage) — download to temp file first
+                updateProgress(stage: .preparing, stageProgress: 0.1, message: "Downloading audio from cloud...")
+                localAudioURL = try await downloadRemoteAudio(from: audioURL)
+                updateProgress(stage: .preparing, stageProgress: 0.7, message: "Validating downloaded audio...")
+            } else {
+                localAudioURL = audioURL
+            }
+            
+            try await prepareAudio(from: localAudioURL)
             updateProgress(stage: .preparing, stageProgress: 1.0, message: "Audio validated")
             
             if cancellationRequested { throw TranscriptGenerationError.cancelled }
@@ -216,7 +230,7 @@ class TranscriptGenerationService: ObservableObject {
             updateProgress(stage: .transcribing, stageProgress: 0.0, message: "Uploading audio for transcription...")
             
             let (transcriptText, segments) = try await transcribeWithWhisper(
-                from: audioURL,
+                from: localAudioURL,
                 language: language,
                 meetingType: meetingType
             )
@@ -250,19 +264,35 @@ class TranscriptGenerationService: ObservableObject {
                 generatedAt: Date()
             )
             
-            updateProgress(stage: .complete, stageProgress: 1.0, message: "Transcript ready!")
+            // Signal real work is done — simulation will accelerate to 100%
+            realWorkDone = true
+            
+            // Wait for progress simulation to reach 100% smoothly
+            await progressSimulationTask?.value
+            
+            // Now reveal the completed transcript
             generatedTranscript = transcript
+            isGenerating = false
+            cleanupTempFile()
             
             return transcript
             
         } catch let error as TranscriptGenerationError {
+            realWorkDone = true
+            progressSimulationTask?.cancel()
             updateProgress(stage: .failed, stageProgress: 0.0, message: error.localizedDescription)
             self.error = error
+            isGenerating = false
+            cleanupTempFile()
             throw error
         } catch {
+            realWorkDone = true
+            progressSimulationTask?.cancel()
             let genError = TranscriptGenerationError.transcriptionFailed(error.localizedDescription)
             updateProgress(stage: .failed, stageProgress: 0.0, message: error.localizedDescription)
             self.error = genError
+            isGenerating = false
+            cleanupTempFile()
             throw genError
         }
     }
@@ -271,6 +301,7 @@ class TranscriptGenerationService: ObservableObject {
     func cancel() {
         cancellationRequested = true
         currentTask?.cancel()
+        progressSimulationTask?.cancel()
     }
     
     /// Reset service state
@@ -280,11 +311,56 @@ class TranscriptGenerationService: ObservableObject {
         progress = .initial
         generatedTranscript = nil
         error = nil
+        realWorkDone = false
+        cleanupTempFile()
     }
     
     // MARK: - Private Methods
     
+    /// Download remote audio (e.g. Firebase Storage URL) to a local temp file
+    private func downloadRemoteAudio(from remoteURL: URL) async throws -> URL {
+        print("📥 Downloading remote audio from: \(remoteURL.absoluteString.prefix(100))...")
+        
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 120
+        config.timeoutIntervalForResource = 300
+        let session = URLSession(configuration: config)
+        
+        let (data, response) = try await session.data(from: remoteURL)
+        
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+            throw TranscriptGenerationError.transcriptionFailed("Failed to download audio (HTTP \(statusCode))")
+        }
+        
+        // Write to temp file
+        let tempDir = FileManager.default.temporaryDirectory
+        let fileName = "transcript_download_\(Int(Date().timeIntervalSince1970)).m4a"
+        let tempURL = tempDir.appendingPathComponent(fileName)
+        try data.write(to: tempURL)
+        
+        downloadedTempURL = tempURL
+        
+        let sizeMB = Double(data.count) / 1024.0 / 1024.0
+        print("📥 Downloaded: \(String(format: "%.2f", sizeMB))MB → \(tempURL.lastPathComponent)")
+        
+        return tempURL
+    }
+    
+    /// Clean up any downloaded temp file
+    private func cleanupTempFile() {
+        if let tempURL = downloadedTempURL {
+            try? FileManager.default.removeItem(at: tempURL)
+            downloadedTempURL = nil
+        }
+    }
+    
     private func updateProgress(stage: TranscriptGenerationStage, stageProgress: Double, message: String) {
+        // When smooth simulation is active, only allow failure updates through
+        if progressSimulationTask != nil && stage != .failed {
+            return
+        }
+        
         let stageWeights: [TranscriptGenerationStage: (start: Double, weight: Double)] = [
             .preparing: (0.0, 0.05),
             .diarizing: (0.05, 0.40),
@@ -312,6 +388,111 @@ class TranscriptGenerationService: ObservableObject {
             statusMessage: message,
             estimatedTimeRemaining: estimatedTime
         )
+    }
+    
+    // MARK: - Smooth Progress Simulation
+    
+    /// Start a smooth, continuous progress simulation that runs independently
+    /// of the actual pipeline work. Prevents progress from jumping.
+    private func startProgressSimulation() {
+        progressSimulationTask?.cancel()
+        realWorkDone = false
+        
+        progressSimulationTask = Task { @MainActor in
+            let tickInterval: TimeInterval = 0.05 // 50ms per tick for smoothness
+            var elapsed: TimeInterval = 0
+            let targetDuration: TimeInterval = 90 // ~90s to reach ~85%
+            let maxBeforeDone: Double = 0.85
+            
+            // Phase 1: Gradual increase to ~85% (cubic ease-out)
+            while !realWorkDone && !cancellationRequested && !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(tickInterval * 1_000_000_000))
+                elapsed += tickInterval
+                
+                let t = min(elapsed / targetDuration, 1.0)
+                let eased = 1.0 - pow(1.0 - t, 3) // cubic ease-out: fast start, slows toward end
+                let simulatedProgress = min(maxBeforeDone * eased, maxBeforeDone)
+                
+                applySimulatedProgress(simulatedProgress)
+            }
+            
+            if cancellationRequested || Task.isCancelled { return }
+            
+            // Phase 2: Accelerate from current position to 100% over ~2 seconds
+            let startProgress = progress.overallProgress
+            let accelerationDuration: TimeInterval = 2.0
+            var accelElapsed: TimeInterval = 0
+            
+            while accelElapsed < accelerationDuration && !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(tickInterval * 1_000_000_000))
+                accelElapsed += tickInterval
+                
+                let t = min(accelElapsed / accelerationDuration, 1.0)
+                let eased = t * t * (3.0 - 2.0 * t) // smoothstep
+                let p = startProgress + (1.0 - startProgress) * eased
+                
+                applySimulatedProgress(min(p, 1.0))
+            }
+            
+            // Ensure we hit exactly 100%
+            progress = TranscriptProgress(
+                stage: .complete,
+                overallProgress: 1.0,
+                stageProgress: 1.0,
+                statusMessage: "Transcript ready!",
+                estimatedTimeRemaining: nil
+            )
+        }
+    }
+    
+    /// Apply a simulated progress value, mapping to appropriate stage and message
+    private func applySimulatedProgress(_ p: Double) {
+        let (stage, message) = simulatedStageInfo(for: p)
+        
+        progress = TranscriptProgress(
+            stage: stage,
+            overallProgress: p,
+            stageProgress: simulatedStageProgress(for: p, stage: stage),
+            statusMessage: message,
+            estimatedTimeRemaining: nil
+        )
+    }
+    
+    /// Map overall progress to the appropriate stage and status message
+    private func simulatedStageInfo(for p: Double) -> (TranscriptGenerationStage, String) {
+        switch p {
+        case ..<0.05:
+            return (.preparing, "Preparing audio...")
+        case 0.05..<0.12:
+            return (.transcribing, "Uploading audio for transcription...")
+        case 0.12..<0.25:
+            return (.transcribing, "Processing audio...")
+        case 0.25..<0.40:
+            return (.transcribing, "Analyzing speech patterns...")
+        case 0.40..<0.55:
+            return (.transcribing, "Recognizing words...")
+        case 0.55..<0.65:
+            return (.transcribing, "Building transcript...")
+        case 0.65..<0.75:
+            return (.transcribing, "Refining accuracy...")
+        case 0.75..<0.85:
+            return (.processingAI, "Enhancing transcript...")
+        case 0.85..<0.95:
+            return (.finalizing, "Finalizing transcript...")
+        default:
+            return (.complete, "Transcript ready!")
+        }
+    }
+    
+    /// Calculate stage-specific progress from overall progress
+    private func simulatedStageProgress(for p: Double, stage: TranscriptGenerationStage) -> Double {
+        switch stage {
+        case .preparing: return min(p / 0.05, 1.0)
+        case .transcribing: return min((p - 0.05) / 0.70, 1.0)
+        case .processingAI: return min((p - 0.75) / 0.10, 1.0)
+        case .finalizing: return min((p - 0.85) / 0.15, 1.0)
+        default: return 1.0
+        }
     }
     
     private func prepareAudio(from url: URL) async throws {

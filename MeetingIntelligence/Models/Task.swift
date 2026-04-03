@@ -212,6 +212,11 @@ struct TaskMeeting: Codable, Identifiable, Hashable {
     }
 }
 
+struct TaskDepartment: Codable, Identifiable, Hashable {
+    let id: String
+    let name: String
+}
+
 // MARK: - Task Model
 struct TaskItem: Codable, Identifiable, Hashable {
     let id: String
@@ -219,6 +224,7 @@ struct TaskItem: Codable, Identifiable, Hashable {
     let description: String?
     let status: TaskStatus
     let priority: TaskPriority
+    let startDate: Date?
     let dueDate: Date?
     let completedAt: Date?
     
@@ -243,6 +249,10 @@ struct TaskItem: Codable, Identifiable, Hashable {
     // Organization context
     let organizationId: String?
     let facilityId: String?
+    
+    // Department assignment
+    let departmentId: String?
+    let department: TaskDepartment?
     
     // Meeting reference
     let meetingId: String?
@@ -437,8 +447,10 @@ struct UpdateTaskRequest: Codable {
     let description: String?
     let status: String?
     let priority: String?
+    let startDate: String?
     let dueDate: String?
     let assigneeId: String?
+    let departmentId: String?
     let progress: Int?
 }
 

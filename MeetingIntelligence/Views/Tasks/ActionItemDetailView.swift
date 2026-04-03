@@ -25,7 +25,14 @@ struct ActionItemDetailView: View {
     @State private var editStatus: TaskStatus = .pending
     @State private var editDueDate: Date = Date()
     @State private var hasDueDate: Bool = false
+    @State private var editStartDate: Date = Date()
+    @State private var hasStartDate: Bool = false
     @State private var editProgress: Double = 0
+    
+    // Department
+    @State private var departments: [DepartmentInfo] = []
+    @State private var selectedDepartmentId: String? = nil
+    @State private var isLoadingDepartments: Bool = false
     
     @State private var showAddComment = false
     @State private var newCommentText = ""
@@ -82,6 +89,9 @@ struct ActionItemDetailView: View {
                     
                     // Assignees Section
                     assigneesSection
+                    
+                    // Department Section
+                    departmentSection
                     
                     // Details Section
                     detailsSection
@@ -301,7 +311,27 @@ struct ActionItemDetailView: View {
             }
             
             // Meta Info Row
-            HStack(spacing: 20) {
+            VStack(alignment: .leading, spacing: 12) {
+                // Start Date
+                if isEditing {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Toggle("Start Date", isOn: $hasStartDate)
+                            .font(.system(size: 14))
+                        if hasStartDate {
+                            DatePicker("", selection: $editStartDate, displayedComponents: [.date, .hourAndMinute])
+                                .labelsHidden()
+                        }
+                    }
+                } else if let startDate = taskItem.startDate {
+                    HStack(spacing: 6) {
+                        Image(systemName: "calendar.badge.clock")
+                            .font(.system(size: 14))
+                        Text("Start: \(formatDueDate(startDate))")
+                            .font(.system(size: 14))
+                    }
+                    .foregroundColor(AppColors.info)
+                }
+                
                 // Due Date
                 if isEditing {
                     VStack(alignment: .leading, spacing: 4) {
@@ -602,6 +632,125 @@ struct ActionItemDetailView: View {
         }
     }
     
+    // MARK: - Department Section
+    private var departmentSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Image(systemName: "building.2.fill")
+                    .foregroundColor(AppColors.primary)
+                Text("Responsible Department")
+                    .font(.system(size: 16, weight: .semibold))
+                
+                Spacer()
+            }
+            
+            if isEditing || !isReadOnly {
+                // Department dropdown
+                if isLoadingDepartments {
+                    HStack {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        Text("Loading departments...")
+                            .font(.system(size: 14))
+                            .foregroundColor(AppColors.textSecondary)
+                    }
+                    .padding(12)
+                } else if departments.isEmpty {
+                    Text("No departments available")
+                        .font(.system(size: 14))
+                        .foregroundColor(AppColors.textTertiary)
+                        .padding(12)
+                } else {
+                    Menu {
+                        Button {
+                            selectedDepartmentId = nil
+                            Task {
+                                _ = await viewModel.updateTask(taskId: currentTask.id, departmentId: "")
+                                onUpdate?()
+                            }
+                        } label: {
+                            HStack {
+                                Text("None")
+                                if selectedDepartmentId == nil {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                        
+                        ForEach(departments) { dept in
+                            Button {
+                                selectedDepartmentId = dept.id
+                                Task {
+                                    _ = await viewModel.updateTask(taskId: currentTask.id, departmentId: dept.id)
+                                    onUpdate?()
+                                }
+                            } label: {
+                                HStack {
+                                    Text(dept.name)
+                                    if selectedDepartmentId == dept.id {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack {
+                            Image(systemName: "building.2")
+                                .font(.system(size: 14))
+                                .foregroundColor(AppColors.textTertiary)
+                            
+                            Text(departments.first(where: { $0.id == selectedDepartmentId })?.name ?? "Select Department")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(selectedDepartmentId != nil ? AppColors.textPrimary : AppColors.textTertiary)
+                            
+                            Spacer()
+                            
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.system(size: 12))
+                                .foregroundColor(AppColors.textTertiary)
+                        }
+                        .padding(12)
+                        .background(AppColors.surfaceSecondary)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                }
+            } else {
+                // Read-only display
+                HStack {
+                    Image(systemName: "building.2")
+                        .font(.system(size: 14))
+                        .foregroundColor(AppColors.textTertiary)
+                    
+                    Text(currentTask.department?.name ?? "Not assigned")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(currentTask.department != nil ? AppColors.textPrimary : AppColors.textTertiary)
+                }
+                .padding(12)
+                .background(AppColors.surfaceSecondary)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+        }
+        .padding(20)
+        .background(AppColors.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .onAppear {
+            selectedDepartmentId = currentTask.departmentId
+            loadDepartments()
+        }
+    }
+    
+    private func loadDepartments() {
+        isLoadingDepartments = true
+        Task {
+            do {
+                departments = try await APIService.shared.fetchDepartments()
+            } catch {
+                print("⚠️ Failed to load departments: \(error.localizedDescription)")
+            }
+            isLoadingDepartments = false
+        }
+    }
+    
     // MARK: - Details Section
     private var detailsSection: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -620,6 +769,14 @@ struct ActionItemDetailView: View {
                 }
                 
                 detailRow(icon: "calendar.badge.plus", label: "Created", value: formatDate(currentTask.createdAt))
+                
+                if let startDate = currentTask.startDate {
+                    detailRow(icon: "calendar.badge.clock", label: "Start Date", value: formatDate(startDate))
+                }
+                
+                if let department = currentTask.department {
+                    detailRow(icon: "building.2", label: "Department", value: department.name)
+                }
                 
                 if let completedAt = currentTask.completedAt {
                     detailRow(icon: "checkmark.circle.fill", label: "Completed", value: formatDate(completedAt))
@@ -1159,6 +1316,9 @@ struct ActionItemDetailView: View {
         editProgress = Double(currentTask.progressValue)
         hasDueDate = currentTask.dueDate != nil
         editDueDate = currentTask.dueDate ?? Date()
+        hasStartDate = currentTask.startDate != nil
+        editStartDate = currentTask.startDate ?? Date()
+        selectedDepartmentId = currentTask.departmentId
         isEditing = true
     }
     
@@ -1170,7 +1330,9 @@ struct ActionItemDetailView: View {
             description: editDescription.isEmpty ? nil : editDescription,
             status: editStatus,
             priority: editPriority,
+            startDate: hasStartDate ? editStartDate : nil,
             dueDate: hasDueDate ? editDueDate : nil,
+            departmentId: selectedDepartmentId,
             progress: Int(editProgress)
         )
         onUpdate?()

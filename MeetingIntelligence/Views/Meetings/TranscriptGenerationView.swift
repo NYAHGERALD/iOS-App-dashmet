@@ -24,6 +24,7 @@ struct TranscriptGenerationView: View {
     @State private var audioDuration: TimeInterval = 0
     @State private var showFullTranscript = false
     @State private var wavePhase: CGFloat = 0
+    @State private var spinnerRotation: Double = 0
     @State private var tipIndex: Int = 0
     @State private var tipOpacity: Double = 1.0
     @State private var elapsedSeconds: Int = 0
@@ -354,9 +355,9 @@ struct TranscriptGenerationView: View {
             .padding(.bottom, 8)
         }
         .onAppear {
-            // Start wave animation
-            withAnimation(.linear(duration: 2).repeatForever(autoreverses: false)) {
-                wavePhase = .pi * 2
+            // Start spinner rotation
+            withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
+                spinnerRotation = 360
             }
             // Start elapsed timer
             elapsedSeconds = 0
@@ -377,93 +378,53 @@ struct TranscriptGenerationView: View {
         let size: CGFloat = 180
         
         return ZStack {
-            // Outer glow
+            // Outer glow pulse
             Circle()
-                .stroke(stageColor.opacity(0.08), lineWidth: 24)
+                .stroke(stageColor.opacity(0.06), lineWidth: 24)
                 .frame(width: size, height: size)
             
-            // Track
+            // Background track
             Circle()
                 .stroke(AppColors.surfaceSecondary, style: StrokeStyle(lineWidth: 10, lineCap: .round))
                 .frame(width: size, height: size)
             
-            // Progress arc
+            // Spinning arc segment (continuously rotating)
             Circle()
-                .trim(from: 0, to: progress)
+                .trim(from: 0, to: 0.25)
                 .stroke(
-                    AngularGradient(
-                        gradient: Gradient(colors: [stageColor.opacity(0.4), stageColor, stageColor]),
-                        center: .center,
-                        startAngle: .degrees(0),
-                        endAngle: .degrees(360)
+                    LinearGradient(
+                        colors: [stageColor.opacity(0.0), stageColor],
+                        startPoint: .leading,
+                        endPoint: .trailing
                     ),
                     style: StrokeStyle(lineWidth: 10, lineCap: .round)
                 )
                 .frame(width: size, height: size)
-                .rotationEffect(.degrees(-90))
-                .animation(.easeInOut(duration: 0.5), value: progress)
+                .rotationEffect(.degrees(spinnerRotation))
             
-            // Glowing dot at end of arc
+            // Faint secondary spinning arc (opposite side, slower visual depth)
             Circle()
-                .fill(stageColor)
-                .frame(width: 16, height: 16)
-                .shadow(color: stageColor.opacity(0.6), radius: 6)
-                .offset(y: -size / 2)
-                .rotationEffect(.degrees(360 * progress - 90))
-                .animation(.easeInOut(duration: 0.5), value: progress)
+                .trim(from: 0, to: 0.15)
+                .stroke(stageColor.opacity(0.15), style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                .frame(width: size, height: size)
+                .rotationEffect(.degrees(-spinnerRotation * 0.6))
             
             // Center content
-            VStack(spacing: 4) {
-                // Animated waveform inside ring
-                audioWaveform
-                    .frame(width: 80, height: 36)
-                    .padding(.bottom, 4)
-                
+            VStack(spacing: 6) {
                 // Percentage
                 Text("\(Int(progress * 100))%")
-                    .font(.system(size: 36, weight: .bold, design: .rounded))
+                    .font(.system(size: 42, weight: .bold, design: .rounded))
                     .foregroundColor(AppColors.textPrimary)
                     .contentTransition(.numericText())
                     .animation(.easeInOut(duration: 0.3), value: Int(progress * 100))
                 
                 // Stage icon
                 Image(systemName: generationService.progress.stage.icon)
-                    .font(.system(size: 14))
+                    .font(.system(size: 16))
                     .foregroundColor(stageColor)
                     .symbolEffect(.pulse, options: .repeating, value: isGenerating)
             }
         }
-    }
-    
-    // MARK: - Audio Waveform Animation
-    private var audioWaveform: some View {
-        HStack(spacing: 3) {
-            ForEach(0..<12, id: \.self) { i in
-                let normalizedHeight = waveBarHeight(index: i)
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(
-                        LinearGradient(
-                            colors: [stageColor.opacity(0.5), stageColor],
-                            startPoint: .bottom,
-                            endPoint: .top
-                        )
-                    )
-                    .frame(width: 3.5, height: normalizedHeight)
-                    .animation(
-                        .easeInOut(duration: 0.4 + Double(i) * 0.05)
-                        .repeatForever(autoreverses: true)
-                        .delay(Double(i) * 0.07),
-                        value: wavePhase
-                    )
-            }
-        }
-    }
-    
-    private func waveBarHeight(index: Int) -> CGFloat {
-        let phase = wavePhase + CGFloat(index) * 0.5
-        let base: CGFloat = 8
-        let amplitude: CGFloat = 20
-        return base + amplitude * abs(sin(phase))
     }
     
     // MARK: - Stage Timeline Pills
@@ -579,11 +540,11 @@ struct TranscriptGenerationView: View {
     
     // MARK: - Tips Carousel
     private let processingTips: [String] = [
-        "Whisper AI analyzes audio spectrograms to recognize speech patterns",
+        "Dashmet turns your meetings into actionable insights automatically",
         "Tip: Shorter recordings process faster — try splitting long meetings",
         "Your transcript will include punctuation and proper formatting",
         "Audio is processed securely and never stored on external servers",
-        "System Enhancement corrects common speech recognition errors automatically",
+        "Dashmet generates action items, summaries, and key decisions from your transcript",
         "You can search and edit your transcript after processing",
         "Pro tip: Clear audio with minimal background noise gives best results",
     ]

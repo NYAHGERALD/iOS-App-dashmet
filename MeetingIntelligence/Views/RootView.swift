@@ -128,7 +128,10 @@ struct MainTabView: View {
         case dashboard = "Dashboard"
         case meetings = "Meetings"
         case actionItems = "Action Items"
+        case operations = "Operations"
         case hrConflict = "HR"
+        case safety = "Safety"
+        case lsw = "LSW"
         case toDo = "To Do"
         
         var icon: String {
@@ -136,7 +139,10 @@ struct MainTabView: View {
             case .dashboard: return "square.grid.2x2"
             case .meetings: return "mic.fill"
             case .actionItems: return "checklist"
+            case .operations: return "exclamationmark.bubble"
             case .hrConflict: return "person.2.badge.gearshape"
+            case .safety: return "shield.checkered"
+            case .lsw: return "list.clipboard"
             case .toDo: return "checkmark.circle"
             }
         }
@@ -146,7 +152,10 @@ struct MainTabView: View {
             case .dashboard: return "square.grid.2x2.fill"
             case .meetings: return "mic.fill"
             case .actionItems: return "checklist"
+            case .operations: return "exclamationmark.bubble.fill"
             case .hrConflict: return "person.2.badge.gearshape.fill"
+            case .safety: return "shield.checkered"
+            case .lsw: return "list.clipboard.fill"
             case .toDo: return "checkmark.circle.fill"
             }
         }
@@ -166,8 +175,14 @@ struct MainTabView: View {
                     MeetingListView(onMenuTap: { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { showMenu = true } })
                 case .actionItems:
                     TaskListView(onMenuTap: { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { showMenu = true } })
+                case .operations:
+                    OperationsView(onMenuTap: { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { showMenu = true } })
                 case .hrConflict:
                     ConflictResolutionView(onMenuTap: { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { showMenu = true } })
+                case .safety:
+                    SafetyAssessmentListView(onMenuTap: { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { showMenu = true } })
+                case .lsw:
+                    LSWView(onMenuTap: { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { showMenu = true } })
                 case .toDo:
                     ToDoView(onMenuTap: { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { showMenu = true } })
                 }
@@ -297,8 +312,9 @@ struct SideMenuView: View {
                     
                     // Navigation items
                     ScrollView {
-                        VStack(spacing: AppSpacing.xs) {
-                            ForEach(MainTabView.Tab.allCases, id: \.self) { tab in
+                        VStack(spacing: 0) {
+                            let allTabs = MainTabView.Tab.allCases
+                            ForEach(Array(allTabs.enumerated()), id: \.element) { index, tab in
                                 MenuNavigationItem(
                                     tab: tab,
                                     isSelected: selectedTab == tab
@@ -308,9 +324,15 @@ struct SideMenuView: View {
                                         showMenu = false
                                     }
                                 }
+                                
+                                if index < allTabs.count - 1 {
+                                    Divider()
+                                        .padding(.leading, 60)
+                                }
                             }
                         }
-                        .padding(AppSpacing.lg)
+                        .padding(.horizontal, AppSpacing.lg)
+                        .padding(.vertical, AppSpacing.sm)
                     }
                     
                     Spacer()
@@ -363,7 +385,10 @@ struct MenuNavigationItem: View {
         case .dashboard: return Color(hex: "6366F1")
         case .meetings: return Color(hex: "EF4444")
         case .actionItems: return Color(hex: "10B981")
+        case .operations: return Color(hex: "F97316")
         case .hrConflict: return Color(hex: "8B5CF6")
+        case .safety: return Color(hex: "059669")
+        case .lsw: return Color(hex: "0EA5E9")
         case .toDo: return Color(hex: "F59E0B")
         }
     }
@@ -476,7 +501,10 @@ struct TabBarButton: View {
         case .dashboard: return Color(hex: "6366F1") // Indigo
         case .meetings: return Color(hex: "EF4444")  // Red
         case .actionItems: return Color(hex: "10B981") // Emerald
+        case .operations: return Color(hex: "F97316") // Orange
         case .hrConflict: return Color(hex: "8B5CF6") // Purple
+        case .safety: return Color(hex: "059669")  // Green
+        case .lsw: return Color(hex: "0EA5E9")  // Sky Blue
         case .toDo: return Color(hex: "F59E0B")  // Amber
         }
     }

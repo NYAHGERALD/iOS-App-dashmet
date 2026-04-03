@@ -615,4 +615,54 @@ class FirebaseStorageService: ObservableObject {
             print("⚠️ Could not delete document images: \(error.localizedDescription)")
         }
     }
+    
+    // MARK: - Workplace Safety Photo Upload
+    
+    /// Upload a workplace safety assessment photo to Firebase Storage
+    /// Returns the download URL for the uploaded image
+    func uploadSafetyPhoto(_ image: UIImage, assessmentNumber: String, itemId: String) async throws -> String {
+        guard let imageData = image.jpegData(compressionQuality: 0.8) else {
+            throw UploadError.invalidFile
+        }
+        
+        let timestamp = Int(Date().timeIntervalSince1970 * 1000)
+        let storagePath = "workplace-safety/\(assessmentNumber)/\(itemId)/\(timestamp)_photo.jpg"
+        
+        print("📤 Uploading safety photo to Firebase...")
+        print("   Path: \(storagePath)")
+        
+        let storageRef = storage.reference().child(storagePath)
+        let metadata = StorageMetadata()
+        metadata.contentType = "image/jpeg"
+        
+        _ = try await storageRef.putDataAsync(imageData, metadata: metadata)
+        let downloadURL = try await storageRef.downloadURL()
+        
+        print("✅ Safety photo uploaded: \(downloadURL.absoluteString)")
+        return downloadURL.absoluteString
+    }
+    
+    /// Upload a workplace safety assessment signature to Firebase Storage
+    /// Returns the download URL for the uploaded signature image
+    func uploadSafetySignature(_ image: UIImage, assessmentNumber: String, role: String) async throws -> String {
+        guard let imageData = image.pngData() else {
+            throw UploadError.invalidFile
+        }
+        
+        let timestamp = Int(Date().timeIntervalSince1970 * 1000)
+        let storagePath = "workplace-safety/\(assessmentNumber)/signatures/\(role)_\(timestamp).png"
+        
+        print("📤 Uploading safety signature to Firebase...")
+        print("   Path: \(storagePath)")
+        
+        let storageRef = storage.reference().child(storagePath)
+        let metadata = StorageMetadata()
+        metadata.contentType = "image/png"
+        
+        _ = try await storageRef.putDataAsync(imageData, metadata: metadata)
+        let downloadURL = try await storageRef.downloadURL()
+        
+        print("✅ Safety signature uploaded: \(downloadURL.absoluteString)")
+        return downloadURL.absoluteString
+    }
 }
