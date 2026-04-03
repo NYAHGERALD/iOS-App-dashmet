@@ -6,15 +6,20 @@
 //
 
 import SwiftUI
+import Combine
 
 struct DailyWeeklyView: View {
     @StateObject private var lswService = LSWService.shared
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.scenePhase) private var scenePhase
     
     @State private var showAddTask = false
     @State private var currentWeekOffset = 0
     @State private var configLoaded = false
     @State private var activeFilter: TaskFilter = .all
+    
+    // Polling timer for cross-platform sync
+    private let syncTimer = Timer.publish(every: 15, on: .main, in: .common).autoconnect()
     
     // Early completion / uncheck modal state
     @State private var showFutureTaskAlert = false
@@ -305,6 +310,23 @@ struct DailyWeeklyView: View {
         }
         .onDisappear {
             lswService.disconnectWebSocket()
+        }
+        // Cross-platform sync: refetch when app returns to foreground
+        .onChange(of: scenePhase) { newPhase in
+            if newPhase == .active && configLoaded {
+                Task {
+                    await lswService.fetchDailyTasks(weekNumber: currentOrgWeek, year: currentOrgYear)
+                    await lswService.fetchEarlyCompletionLogs(weekNumber: currentOrgWeek, year: currentOrgYear)
+                }
+            }
+        }
+        // Periodic polling every 15s as reliable sync fallback
+        .onReceive(syncTimer) { _ in
+            guard configLoaded else { return }
+            Task {
+                await lswService.fetchDailyTasks(weekNumber: currentOrgWeek, year: currentOrgYear)
+                await lswService.fetchEarlyCompletionLogs(weekNumber: currentOrgWeek, year: currentOrgYear)
+            }
         }
         // Future Task warning
         .alert("Future Task", isPresented: $showFutureTaskAlert) {
