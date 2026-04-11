@@ -16,7 +16,7 @@ struct AuthenticationView: View {
     @StateObject private var registrationViewModel = RegistrationViewModel()
     
     enum AuthScreen {
-        case phone, otp, success, error, registration, registrationSuccess
+        case phone, otp, success, error, registration, registrationSuccess, phoneNotLinked
     }
     
     var body: some View {
@@ -54,10 +54,10 @@ struct AuthenticationView: View {
                                     let userID = appState.currentUserID ?? viewModel.currentUserID ?? ""
                                     onAuthenticated(userID, viewModel.idToken)
                                 } else {
-                                    // User not found in database — redirect to registration
-                                    print("🚫 User not found in database, redirecting to registration")
+                                    // User not found in database — phone not linked
+                                    print("🚫 User not found in database, phone not linked to account")
                                     viewModel.showSuccessScreen = false
-                                    viewModel.showRegistration = true
+                                    viewModel.showPhoneNotLinked = true
                                 }
                             }
                         }
@@ -96,6 +96,10 @@ struct AuthenticationView: View {
                 case .registrationSuccess:
                     RegistrationSuccessView {
                         viewModel.proceedToLoginAfterRegistration()
+                    }
+                case .phoneNotLinked:
+                    PhoneNotLinkedView {
+                        viewModel.goBackFromPhoneNotLinked()
                     }
                 }
             }
@@ -148,6 +152,14 @@ struct AuthenticationView: View {
             if newValue {
                 currentScreen = .registrationSuccess
             } else if !viewModel.showOTPScreen {
+                currentScreen = .phone
+            }
+        }
+        .onChange(of: viewModel.showPhoneNotLinked) { _, newValue in
+            print("🔄 onChange showPhoneNotLinked: \(newValue)")
+            if newValue {
+                currentScreen = .phoneNotLinked
+            } else {
                 currentScreen = .phone
             }
         }

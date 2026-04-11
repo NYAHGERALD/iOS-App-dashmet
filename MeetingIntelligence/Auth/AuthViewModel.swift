@@ -30,6 +30,7 @@ class AuthViewModel: ObservableObject {
     @Published var isCheckingPhone: Bool = false
     @Published var showRegistration: Bool = false
     @Published var showRegistrationSuccess: Bool = false
+    @Published var showPhoneNotLinked: Bool = false
     @Published var currentUserID: String?
     @Published var currentVerificationID: String?
     
@@ -81,10 +82,10 @@ class AuthViewModel: ObservableObject {
                 isCheckingPhone = false
                 await requestOTP()
             } else {
-                // Phone doesn't exist - show registration
-                print("📝 Phone not registered, showing registration...")
+                // Phone not linked to any account — tell user to add via web portal
+                print("📝 Phone not linked to any account")
                 isCheckingPhone = false
-                showRegistration = true
+                showPhoneNotLinked = true
             }
         } catch {
             print("❌ Error checking phone: \(error)")
@@ -197,6 +198,7 @@ class AuthViewModel: ObservableObject {
         isCheckingPhone = false
         showRegistration = false
         showRegistrationSuccess = false
+        showPhoneNotLinked = false
         authState = .enteringPhone
         print("🔄 Reset to phone input")
     }
@@ -216,6 +218,7 @@ class AuthViewModel: ObservableObject {
         isCheckingPhone = false
         showRegistration = false
         showRegistrationSuccess = false
+        showPhoneNotLinked = false
         authState = .enteringPhone
         print("🔄 Full auth reset")
     }
@@ -236,6 +239,13 @@ class AuthViewModel: ObservableObject {
         showRegistration = false
         errorMessage = nil
         print("🔄 Go back from registration")
+    }
+    
+    /// Go back from phone-not-linked screen to phone input
+    func goBackFromPhoneNotLinked() {
+        showPhoneNotLinked = false
+        errorMessage = nil
+        print("🔄 Go back from phone not linked")
     }
     
     /// Called after successful registration
