@@ -31,8 +31,8 @@ class PushNotificationManager: ObservableObject {
     private init() {
         setupNotificationObservers()
         
-        // Load any previously stored token
-        if let storedToken = UserDefaults.standard.string(forKey: "fcmToken") {
+        // Load any previously stored token from Keychain
+        if let storedToken = KeychainService.shared.getString(forKey: "fcmToken") {
             currentToken = storedToken
             print("📬 Loaded stored FCM token")
         }

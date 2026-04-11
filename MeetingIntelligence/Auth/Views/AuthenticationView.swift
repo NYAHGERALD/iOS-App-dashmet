@@ -37,6 +37,7 @@ struct AuthenticationView: View {
                     AuthSuccessView(userID: viewModel.currentUserID ?? "")
                         .onAppear {
                             // Link Firebase UID to user in database and get profile
+                            // SECURITY: Only grant access if linking succeeds
                             Task {
                                 if let user = await viewModel.linkFirebaseUID() {
                                     // Save user profile to AppState
@@ -48,12 +49,16 @@ struct AuthenticationView: View {
                                         facilityId: user.facilityId,
                                         role: user.role ?? ""
                                     )
+                                    // Brief delay to show success animation
+                                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                                    let userID = appState.currentUserID ?? viewModel.currentUserID ?? ""
+                                    onAuthenticated(userID, viewModel.idToken)
+                                } else {
+                                    // User not found in database — redirect to registration
+                                    print("🚫 User not found in database, redirecting to registration")
+                                    viewModel.showSuccessScreen = false
+                                    viewModel.showRegistration = true
                                 }
-                            }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                                // Use database user ID if available, fallback to Firebase UID
-                                let userID = appState.currentUserID ?? viewModel.currentUserID ?? ""
-                                onAuthenticated(userID, viewModel.idToken)
                             }
                         }
                 case .error:

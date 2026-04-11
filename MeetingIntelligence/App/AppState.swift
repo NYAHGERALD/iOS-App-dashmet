@@ -52,6 +52,15 @@ class AppState: ObservableObject {
     func initialize() async {
         isLoading = true
         
+        // Runtime security checks (jailbreak, debugger)
+        let securityWarnings = SecurityChecks.performChecks()
+        if !securityWarnings.isEmpty {
+            print("🔒 Security warnings: \(securityWarnings)")
+            errorMessage = "This device does not meet security requirements. Please use a non-modified device."
+            isLoading = false
+            return
+        }
+        
         // Validate environment configuration
         let configValid = AppEnvironment.validateConfiguration()
         

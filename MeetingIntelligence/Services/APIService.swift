@@ -50,8 +50,8 @@ struct RegistrationRequest: Codable {
     let lastName: String
     let email: String
     let phone: String
-    let accessCodeId: String
-    let facilityId: String
+    let accessCodeId: String?
+    let facilityId: String?
     let firebaseUid: String?
 }
 
@@ -88,6 +88,29 @@ struct LinkedUserInfo: Codable {
     let role: String?
     let organizationId: String?
     let facilityId: String?
+}
+
+struct SendVerificationRequest: Codable {
+    let userId: String
+    let email: String
+}
+
+struct SendVerificationResponse: Codable {
+    let success: Bool
+    let message: String?
+    let error: String?
+}
+
+struct VerifyCodeRequest: Codable {
+    let userId: String
+    let code: String
+}
+
+struct VerifyCodeResponse: Codable {
+    let success: Bool
+    let message: String?
+    let user: RegisteredUser?
+    let error: String?
 }
 
 struct GenericResponse: Codable {
@@ -233,6 +256,50 @@ class APIService {
         }
     }
     
+    // MARK: - Send Email Verification OTP
+    func sendVerification(userId: String, email: String) async throws -> SendVerificationResponse {
+        let url = URL(string: "\(baseURL)/mobile/send-verification")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(SendVerificationRequest(userId: userId, email: email))
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIServiceError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            return try JSONDecoder().decode(SendVerificationResponse.self, from: data)
+        } else {
+            let error = try? JSONDecoder().decode(APIError.self, from: data)
+            throw APIServiceError.serverError(error?.error ?? "Failed to send verification code")
+        }
+    }
+    
+    // MARK: - Verify Email OTP Code
+    func verifyCode(userId: String, code: String) async throws -> VerifyCodeResponse {
+        let url = URL(string: "\(baseURL)/mobile/verify-code")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(VerifyCodeRequest(userId: userId, code: code))
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIServiceError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            return try JSONDecoder().decode(VerifyCodeResponse.self, from: data)
+        } else {
+            let error = try? JSONDecoder().decode(APIError.self, from: data)
+            throw APIServiceError.serverError(error?.error ?? "Verification failed")
+        }
+    }
+    
     // MARK: - Push Notification Device Token
     
     /// Register a device token for push notifications
@@ -296,6 +363,15 @@ class APIService {
         }
     }
     
+    // MARK: - Auth Helper
+    
+    /// Attach Firebase auth token to a URLRequest
+    private func addAuthToken(to request: inout URLRequest) async {
+        if let token = try? await FirebaseAuthService.shared.getIDToken() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+    }
+    
     // MARK: - Task API Methods
     
     /// Fetch tasks for a user
@@ -312,6 +388,7 @@ class APIService {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        await addAuthToken(to: &request)
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
@@ -333,6 +410,7 @@ class APIService {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        await addAuthToken(to: &request)
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
@@ -372,6 +450,7 @@ class APIService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        await addAuthToken(to: &request)
         request.httpBody = try JSONEncoder().encode(task)
         
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -394,6 +473,7 @@ class APIService {
         var request = URLRequest(url: url)
         request.httpMethod = "PATCH"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        await addAuthToken(to: &request)
         request.httpBody = try JSONEncoder().encode(update)
         
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -416,6 +496,7 @@ class APIService {
         var request = URLRequest(url: url)
         request.httpMethod = "DELETE"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        await addAuthToken(to: &request)
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
@@ -437,6 +518,7 @@ class APIService {
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        await addAuthToken(to: &urlRequest)
         urlRequest.httpBody = try JSONEncoder().encode(request)
         
         let (data, response) = try await URLSession.shared.data(for: urlRequest)
@@ -461,6 +543,7 @@ class APIService {
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        await addAuthToken(to: &urlRequest)
         urlRequest.httpBody = try JSONEncoder().encode(request)
         
         let (data, response) = try await URLSession.shared.data(for: urlRequest)
@@ -483,6 +566,7 @@ class APIService {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        await addAuthToken(to: &request)
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
@@ -504,6 +588,7 @@ class APIService {
         var request = URLRequest(url: url)
         request.httpMethod = "DELETE"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        await addAuthToken(to: &request)
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
@@ -527,6 +612,7 @@ class APIService {
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        await addAuthToken(to: &urlRequest)
         urlRequest.httpBody = try JSONEncoder().encode(request)
         
         let (data, response) = try await URLSession.shared.data(for: urlRequest)
@@ -549,6 +635,7 @@ class APIService {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        await addAuthToken(to: &request)
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
@@ -570,6 +657,7 @@ class APIService {
         var request = URLRequest(url: url)
         request.httpMethod = "DELETE"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        await addAuthToken(to: &request)
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
@@ -593,6 +681,7 @@ class APIService {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        await addAuthToken(to: &request)
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
@@ -616,6 +705,7 @@ class APIService {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        await addAuthToken(to: &request)
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
@@ -639,6 +729,7 @@ class APIService {
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        await addAuthToken(to: &urlRequest)
         
         let body: [String: Any] = [
             "userIds": userIds,
@@ -666,6 +757,7 @@ class APIService {
         var request = URLRequest(url: url)
         request.httpMethod = "DELETE"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        await addAuthToken(to: &request)
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
@@ -687,6 +779,7 @@ class APIService {
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "PUT"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        await addAuthToken(to: &urlRequest)
         
         let body: [String: Any] = [
             "userIds": userIds,
@@ -746,11 +839,7 @@ class APIService {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        // Add auth token
-        if let token = try? await FirebaseAuthService.shared.getIDToken() {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
+        await addAuthToken(to: &request)
         
         let (data, response) = try await URLSession.shared.data(for: request)
         

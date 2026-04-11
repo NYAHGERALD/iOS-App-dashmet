@@ -73,7 +73,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         // Pass device token to Firebase Messaging
         Messaging.messaging().apnsToken = deviceToken
         let tokenString = deviceToken.map { String(format: "%02.2hhx", $0) }.joined()
-        print("📱 APNs device token: \(tokenString)")
+        print("📱 APNs device token received (length: \(tokenString.count))")
     }
     
     func application(_ application: UIApplication,
@@ -125,10 +125,10 @@ extension AppDelegate: MessagingDelegate {
             return
         }
         
-        print("🔑 FCM registration token: \(token)")
+        print("🔑 FCM registration token received (length: \(token.count))")
         
-        // Store the token and notify the app
-        UserDefaults.standard.set(token, forKey: "fcmToken")
+        // Store the token securely in Keychain (not UserDefaults)
+        KeychainService.shared.save(token, forKey: "fcmToken")
         
         // Post notification so the app can register the token with the backend
         NotificationCenter.default.post(
