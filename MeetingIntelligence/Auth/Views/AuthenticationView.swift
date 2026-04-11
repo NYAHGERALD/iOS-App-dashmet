@@ -88,9 +88,10 @@ struct AuthenticationView: View {
                         }
                     )
                     .onAppear {
-                        // Pass phone number to registration view model
+                        // Pass phone number and country code to registration view model
                         registrationViewModel.phoneNumber = viewModel.phoneNumber
                         registrationViewModel.fullPhoneNumber = viewModel.formattedPhoneNumber
+                        registrationViewModel.countryCode = viewModel.countryCode
                     }
                 case .registrationSuccess:
                     RegistrationSuccessView {

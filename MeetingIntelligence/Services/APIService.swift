@@ -50,6 +50,7 @@ struct RegistrationRequest: Codable {
     let lastName: String
     let email: String
     let phone: String
+    let countryCode: String?
     let accessCodeId: String?
     let facilityId: String?
     let firebaseUid: String?

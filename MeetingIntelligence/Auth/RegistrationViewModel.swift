@@ -2,11 +2,12 @@
 //  RegistrationViewModel.swift
 //  MeetingIntelligence
 //
-//  Handles user registration flow with email-first validation
+//  Handles user registration flow with email-first validation + email OTP verification
 //
 
 import Foundation
 import Combine
+import LocalAuthentication
 
 @MainActor
 class RegistrationViewModel: ObservableObject {
@@ -14,7 +15,6 @@ class RegistrationViewModel: ObservableObject {
     @Published var firstName: String = ""
     @Published var lastName: String = ""
     @Published var email: String = ""
-    @Published var accessCode: String = ""
     
     // Email validation state
     @Published var isEmailValidated: Bool = false
@@ -26,18 +26,18 @@ class RegistrationViewModel: ObservableObject {
     // Name fields state
     @Published var isNameEditable: Bool = true
     
-    // Access Code Validation Results
-    @Published var isAccessCodeValidated: Bool = false
-    @Published var validatedRole: String = ""
-    @Published var organizationName: String = ""
-    @Published var facilities: [FacilityInfo] = []
-    @Published var selectedFacility: FacilityInfo?
+    // Email OTP Verification
+    @Published var verificationCode: String = ""
+    @Published var isCodeSent: Bool = false
+    @Published var isSendingCode: Bool = false
+    @Published var isVerifying: Bool = false
+    @Published var isVerified: Bool = false
+    @Published var verificationError: String?
+    @Published var cooldownRemaining: Int = 0
     
     // State
     @Published var isLoading: Bool = false
-    @Published var isValidatingCode: Bool = false
     @Published var errorMessage: String?
-    @Published var accessCodeError: String?
     
     // Registration complete
     @Published var registrationComplete: Bool = false
@@ -46,10 +46,10 @@ class RegistrationViewModel: ObservableObject {
     // Phone number (passed from auth flow)
     var phoneNumber: String = ""
     var fullPhoneNumber: String = ""
+    var countryCode: String = "+1"
     
-    // Access code ID for registration
-    private var accessCodeId: String = ""
-    private var organizationId: String = ""
+    // Cooldown timer
+    private var cooldownTimer: Timer?
     
     // MARK: - Computed Properties
     var isEmailFormatValid: Bool {
@@ -70,37 +70,32 @@ class RegistrationViewModel: ObservableObject {
         lastName.trimmingCharacters(in: .whitespaces).count >= 2
     }
     
-    var isAccessCodeValid: Bool {
-        accessCode.trimmingCharacters(in: .whitespaces).count >= 4
+    var canSendVerification: Bool {
+        isEmailValidated &&
+        isFirstNameValid &&
+        isLastNameValid &&
+        !isSendingCode &&
+        !isVerified &&
+        cooldownRemaining == 0
     }
     
-    var canValidateAccessCode: Bool {
-        isAccessCodeValid && !isValidatingCode && isEmailValidated
+    var canVerifyCode: Bool {
+        verificationCode.trimmingCharacters(in: .whitespaces).count == 6 &&
+        isCodeSent &&
+        !isVerifying &&
+        !isVerified
     }
     
     var canRegister: Bool {
         isEmailValidated &&
         isFirstNameValid &&
         isLastNameValid &&
-        isAccessCodeValidated &&
-        selectedFacility != nil &&
+        isVerified &&
         !isLoading
-    }
-    
-    var roleDisplayName: String {
-        switch validatedRole {
-        case "ADMIN": return "Administrator"
-        case "SUPERVISOR": return "Supervisor"
-        case "OPERATOR": return "Operator"
-        case "VIEWER": return "Viewer"
-        case "SYSTEM_ADMIN": return "System Administrator"
-        default: return validatedRole.capitalized
-        }
     }
     
     // MARK: - Email Validation
     
-    /// Check if email exists in database and auto-fill user info if found
     func checkEmail() async {
         guard canCheckEmail else { return }
         
@@ -113,14 +108,12 @@ class RegistrationViewModel: ObservableObject {
             isEmailValidated = true
             
             if response.exists {
-                // Email exists - auto-fill and lock name fields
                 isEmailFromDatabase = true
                 existingUserId = response.userId
                 firstName = response.firstName ?? ""
                 lastName = response.lastName ?? ""
                 isNameEditable = false
             } else {
-                // New email - allow user to enter name
                 isEmailFromDatabase = false
                 existingUserId = nil
                 isNameEditable = true
@@ -133,132 +126,157 @@ class RegistrationViewModel: ObservableObject {
         isCheckingEmail = false
     }
     
-    /// Reset email validation when email changes
     func resetEmailValidation() {
         isEmailValidated = false
         isEmailFromDatabase = false
         existingUserId = nil
         emailError = nil
-        // Also reset dependent fields
         if !isEmailFromDatabase {
             firstName = ""
             lastName = ""
         }
         isNameEditable = true
-        resetAccessCodeValidation()
+        resetVerification()
     }
     
-    // MARK: - Access Code Validation
+    // MARK: - Email OTP Verification
     
-    /// Validate the access code
-    func validateAccessCode() async {
-        guard canValidateAccessCode else { return }
+    func sendVerificationCode() async {
+        guard canSendVerification else { return }
         
-        isValidatingCode = true
-        accessCodeError = nil
+        isSendingCode = true
+        verificationError = nil
         
-        do {
-            let response = try await APIService.shared.validateAccessCode(accessCode.trimmingCharacters(in: .whitespaces))
-            
-            if response.valid {
-                isAccessCodeValidated = true
-                validatedRole = response.role ?? ""
-                organizationName = response.organizationName ?? ""
-                accessCodeId = response.accessCodeId ?? ""
-                organizationId = response.organizationId ?? ""
-                facilities = response.facilities ?? []
-                
-                // Auto-select if only one facility
-                if facilities.count == 1 {
-                    selectedFacility = facilities.first
+        // Register user first if needed (to get userId for OTP)
+        if existingUserId == nil {
+            do {
+                let request = RegistrationRequest(
+                    firstName: firstName.trimmingCharacters(in: .whitespaces),
+                    lastName: lastName.trimmingCharacters(in: .whitespaces),
+                    email: email.trimmingCharacters(in: .whitespaces).lowercased(),
+                    phone: fullPhoneNumber,
+                    countryCode: countryCode,
+                    accessCodeId: nil,
+                    facilityId: nil,
+                    firebaseUid: nil
+                )
+                let response = try await APIService.shared.registerUser(request)
+                if response.success, let user = response.user {
+                    existingUserId = user.id
+                } else {
+                    verificationError = response.error ?? "Failed to create profile"
+                    isSendingCode = false
+                    return
                 }
-            } else {
-                isAccessCodeValidated = false
-                accessCodeError = response.error ?? "Invalid access code"
+            } catch {
+                verificationError = error.localizedDescription
+                isSendingCode = false
+                return
             }
-        } catch {
-            accessCodeError = error.localizedDescription
-            isAccessCodeValidated = false
         }
         
-        isValidatingCode = false
-    }
-    
-    /// Reset access code validation
-    func resetAccessCodeValidation() {
-        isAccessCodeValidated = false
-        validatedRole = ""
-        organizationName = ""
-        facilities = []
-        selectedFacility = nil
-        accessCodeError = nil
-        accessCodeId = ""
-        organizationId = ""
-    }
-    
-    /// Register the user
-    func register() async {
-        guard canRegister else { return }
-        guard let facility = selectedFacility else { return }
-        
-        isLoading = true
-        errorMessage = nil
-        
-        let request = RegistrationRequest(
-            firstName: firstName.trimmingCharacters(in: .whitespaces),
-            lastName: lastName.trimmingCharacters(in: .whitespaces),
-            email: email.trimmingCharacters(in: .whitespaces).lowercased(),
-            phone: fullPhoneNumber,
-            accessCodeId: accessCodeId,
-            facilityId: facility.id,
-            firebaseUid: nil // Will be linked after phone auth
-        )
+        guard let userId = existingUserId else {
+            verificationError = "Unable to identify user"
+            isSendingCode = false
+            return
+        }
         
         do {
-            let response = try await APIService.shared.registerUser(request)
+            let response = try await APIService.shared.sendVerification(
+                userId: userId,
+                email: email.trimmingCharacters(in: .whitespaces).lowercased()
+            )
             
             if response.success {
-                registeredUser = response.user
-                registrationComplete = true
+                isCodeSent = true
+                startCooldown()
             } else {
-                errorMessage = response.error ?? "Registration failed"
+                verificationError = response.error ?? "Failed to send code"
             }
         } catch {
-            errorMessage = error.localizedDescription
+            verificationError = error.localizedDescription
         }
         
-        isLoading = false
+        isSendingCode = false
     }
     
-    /// Reset all fields
+    func verifyCode() async {
+        guard canVerifyCode, let userId = existingUserId else { return }
+        
+        isVerifying = true
+        verificationError = nil
+        
+        do {
+            let response = try await APIService.shared.verifyCode(
+                userId: userId,
+                code: verificationCode.trimmingCharacters(in: .whitespaces)
+            )
+            
+            if response.success {
+                isVerified = true
+                registeredUser = response.user
+                // Store auth token with biometric protection
+                if let user = response.user {
+                    KeychainService.shared.saveBiometric(user.id, forKey: KeychainService.Keys.userId)
+                    KeychainService.shared.save(user.organizationId, forKey: KeychainService.Keys.organizationId)
+                }
+            } else {
+                verificationError = response.error ?? "Invalid code"
+            }
+        } catch {
+            verificationError = error.localizedDescription
+        }
+        
+        isVerifying = false
+    }
+    
+    func completeRegistration() {
+        guard isVerified else { return }
+        registrationComplete = true
+    }
+    
+    private func resetVerification() {
+        verificationCode = ""
+        isCodeSent = false
+        isSendingCode = false
+        isVerifying = false
+        isVerified = false
+        verificationError = nil
+        cooldownRemaining = 0
+        cooldownTimer?.invalidate()
+        cooldownTimer = nil
+    }
+    
+    private func startCooldown() {
+        cooldownRemaining = 60
+        cooldownTimer?.invalidate()
+        cooldownTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+            Task { @MainActor in
+                guard let self = self else { timer.invalidate(); return }
+                if self.cooldownRemaining > 0 {
+                    self.cooldownRemaining -= 1
+                } else {
+                    timer.invalidate()
+                    self.cooldownTimer = nil
+                }
+            }
+        }
+    }
+    
     func reset() {
         firstName = ""
         lastName = ""
         email = ""
-        accessCode = ""
         isEmailValidated = false
         isCheckingEmail = false
         emailError = nil
         isEmailFromDatabase = false
         existingUserId = nil
         isNameEditable = true
-        isAccessCodeValidated = false
-        validatedRole = ""
-        organizationName = ""
-        facilities = []
-        selectedFacility = nil
         isLoading = false
-        isValidatingCode = false
         errorMessage = nil
-        accessCodeError = nil
         registrationComplete = false
         registeredUser = nil
-        accessCodeId = ""
-        organizationId = ""
-    }
-    
-    /// Get organization ID for the registered user
-    var userOrganizationId: String {
-        organizationId
+        resetVerification()
     }
 }
