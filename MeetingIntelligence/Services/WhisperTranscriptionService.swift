@@ -125,7 +125,7 @@ class WhisperTranscriptionService: ObservableObject {
     private var apiKey: String {
         // In production, this should be fetched securely from your backend
         // NEVER hardcode API keys in production apps
-        return ProcessInfo.processInfo.environment["OPENAI_API_KEY"] ?? UserDefaults.standard.string(forKey: "openai_api_key") ?? ""
+        return ProcessInfo.processInfo.environment["OPENAI_API_KEY"] ?? KeychainService.shared.getString(forKey: KeychainService.Keys.openAIAPIKey) ?? ""
     }
     
     // MARK: - Published Properties
@@ -153,7 +153,7 @@ class WhisperTranscriptionService: ObservableObject {
     
     /// Set API key (for testing or manual configuration)
     func setAPIKey(_ key: String) {
-        UserDefaults.standard.set(key, forKey: "openai_api_key")
+        KeychainService.shared.save(key, forKey: KeychainService.Keys.openAIAPIKey)
     }
     
     /// Transcribe audio file using OpenAI Whisper API

@@ -17,7 +17,7 @@ struct RegistrationProfileView: View {
     @State private var showContent = false
     
     enum Field: Int, CaseIterable {
-        case email, firstName, lastName, accessCode
+        case email, firstName, lastName, verificationCode
     }
     
     // MARK: - Theme Colors
@@ -77,19 +77,10 @@ struct RegistrationProfileView: View {
                                 .opacity(showContent ? 1 : 0)
                                 .offset(y: showContent ? 0 : 20)
                             
-                            // Step 3: Access Code Card (Active after email validated)
-                            accessCodeCard
+                            // Step 3: Email Verification Card (Active after email validated + names filled)
+                            verificationCard
                                 .opacity(showContent ? 1 : 0)
                                 .offset(y: showContent ? 0 : 20)
-                            
-                            // Step 4: Organization Card (After access code validated)
-                            if viewModel.isAccessCodeValidated {
-                                organizationCard
-                                    .transition(.asymmetric(
-                                        insertion: .opacity.combined(with: .scale(scale: 0.95)).combined(with: .offset(y: -10)),
-                                        removal: .opacity
-                                    ))
-                            }
                             
                             // Phone Display (Always shown)
                             phoneDisplayCard
@@ -126,8 +117,9 @@ struct RegistrationProfileView: View {
                     .transition(.opacity)
             }
         }
-        .animation(.spring(response: 0.5, dampingFraction: 0.8), value: viewModel.isAccessCodeValidated)
+        .animation(.spring(response: 0.5, dampingFraction: 0.8), value: viewModel.isVerified)
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: viewModel.isEmailValidated)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: viewModel.isCodeSent)
         .animation(.easeInOut(duration: 0.3), value: viewModel.errorMessage)
         .onAppear {
             withAnimation(.easeOut(duration: 0.6).delay(0.1)) {
@@ -504,9 +496,9 @@ struct RegistrationProfileView: View {
         )
     }
     
-    // MARK: - Access Code Card (Step 3)
-    private var accessCodeCard: some View {
-        let isActive = viewModel.isEmailValidated
+    // MARK: - Email Verification Card (Step 3)
+    private var verificationCard: some View {
+        let isActive = viewModel.isEmailValidated && viewModel.isFirstNameValid && viewModel.isLastNameValid
         
         return VStack(spacing: 16) {
             // Section Header
@@ -519,12 +511,12 @@ struct RegistrationProfileView: View {
                         .font(.system(size: 12, weight: .bold))
                         .foregroundColor(.white)
                 }
-                Text("Access Code")
+                Text("Email Verification")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(isActive ? primaryText : subtleText)
                 Spacer()
                 
-                if viewModel.isAccessCodeValidated {
+                if viewModel.isVerified {
                     HStack(spacing: 4) {
                         Image(systemName: "checkmark.seal.fill")
                             .font(.system(size: 12))
@@ -539,84 +531,160 @@ struct RegistrationProfileView: View {
                 }
             }
             
-            HStack(spacing: 10) {
-                // Code Input
-                HStack(spacing: 8) {
-                    Image(systemName: "key.fill")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(focusedField == .accessCode ? Color(hex: "6366F1") : subtleText)
+            if viewModel.isVerified {
+                // Show verified state
+                HStack(spacing: 12) {
+                    ZStack {
+                        Circle()
+                            .fill(Color(hex: "10B981").opacity(0.15))
+                            .frame(width: 40, height: 40)
+                        Image(systemName: "checkmark.shield.fill")
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundColor(Color(hex: "10B981"))
+                    }
                     
-                    TextField("Enter 6-digit code", text: $viewModel.accessCode)
-                        .font(.system(size: 16, weight: .medium, design: .monospaced))
-                        .keyboardType(.numberPad)
-                        .disabled(!isActive || viewModel.isAccessCodeValidated)
-                        .focused($focusedField, equals: .accessCode)
-                        .onChange(of: viewModel.accessCode) { newValue in
-                            if newValue.count > 6 {
-                                viewModel.accessCode = String(newValue.prefix(6))
-                            }
-                            if viewModel.isAccessCodeValidated {
-                                viewModel.resetAccessCodeValidation()
-                            }
-                        }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Email Verified")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(Color(hex: "10B981"))
+                        Text("Your identity has been confirmed")
+                            .font(.system(size: 12))
+                            .foregroundColor(subtleText)
+                    }
+                    Spacer()
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 14)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(!isActive ? disabledFieldBackground : (viewModel.isAccessCodeValidated ? Color(hex: "10B981").opacity(0.1) : fieldBackground))
-                        .overlay(
+            } else if viewModel.isCodeSent {
+                // OTP entry UI
+                VStack(spacing: 12) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "envelope.badge.fill")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(Color(hex: "6366F1"))
+                        Text("Enter the 6-digit code sent to \(viewModel.email)")
+                            .font(.system(size: 13))
+                            .foregroundColor(subtleText)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    
+                    HStack(spacing: 10) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "number")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(focusedField == .verificationCode ? Color(hex: "6366F1") : subtleText)
+                            
+                            TextField("000000", text: $viewModel.verificationCode)
+                                .font(.system(size: 22, weight: .bold, design: .monospaced))
+                                .keyboardType(.numberPad)
+                                .multilineTextAlignment(.center)
+                                .focused($focusedField, equals: .verificationCode)
+                                .onChange(of: viewModel.verificationCode) { newValue in
+                                    if newValue.count > 6 {
+                                        viewModel.verificationCode = String(newValue.prefix(6))
+                                    }
+                                }
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 14)
+                        .background(
                             RoundedRectangle(cornerRadius: 12)
-                                .stroke(
-                                    viewModel.isAccessCodeValidated 
-                                        ? Color(hex: "10B981").opacity(0.3)
-                                        : (focusedField == .accessCode ? Color(hex: "6366F1") : Color.clear),
-                                    lineWidth: focusedField == .accessCode ? 2 : 1
+                                .fill(fieldBackground)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(
+                                            focusedField == .verificationCode ? Color(hex: "6366F1") : Color.clear,
+                                            lineWidth: 2
+                                        )
                                 )
                         )
-                )
-                .id(Field.accessCode)
-                
-                // Validate Button
-                Button {
-                    focusedField = nil
-                    Task { await viewModel.validateAccessCode() }
-                } label: {
-                    Group {
-                        if viewModel.isValidatingCode {
-                            ProgressView()
-                                .tint(.white)
-                                .scaleEffect(0.9)
-                        } else if viewModel.isAccessCodeValidated {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 16, weight: .bold))
-                        } else {
-                            Image(systemName: "arrow.right")
-                                .font(.system(size: 16, weight: .bold))
+                        .id(Field.verificationCode)
+                        
+                        // Verify Button
+                        Button {
+                            focusedField = nil
+                            Task { await viewModel.verifyCode() }
+                        } label: {
+                            Group {
+                                if viewModel.isVerifying {
+                                    ProgressView()
+                                        .tint(.white)
+                                        .scaleEffect(0.9)
+                                } else {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 16, weight: .bold))
+                                }
+                            }
+                            .frame(width: 52, height: 52)
+                            .background(viewModel.canVerifyCode ? Color(hex: "6366F1") : Color.gray.opacity(0.3))
+                            .foregroundColor(.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .shadow(
+                                color: viewModel.canVerifyCode ? Color(hex: "6366F1").opacity(0.4) : Color.clear,
+                                radius: 8, x: 0, y: 4
+                            )
                         }
+                        .disabled(!viewModel.canVerifyCode || viewModel.isVerifying)
+                        .scaleEffect(viewModel.isVerifying ? 0.95 : 1)
+                        .animation(.spring(response: 0.3), value: viewModel.isVerifying)
                     }
-                    .frame(width: 52, height: 52)
-                    .background(
-                        viewModel.isAccessCodeValidated 
-                            ? Color(hex: "10B981")
-                            : (viewModel.canValidateAccessCode ? Color(hex: "6366F1") : Color.gray.opacity(0.3))
-                    )
-                    .foregroundColor(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .shadow(
-                        color: viewModel.canValidateAccessCode && !viewModel.isAccessCodeValidated
-                            ? Color(hex: "6366F1").opacity(0.4) 
-                            : Color.clear,
-                        radius: 8, x: 0, y: 4
-                    )
+                    
+                    // Resend button with cooldown
+                    HStack {
+                        if viewModel.cooldownRemaining > 0 {
+                            Text("Resend code in \(viewModel.cooldownRemaining)s")
+                                .font(.system(size: 12))
+                                .foregroundColor(subtleText)
+                        } else {
+                            Button {
+                                Task { await viewModel.sendVerificationCode() }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "arrow.counterclockwise")
+                                        .font(.system(size: 11, weight: .semibold))
+                                    Text("Resend Code")
+                                        .font(.system(size: 12, weight: .semibold))
+                                }
+                                .foregroundColor(Color(hex: "6366F1"))
+                            }
+                        }
+                        Spacer()
+                    }
                 }
-                .disabled(!viewModel.canValidateAccessCode || viewModel.isValidatingCode)
-                .scaleEffect(viewModel.isValidatingCode ? 0.95 : 1)
-                .animation(.spring(response: 0.3), value: viewModel.isValidatingCode)
+            } else {
+                // Send verification button
+                VStack(spacing: 10) {
+                    Text("We'll send a verification code to your email")
+                        .font(.system(size: 13))
+                        .foregroundColor(subtleText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    
+                    Button {
+                        focusedField = nil
+                        Task { await viewModel.sendVerificationCode() }
+                    } label: {
+                        HStack(spacing: 8) {
+                            if viewModel.isSendingCode {
+                                ProgressView()
+                                    .tint(.white)
+                                    .scaleEffect(0.8)
+                            } else {
+                                Image(systemName: "envelope.arrow.triangle.branch")
+                                    .font(.system(size: 14, weight: .medium))
+                            }
+                            Text("Send Verification Code")
+                                .font(.system(size: 15, weight: .semibold))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(isActive && !viewModel.isSendingCode ? Color(hex: "6366F1") : Color.gray.opacity(0.3))
+                        .foregroundColor(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                    .disabled(!isActive || viewModel.isSendingCode)
+                }
             }
             
             // Error Message
-            if let error = viewModel.accessCodeError {
+            if let error = viewModel.verificationError {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.circle.fill")
                         .font(.system(size: 12))
@@ -628,7 +696,7 @@ struct RegistrationProfileView: View {
             }
             
             if !isActive {
-                Text("Enter your email first to continue")
+                Text("Complete your profile details first")
                     .font(.system(size: 12))
                     .foregroundColor(subtleText)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -640,116 +708,6 @@ struct RegistrationProfileView: View {
                 .fill(cardBackground)
                 .opacity(isActive ? 1 : 0.7)
                 .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.3 : 0.08), radius: 15, x: 0, y: 5)
-        )
-    }
-    
-    // MARK: - Organization Card (Step 4)
-    private var organizationCard: some View {
-        VStack(spacing: 16) {
-            // Section Header
-            HStack {
-                ZStack {
-                    Circle()
-                        .fill(accentGradient)
-                        .frame(width: 24, height: 24)
-                    Text("4")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(.white)
-                }
-                Text("Organization")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(primaryText)
-                Spacer()
-            }
-            
-            VStack(spacing: 12) {
-                // Organization Name
-                InfoRow(
-                    icon: "building.2",
-                    iconColor: Color(hex: "6366F1"),
-                    label: "Organization",
-                    value: viewModel.organizationName,
-                    colorScheme: colorScheme
-                )
-                
-                // Role
-                InfoRow(
-                    icon: "shield.checkered",
-                    iconColor: Color(hex: "8B5CF6"),
-                    label: "Your Role",
-                    value: viewModel.roleDisplayName,
-                    colorScheme: colorScheme,
-                    isHighlighted: true
-                )
-                
-                // Facility Picker
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Facility")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(subtleText)
-                    
-                    Menu {
-                        ForEach(viewModel.facilities) { facility in
-                            Button {
-                                withAnimation(.spring(response: 0.3)) {
-                                    viewModel.selectedFacility = facility
-                                }
-                            } label: {
-                                HStack {
-                                    Text(facility.name)
-                                    if viewModel.selectedFacility?.id == facility.id {
-                                        Image(systemName: "checkmark")
-                                    }
-                                }
-                            }
-                        }
-                    } label: {
-                        HStack(spacing: 12) {
-                            ZStack {
-                                Circle()
-                                    .fill(Color(hex: "F59E0B").opacity(0.15))
-                                    .frame(width: 36, height: 36)
-                                Image(systemName: "mappin.circle.fill")
-                                    .font(.system(size: 16, weight: .medium))
-                                    .foregroundColor(Color(hex: "F59E0B"))
-                            }
-                            
-                            Text(viewModel.selectedFacility?.name ?? "Select facility")
-                                .font(.system(size: 15, weight: .medium))
-                                .foregroundColor(viewModel.selectedFacility == nil ? subtleText : primaryText)
-                            
-                            Spacer()
-                            
-                            Image(systemName: "chevron.up.chevron.down")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(subtleText)
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(fieldBackground)
-                        )
-                    }
-                }
-            }
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 20)
-                        .stroke(
-                            LinearGradient(
-                                colors: [Color(hex: "6366F1").opacity(0.3), Color(hex: "8B5CF6").opacity(0.3)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1
-                        )
-                )
-                .shadow(color: Color(hex: "6366F1").opacity(0.15), radius: 20, x: 0, y: 10)
         )
     }
     
@@ -826,13 +784,13 @@ struct RegistrationProfileView: View {
         VStack(spacing: 12) {
             Button {
                 focusedField = nil
-                Task { await viewModel.register() }
+                viewModel.completeRegistration()
             } label: {
                 HStack(spacing: 10) {
-                    Text("Create Account")
+                    Text("Verify Account")
                         .font(.system(size: 17, weight: .semibold))
                     
-                    Image(systemName: "arrow.right")
+                    Image(systemName: "checkmark.shield")
                         .font(.system(size: 14, weight: .bold))
                 }
                 .frame(maxWidth: .infinity)
@@ -888,7 +846,7 @@ struct RegistrationProfileView: View {
                 }
                 
                 VStack(spacing: 6) {
-                    Text("Creating Account")
+                    Text("Verifying Account")
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundColor(primaryText)
                     

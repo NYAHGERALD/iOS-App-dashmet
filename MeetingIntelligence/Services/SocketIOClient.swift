@@ -38,17 +38,32 @@ class SocketIOClient {
         guard let url = URL(string: "\(serverURL)/socket.io/?EIO=4&transport=websocket") else { return }
         
         isConnecting = true
-        storedAuth = ["userId": userId, "organizationId": organizationId]
         
-        // Cancel any existing task before creating a new one
-        webSocketTask?.cancel(with: .normalClosure, reason: nil)
-        webSocketTask = nil
+        // Get Firebase token for auth
+        guard let firebaseUser = Auth.auth().currentUser else {
+            print("❌ Socket: No Firebase user, cannot connect")
+            isConnecting = false
+            return
+        }
         
-        webSocketTask = session.webSocketTask(with: url)
-        webSocketTask?.resume()
-        
-        // Start listening for messages
-        receiveMessage()
+        firebaseUser.getIDToken { [weak self] token, error in
+            guard let self = self, let token = token, error == nil else {
+                self?.isConnecting = false
+                return
+            }
+            
+            self.storedAuth = ["token": token, "userId": userId, "organizationId": organizationId]
+            
+            // Cancel any existing task before creating a new one
+            self.webSocketTask?.cancel(with: .normalClosure, reason: nil)
+            self.webSocketTask = nil
+            
+            self.webSocketTask = self.session.webSocketTask(with: url)
+            self.webSocketTask?.resume()
+            
+            // Start listening for messages
+            self.receiveMessage()
+        }
     }
     
     // MARK: - Disconnect

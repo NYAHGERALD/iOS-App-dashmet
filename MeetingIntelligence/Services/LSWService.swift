@@ -204,19 +204,35 @@ class LSWService: ObservableObject {
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        if let token = try? await FirebaseAuthService.shared.getIDToken() {
+        do {
+            let token = try await FirebaseAuthService.shared.getIDToken()
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        } catch {
+            print("⚠️ [LSW] Failed to get auth token: \(error.localizedDescription)")
         }
         return request
     }
     
     // MARK: - Fetch Calendar Config & Preferences
     func fetchConfig() async {
-        guard let url = URL(string: "\(baseURL)/lsw/data?weekNumber=1&year=2026") else { return }
+        // Use current ISO week/year for config fetch (config itself is org-level)
+        let cal = Calendar(identifier: .iso8601)
+        let now = Date()
+        let wk = cal.component(.weekOfYear, from: now)
+        let yr = cal.component(.yearForWeekOfYear, from: now)
+        guard let url = URL(string: "\(baseURL)/lsw/data?weekNumber=\(wk)&year=\(yr)") else { return }
         do {
             let request = try await authorizedRequest(url: url)
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return }
+            guard let httpResponse = response as? HTTPURLResponse else {
+                print("⚠️ [LSW] fetchConfig: no HTTP response")
+                return
+            }
+            guard httpResponse.statusCode == 200 else {
+                print("⚠️ [LSW] fetchConfig: HTTP \(httpResponse.statusCode)")
+                if let body = String(data: data, encoding: .utf8) { print("⚠️ [LSW] fetchConfig body: \(body.prefix(300))") }
+                return
+            }
             let result = try JSONDecoder().decode(LSWDataResponse.self, from: data)
             await MainActor.run {
                 if let config = result.data.calendarConfig {
@@ -226,7 +242,10 @@ class LSWService: ObservableObject {
                     self.workDaysPerWeek = max(5, min(7, prefs.workDaysPerWeek))
                 }
             }
-        } catch { }
+            print("✅ [LSW] Config loaded successfully")
+        } catch {
+            print("❌ [LSW] fetchConfig error: \(error.localizedDescription)")
+        }
     }
     
     // MARK: - Update Work Days Per Week
@@ -323,19 +342,28 @@ class LSWService: ObservableObject {
         if let wn = weekNumber, let yr = year {
             urlString += "?weekNumber=\(wn)&year=\(yr)"
         }
+        print("📋 [LSW] Fetching daily tasks: \(urlString)")
         guard let url = URL(string: urlString) else { return }
         
         do {
             let request = try await authorizedRequest(url: url)
+            let hasAuth = request.value(forHTTPHeaderField: "Authorization") != nil
+            print("📋 [LSW] Auth header present: \(hasAuth)")
+            
             let (data, response) = try await URLSession.shared.data(for: request)
             
             guard let httpResponse = response as? HTTPURLResponse else {
+                print("❌ [LSW] No HTTP response for daily tasks")
                 await MainActor.run { errorMessage = "No HTTP response"; isLoading = false }
                 return
             }
             
+            print("📋 [LSW] Daily tasks HTTP status: \(httpResponse.statusCode)")
+            
             guard httpResponse.statusCode == 200 else {
-                await MainActor.run { errorMessage = "Failed to load tasks"; isLoading = false }
+                let body = String(data: data, encoding: .utf8) ?? "no body"
+                print("❌ [LSW] Daily tasks failed: HTTP \(httpResponse.statusCode) - \(body.prefix(300))")
+                await MainActor.run { errorMessage = "Failed to load tasks (HTTP \(httpResponse.statusCode))"; isLoading = false }
                 return
             }
             
@@ -343,12 +371,14 @@ class LSWService: ObservableObject {
             let result = try decoder.decode(LSWDailyTasksResponse.self, from: data)
             
             let activeTasks = result.data.filter { $0.isActive != false }
+            print("✅ [LSW] Loaded \(activeTasks.count) active daily tasks")
             
             await MainActor.run {
                 self.dailyTasks = activeTasks
                 self.isLoading = false
             }
         } catch {
+            print("❌ [LSW] Daily tasks error: \(error.localizedDescription)")
             await MainActor.run { errorMessage = error.localizedDescription; isLoading = false }
         }
     }

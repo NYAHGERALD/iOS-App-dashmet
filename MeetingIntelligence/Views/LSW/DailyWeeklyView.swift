@@ -218,6 +218,40 @@ struct DailyWeeklyView: View {
                             .foregroundColor(textSecondary)
                     }
                     Spacer()
+                } else if let error = lswService.errorMessage, lswService.dailyTasks.isEmpty {
+                    Spacer()
+                    VStack(spacing: 16) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.red.opacity(0.1))
+                                .frame(width: 80, height: 80)
+                            Image(systemName: "exclamationmark.triangle")
+                                .font(.system(size: 34))
+                                .foregroundColor(.red)
+                        }
+                        Text("Unable to Load Tasks")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(textPrimary)
+                        Text(error)
+                            .font(.system(size: 13))
+                            .foregroundColor(textSecondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 48)
+                        Button {
+                            Task {
+                                await lswService.fetchDailyTasks(weekNumber: currentOrgWeek, year: currentOrgYear)
+                            }
+                        } label: {
+                            Text("Retry")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 10)
+                                .background(Color(hex: "0EA5E9"))
+                                .clipShape(Capsule())
+                        }
+                    }
+                    Spacer()
                 } else if lswService.dailyTasks.isEmpty {
                     Spacer()
                     emptyState

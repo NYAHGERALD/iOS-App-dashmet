@@ -10,22 +10,12 @@ import Foundation
 // MARK: - API Response Models
 struct PhoneCheckResponse: Codable {
     let exists: Bool
-    let user: UserBasicInfo?
-}
-
-struct UserBasicInfo: Codable {
-    let id: String
-    let firstName: String
-    let lastName: String
 }
 
 struct EmailCheckResponse: Codable {
     let success: Bool
     let exists: Bool
-    let email: String?
-    let firstName: String?
-    let lastName: String?
-    let userId: String?
+}
 }
 
 struct AccessCodeValidationResponse: Codable {
@@ -236,6 +226,7 @@ class APIService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        await addAuthToken(to: &request)
         
         var body: [String: String] = ["phone": phone, "firebaseUid": firebaseUid]
         if let countryCode = countryCode {
@@ -309,6 +300,7 @@ class APIService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        await addAuthToken(to: &request)
         
         var body: [String: String] = [
             "userId": userId,
@@ -344,8 +336,8 @@ class APIService {
         var request = URLRequest(url: url)
         request.httpMethod = "DELETE"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        await addAuthToken(to: &request)
         request.httpBody = try JSONEncoder().encode([
-            "userId": userId,
             "token": token
         ])
         
