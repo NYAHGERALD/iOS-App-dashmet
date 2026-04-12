@@ -316,6 +316,7 @@ struct TriggerEditSheet: View {
                     if let raw = t.eventDate?.prefix(10), !raw.isEmpty {
                         let formatter = DateFormatter()
                         formatter.dateFormat = "yyyy-MM-dd"
+                        formatter.timeZone = TimeZone(identifier: "UTC")
                         if let date = formatter.date(from: String(raw)) {
                             eventDate = date
                             hasEventDate = true
@@ -361,6 +362,7 @@ struct TriggerEditSheet: View {
         
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone(identifier: "UTC")
         let eventDateStr: String? = hasEventDate ? formatter.string(from: eventDate) : nil
         let trimmedComments = comments.trimmingCharacters(in: .whitespacesAndNewlines)
         

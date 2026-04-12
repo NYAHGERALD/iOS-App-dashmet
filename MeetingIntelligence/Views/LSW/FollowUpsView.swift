@@ -243,8 +243,11 @@ struct FollowUpsView: View {
         let raw = String(followUp.dueDate.prefix(10))
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone(identifier: "UTC")
         if let date = formatter.date(from: raw) {
-            let threeDays = Calendar.current.date(byAdding: .day, value: 3, to: Date()) ?? Date()
+            var cal = Calendar.current
+            cal.timeZone = TimeZone(identifier: "UTC")!
+            let threeDays = cal.date(byAdding: .day, value: 3, to: Date()) ?? Date()
             if date < threeDays { return .orange }
         }
         return textSecondary
@@ -350,6 +353,7 @@ struct FollowUpEditSheet: View {
                     let raw = String(fu.dueDate.prefix(10))
                     let formatter = DateFormatter()
                     formatter.dateFormat = "yyyy-MM-dd"
+                    formatter.timeZone = TimeZone(identifier: "UTC")
                     if let date = formatter.date(from: raw) {
                         dueDate = date
                     }
@@ -393,6 +397,7 @@ struct FollowUpEditSheet: View {
         
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone(identifier: "UTC")
         let dueDateStr = formatter.string(from: dueDate)
         let trimmedResponsible = responsible.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedComments = comments.trimmingCharacters(in: .whitespacesAndNewlines)

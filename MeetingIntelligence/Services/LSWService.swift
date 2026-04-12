@@ -214,6 +214,7 @@ struct LSWFollowUp: Codable, Identifiable {
         let raw = dueDate.prefix(10)
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone(identifier: "UTC")
         if let date = formatter.date(from: String(raw)) {
             formatter.dateFormat = "MMM d, yyyy"
             return formatter.string(from: date)
@@ -225,8 +226,11 @@ struct LSWFollowUp: Codable, Identifiable {
         let raw = String(dueDate.prefix(10))
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone(identifier: "UTC")
         guard let date = formatter.date(from: raw) else { return false }
-        return date < Calendar.current.startOfDay(for: Date())
+        var cal = Calendar.current
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        return date < cal.startOfDay(for: Date())
     }
 }
 
@@ -254,6 +258,7 @@ struct LSWRcaTrigger: Codable, Identifiable {
         guard let raw = eventDate?.prefix(10), !raw.isEmpty else { return "" }
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone(identifier: "UTC")
         if let date = formatter.date(from: String(raw)) {
             formatter.dateFormat = "MMM d, yyyy"
             return formatter.string(from: date)
