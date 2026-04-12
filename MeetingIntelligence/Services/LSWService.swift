@@ -136,6 +136,51 @@ struct CreateEarlyCompletionLogRequest: Codable {
     let scheduledDate: String
 }
 
+// MARK: - Project Models
+
+struct LSWProjectUpdate: Codable, Identifiable {
+    let id: String
+    let text: String
+    let fontColor: String?
+    let fontItalic: Bool?
+    let cellColor: String?
+    let cellColorIntensity: Int?
+    let sortOrder: Int?
+}
+
+struct LSWProject: Codable, Identifiable {
+    let id: String
+    let name: String
+    let updates: [LSWProjectUpdate]
+    let fontColor: String?
+    let fontFamily: String?
+    let fontBold: Bool?
+    let fontItalic: Bool?
+    let cellColor: String?
+    let cellColorIntensity: Int?
+    let defaultUpdateFontColor: String?
+    let defaultUpdateFontItalic: Bool?
+    let defaultUpdateCellColor: String?
+    let defaultUpdateCellColorIntensity: Int?
+    let sortOrder: Int?
+    let isActive: Bool?
+}
+
+struct LSWProjectsResponse: Codable {
+    let success: Bool
+    let data: [LSWProject]
+}
+
+struct LSWProjectSingleResponse: Codable {
+    let success: Bool
+    let data: LSWProject
+}
+
+struct LSWProjectUpdateSingleResponse: Codable {
+    let success: Bool
+    let data: LSWProjectUpdate
+}
+
 // MARK: - Service
 
 class LSWService: ObservableObject {
@@ -151,6 +196,8 @@ class LSWService: ObservableObject {
     @Published var isSubmitting = false
     @Published var errorMessage: String?
     @Published var earlyCompletionLogs: [LSWEarlyCompletionLog] = []
+    @Published var projects: [LSWProject] = []
+    @Published var isLoadingProjects = false
     
     // WebSocket sync state
     private var activeWeekNumber: Int?
@@ -238,6 +285,130 @@ class LSWService: ObservableObject {
         
         SocketIOClient.shared.connect(userId: userId, organizationId: orgId)
         webSocketConnected = true
+    }
+    
+    // MARK: - WebSocket Project Sync
+    
+    func connectProjectWebSocket() {
+        let userId = UserDefaults.standard.string(forKey: "user_id") ?? ""
+        let orgId = UserDefaults.standard.string(forKey: "organization_id") ?? ""
+        
+        guard !userId.isEmpty, !orgId.isEmpty else { return }
+        
+        SocketIOClient.shared.on("lsw:project-changed") { [weak self] data in
+            guard let self = self,
+                  let dict = data as? [String: Any],
+                  let action = dict["action"] as? String else { return }
+            
+            Task { @MainActor in
+                switch action {
+                case "project-created":
+                    if let projectDict = dict["project"] as? [String: Any],
+                       let projectData = try? JSONSerialization.data(withJSONObject: projectDict),
+                       let project = try? JSONDecoder().decode(LSWProject.self, from: projectData) {
+                        if !self.projects.contains(where: { $0.id == project.id }) {
+                            self.projects.append(project)
+                        }
+                    }
+                    
+                case "project-updated":
+                    if let projectDict = dict["project"] as? [String: Any],
+                       let projectData = try? JSONSerialization.data(withJSONObject: projectDict),
+                       let project = try? JSONDecoder().decode(LSWProject.self, from: projectData) {
+                        if let idx = self.projects.firstIndex(where: { $0.id == project.id }) {
+                            self.projects[idx] = project
+                        }
+                    }
+                    
+                case "project-deleted":
+                    if let projectId = dict["projectId"] as? String {
+                        self.projects.removeAll { $0.id == projectId }
+                    }
+                    
+                case "update-created":
+                    if let projectId = dict["projectId"] as? String,
+                       let updateDict = dict["update"] as? [String: Any],
+                       let updateData = try? JSONSerialization.data(withJSONObject: updateDict),
+                       let update = try? JSONDecoder().decode(LSWProjectUpdate.self, from: updateData) {
+                        if let idx = self.projects.firstIndex(where: { $0.id == projectId }) {
+                            let p = self.projects[idx]
+                            var newUpdates = p.updates
+                            if !newUpdates.contains(where: { $0.id == update.id }) {
+                                newUpdates.append(update)
+                            }
+                            self.projects[idx] = LSWProject(
+                                id: p.id, name: p.name, updates: newUpdates,
+                                fontColor: p.fontColor, fontFamily: p.fontFamily,
+                                fontBold: p.fontBold, fontItalic: p.fontItalic,
+                                cellColor: p.cellColor, cellColorIntensity: p.cellColorIntensity,
+                                defaultUpdateFontColor: p.defaultUpdateFontColor,
+                                defaultUpdateFontItalic: p.defaultUpdateFontItalic,
+                                defaultUpdateCellColor: p.defaultUpdateCellColor,
+                                defaultUpdateCellColorIntensity: p.defaultUpdateCellColorIntensity,
+                                sortOrder: p.sortOrder, isActive: p.isActive
+                            )
+                        }
+                    }
+                    
+                case "update-updated":
+                    if let updateDict = dict["update"] as? [String: Any],
+                       let updateData = try? JSONSerialization.data(withJSONObject: updateDict),
+                       let update = try? JSONDecoder().decode(LSWProjectUpdate.self, from: updateData) {
+                        for (pIdx, project) in self.projects.enumerated() {
+                            if let uIdx = project.updates.firstIndex(where: { $0.id == update.id }) {
+                                var newUpdates = project.updates
+                                newUpdates[uIdx] = update
+                                let p = project
+                                self.projects[pIdx] = LSWProject(
+                                    id: p.id, name: p.name, updates: newUpdates,
+                                    fontColor: p.fontColor, fontFamily: p.fontFamily,
+                                    fontBold: p.fontBold, fontItalic: p.fontItalic,
+                                    cellColor: p.cellColor, cellColorIntensity: p.cellColorIntensity,
+                                    defaultUpdateFontColor: p.defaultUpdateFontColor,
+                                    defaultUpdateFontItalic: p.defaultUpdateFontItalic,
+                                    defaultUpdateCellColor: p.defaultUpdateCellColor,
+                                    defaultUpdateCellColorIntensity: p.defaultUpdateCellColorIntensity,
+                                    sortOrder: p.sortOrder, isActive: p.isActive
+                                )
+                                break
+                            }
+                        }
+                    }
+                    
+                case "update-deleted":
+                    if let updateId = dict["updateId"] as? String {
+                        for (pIdx, project) in self.projects.enumerated() {
+                            if project.updates.contains(where: { $0.id == updateId }) {
+                                var newUpdates = project.updates.filter { $0.id != updateId }
+                                let p = project
+                                self.projects[pIdx] = LSWProject(
+                                    id: p.id, name: p.name, updates: newUpdates,
+                                    fontColor: p.fontColor, fontFamily: p.fontFamily,
+                                    fontBold: p.fontBold, fontItalic: p.fontItalic,
+                                    cellColor: p.cellColor, cellColorIntensity: p.cellColorIntensity,
+                                    defaultUpdateFontColor: p.defaultUpdateFontColor,
+                                    defaultUpdateFontItalic: p.defaultUpdateFontItalic,
+                                    defaultUpdateCellColor: p.defaultUpdateCellColor,
+                                    defaultUpdateCellColorIntensity: p.defaultUpdateCellColorIntensity,
+                                    sortOrder: p.sortOrder, isActive: p.isActive
+                                )
+                                break
+                            }
+                        }
+                    }
+                    
+                default:
+                    // Fallback: full re-fetch
+                    Task { await self.fetchProjects() }
+                }
+            }
+        }
+        
+        // Ensure WebSocket is connected
+        if !webSocketConnected {
+            SocketIOClient.shared.connect(userId: userId, organizationId: orgId)
+            webSocketConnected = true
+        }
     }
     
     func disconnectWebSocket() {
@@ -628,5 +799,138 @@ class LSWService: ObservableObject {
                 self.earlyCompletionLogs.removeAll { $0.dailyTaskId == dailyTaskId && $0.dayKey == dayKey && $0.weekNumber == weekNumber && $0.year == year }
             }
         } catch { }
+    }
+    
+    // MARK: - Improvement Projects API
+    
+    func fetchProjects() async {
+        await MainActor.run { isLoadingProjects = true }
+        guard let url = URL(string: "\(baseURL)/lsw/projects") else {
+            await MainActor.run { isLoadingProjects = false }
+            return
+        }
+        do {
+            let request = try await authorizedRequest(url: url)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                await MainActor.run { isLoadingProjects = false }
+                return
+            }
+            let result = try JSONDecoder().decode(LSWProjectsResponse.self, from: data)
+            await MainActor.run {
+                self.projects = result.data
+                self.isLoadingProjects = false
+            }
+        } catch {
+            print("❌ [LSW] fetchProjects error: \(error.localizedDescription)")
+            await MainActor.run { isLoadingProjects = false }
+        }
+    }
+    
+    func createProject(name: String) async -> LSWProject? {
+        guard let url = URL(string: "\(baseURL)/lsw/projects") else { return nil }
+        let body: [String: Any] = [
+            "name": name,
+            "initialUpdateText": "",
+            "fontColor": "#1f2937",
+            "fontFamily": "Inter",
+            "fontBold": false,
+            "fontItalic": false,
+            "cellColor": "#3b82f6",
+            "cellColorIntensity": 20,
+            "defaultUpdateFontColor": "#4b5563",
+            "defaultUpdateFontItalic": false,
+            "defaultUpdateCellColor": "#10b981",
+            "defaultUpdateCellColorIntensity": 10
+        ]
+        do {
+            var request = try await authorizedRequest(url: url, method: "POST")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, (200...201).contains(httpResponse.statusCode) else { return nil }
+            let result = try JSONDecoder().decode(LSWProjectSingleResponse.self, from: data)
+            return result.data
+        } catch {
+            print("❌ [LSW] createProject error: \(error.localizedDescription)")
+            return nil
+        }
+    }
+    
+    func updateProject(id: String, data: [String: Any]) async -> LSWProject? {
+        guard let url = URL(string: "\(baseURL)/lsw/projects/\(id)") else { return nil }
+        do {
+            var request = try await authorizedRequest(url: url, method: "PUT")
+            request.httpBody = try JSONSerialization.data(withJSONObject: data)
+            let (responseData, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return nil }
+            let result = try JSONDecoder().decode(LSWProjectSingleResponse.self, from: responseData)
+            return result.data
+        } catch {
+            print("❌ [LSW] updateProject error: \(error.localizedDescription)")
+            return nil
+        }
+    }
+    
+    func deleteProject(id: String) async -> Bool {
+        guard let url = URL(string: "\(baseURL)/lsw/projects/\(id)") else { return false }
+        do {
+            let request = try await authorizedRequest(url: url, method: "DELETE")
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return false }
+            return true
+        } catch {
+            print("❌ [LSW] deleteProject error: \(error.localizedDescription)")
+            return false
+        }
+    }
+    
+    func addProjectUpdate(projectId: String, text: String = "") async -> LSWProjectUpdate? {
+        guard let url = URL(string: "\(baseURL)/lsw/projects/\(projectId)/updates") else { return nil }
+        // Use project defaults for new update styling
+        let project = await MainActor.run { projects.first { $0.id == projectId } }
+        var body: [String: Any] = ["text": text]
+        if let fc = project?.defaultUpdateFontColor { body["fontColor"] = fc }
+        if let fi = project?.defaultUpdateFontItalic { body["fontItalic"] = fi }
+        if let cc = project?.defaultUpdateCellColor { body["cellColor"] = cc }
+        if let ci = project?.defaultUpdateCellColorIntensity { body["cellColorIntensity"] = ci }
+        do {
+            var request = try await authorizedRequest(url: url, method: "POST")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, (200...201).contains(httpResponse.statusCode) else { return nil }
+            let result = try JSONDecoder().decode(LSWProjectUpdateSingleResponse.self, from: data)
+            return result.data
+        } catch {
+            print("❌ [LSW] addProjectUpdate error: \(error.localizedDescription)")
+            return nil
+        }
+    }
+    
+    func updateProjectUpdate(updateId: String, data: [String: Any]) async -> LSWProjectUpdate? {
+        guard let url = URL(string: "\(baseURL)/lsw/project-updates/\(updateId)") else { return nil }
+        do {
+            var request = try await authorizedRequest(url: url, method: "PUT")
+            request.httpBody = try JSONSerialization.data(withJSONObject: data)
+            let (responseData, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return nil }
+            let result = try JSONDecoder().decode(LSWProjectUpdateSingleResponse.self, from: responseData)
+            return result.data
+        } catch {
+            print("❌ [LSW] updateProjectUpdate error: \(error.localizedDescription)")
+            return nil
+        }
+    }
+    
+    func deleteProjectUpdate(updateId: String) async -> Bool {
+        guard let url = URL(string: "\(baseURL)/lsw/project-updates/\(updateId)") else { return false }
+        do {
+            let request = try await authorizedRequest(url: url, method: "DELETE")
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return false }
+            return true
+        } catch {
+            print("❌ [LSW] deleteProjectUpdate error: \(error.localizedDescription)")
+            return false
+        }
     }
 }
