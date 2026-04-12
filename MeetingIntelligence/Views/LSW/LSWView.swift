@@ -139,6 +139,8 @@ struct LSWSectionDetailView: View {
             DailyWeeklyView()
         case .improvementProjects:
             ProjectsView()
+        case .followUps:
+            FollowUpsView()
         default:
             LSWPlaceholderView(section: section)
         }

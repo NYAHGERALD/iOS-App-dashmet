@@ -181,6 +181,65 @@ struct LSWProjectUpdateSingleResponse: Codable {
     let data: LSWProjectUpdate
 }
 
+// MARK: - Follow-Up Models
+
+struct LSWFollowUpResponsibleUser: Codable {
+    let id: String
+    let firstName: String
+    let lastName: String
+    let email: String
+}
+
+struct LSWFollowUp: Codable, Identifiable {
+    let id: String
+    let task: String
+    let dueDate: String
+    let responsibleUserId: String?
+    let responsibleName: String?
+    let responsibleUser: LSWFollowUpResponsibleUser?
+    let comments: String?
+    let completed: Bool?
+    let sortOrder: Int?
+    let isActive: Bool?
+    
+    var displayResponsible: String {
+        if let name = responsibleName, !name.isEmpty { return name }
+        if let user = responsibleUser {
+            return "\(user.firstName) \(user.lastName)".trimmingCharacters(in: .whitespaces)
+        }
+        return ""
+    }
+    
+    var dueDateFormatted: String {
+        let raw = dueDate.prefix(10)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        if let date = formatter.date(from: String(raw)) {
+            formatter.dateFormat = "MMM d, yyyy"
+            return formatter.string(from: date)
+        }
+        return String(raw)
+    }
+    
+    var isOverdue: Bool {
+        let raw = String(dueDate.prefix(10))
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        guard let date = formatter.date(from: raw) else { return false }
+        return date < Calendar.current.startOfDay(for: Date())
+    }
+}
+
+struct LSWFollowUpsResponse: Codable {
+    let success: Bool
+    let data: [LSWFollowUp]
+}
+
+struct LSWFollowUpSingleResponse: Codable {
+    let success: Bool
+    let data: LSWFollowUp
+}
+
 // MARK: - Service
 
 class LSWService: ObservableObject {
@@ -198,6 +257,8 @@ class LSWService: ObservableObject {
     @Published var earlyCompletionLogs: [LSWEarlyCompletionLog] = []
     @Published var projects: [LSWProject] = []
     @Published var isLoadingProjects = false
+    @Published var followUps: [LSWFollowUp] = []
+    @Published var isLoadingFollowUps = false
     
     // WebSocket sync state
     private var activeWeekNumber: Int?
@@ -400,6 +461,57 @@ class LSWService: ObservableObject {
                 default:
                     // Fallback: full re-fetch
                     Task { await self.fetchProjects() }
+                }
+            }
+        }
+        
+        // Ensure WebSocket is connected
+        if !webSocketConnected {
+            SocketIOClient.shared.connect(userId: userId, organizationId: orgId)
+            webSocketConnected = true
+        }
+    }
+    
+    // MARK: - WebSocket Follow-Up Sync
+    
+    func connectFollowUpWebSocket() {
+        let userId = UserDefaults.standard.string(forKey: "user_id") ?? ""
+        let orgId = UserDefaults.standard.string(forKey: "organization_id") ?? ""
+        
+        guard !userId.isEmpty, !orgId.isEmpty else { return }
+        
+        SocketIOClient.shared.on("lsw:follow-up-changed") { [weak self] data in
+            guard let self = self,
+                  let dict = data as? [String: Any],
+                  let action = dict["action"] as? String else { return }
+            
+            Task { @MainActor in
+                switch action {
+                case "follow-up-created":
+                    if let fuDict = dict["followUp"] as? [String: Any],
+                       let fuData = try? JSONSerialization.data(withJSONObject: fuDict),
+                       let followUp = try? JSONDecoder().decode(LSWFollowUp.self, from: fuData) {
+                        if !self.followUps.contains(where: { $0.id == followUp.id }) {
+                            self.followUps.append(followUp)
+                        }
+                    }
+                    
+                case "follow-up-updated":
+                    if let fuDict = dict["followUp"] as? [String: Any],
+                       let fuData = try? JSONSerialization.data(withJSONObject: fuDict),
+                       let followUp = try? JSONDecoder().decode(LSWFollowUp.self, from: fuData) {
+                        if let idx = self.followUps.firstIndex(where: { $0.id == followUp.id }) {
+                            self.followUps[idx] = followUp
+                        }
+                    }
+                    
+                case "follow-up-deleted":
+                    if let followUpId = dict["followUpId"] as? String {
+                        self.followUps.removeAll { $0.id == followUpId }
+                    }
+                    
+                default:
+                    Task { await self.fetchFollowUps() }
                 }
             }
         }
@@ -930,6 +1042,81 @@ class LSWService: ObservableObject {
             return true
         } catch {
             print("❌ [LSW] deleteProjectUpdate error: \(error.localizedDescription)")
+            return false
+        }
+    }
+    
+    // MARK: - Follow-Ups API
+    
+    func fetchFollowUps() async {
+        await MainActor.run { isLoadingFollowUps = true }
+        guard let url = URL(string: "\(baseURL)/lsw/follow-ups") else {
+            await MainActor.run { isLoadingFollowUps = false }
+            return
+        }
+        do {
+            let request = try await authorizedRequest(url: url)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                await MainActor.run { isLoadingFollowUps = false }
+                return
+            }
+            let result = try JSONDecoder().decode(LSWFollowUpsResponse.self, from: data)
+            await MainActor.run {
+                self.followUps = result.data
+                self.isLoadingFollowUps = false
+            }
+        } catch {
+            print("❌ [LSW] fetchFollowUps error: \(error.localizedDescription)")
+            await MainActor.run { isLoadingFollowUps = false }
+        }
+    }
+    
+    func createFollowUp(task: String, dueDate: String, responsibleName: String, comments: String) async -> LSWFollowUp? {
+        guard let url = URL(string: "\(baseURL)/lsw/follow-ups") else { return nil }
+        let body: [String: Any] = [
+            "task": task,
+            "dueDate": dueDate,
+            "responsibleName": responsibleName,
+            "comments": comments
+        ]
+        do {
+            var request = try await authorizedRequest(url: url, method: "POST")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, (200...201).contains(httpResponse.statusCode) else { return nil }
+            let result = try JSONDecoder().decode(LSWFollowUpSingleResponse.self, from: data)
+            return result.data
+        } catch {
+            print("❌ [LSW] createFollowUp error: \(error.localizedDescription)")
+            return nil
+        }
+    }
+    
+    func updateFollowUp(id: String, data: [String: Any]) async -> LSWFollowUp? {
+        guard let url = URL(string: "\(baseURL)/lsw/follow-ups/\(id)") else { return nil }
+        do {
+            var request = try await authorizedRequest(url: url, method: "PUT")
+            request.httpBody = try JSONSerialization.data(withJSONObject: data)
+            let (responseData, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return nil }
+            let result = try JSONDecoder().decode(LSWFollowUpSingleResponse.self, from: responseData)
+            return result.data
+        } catch {
+            print("❌ [LSW] updateFollowUp error: \(error.localizedDescription)")
+            return nil
+        }
+    }
+    
+    func deleteFollowUp(id: String) async -> Bool {
+        guard let url = URL(string: "\(baseURL)/lsw/follow-ups/\(id)") else { return false }
+        do {
+            let request = try await authorizedRequest(url: url, method: "DELETE")
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return false }
+            return true
+        } catch {
+            print("❌ [LSW] deleteFollowUp error: \(error.localizedDescription)")
             return false
         }
     }
