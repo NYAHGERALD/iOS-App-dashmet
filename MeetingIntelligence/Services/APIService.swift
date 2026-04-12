@@ -15,7 +15,9 @@ struct PhoneCheckResponse: Codable {
 struct EmailCheckResponse: Codable {
     let success: Bool
     let exists: Bool
-}
+    let userId: String?
+    let firstName: String?
+    let lastName: String?
 }
 
 struct AccessCodeValidationResponse: Codable {
@@ -67,6 +69,7 @@ struct RegisteredUser: Codable {
 
 struct LinkFirebaseResponse: Codable {
     let success: Bool
+    let requiresPhoneChangeVerification: Bool?
     let user: LinkedUserInfo?
     let error: String?
 }
@@ -286,6 +289,54 @@ class APIService {
         
         if httpResponse.statusCode == 200 {
             return try JSONDecoder().decode(VerifyCodeResponse.self, from: data)
+        } else {
+            let error = try? JSONDecoder().decode(APIError.self, from: data)
+            throw APIServiceError.serverError(error?.error ?? "Verification failed")
+        }
+    }
+    
+    // MARK: - Phone Change Verification
+    
+    /// Send email OTP for phone change verification
+    func sendPhoneChangeVerification(userId: String) async throws -> GenericResponse {
+        let url = URL(string: "\(baseURL)/mobile/send-phone-change-verification")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        await addAuthToken(to: &request)
+        request.httpBody = try JSONEncoder().encode(["userId": userId])
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIServiceError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            return try JSONDecoder().decode(GenericResponse.self, from: data)
+        } else {
+            let error = try? JSONDecoder().decode(APIError.self, from: data)
+            throw APIServiceError.serverError(error?.error ?? "Failed to send verification code")
+        }
+    }
+    
+    /// Verify email OTP code for phone change verification
+    func verifyPhoneChange(userId: String, code: String) async throws -> GenericResponse {
+        let url = URL(string: "\(baseURL)/mobile/verify-phone-change")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        await addAuthToken(to: &request)
+        request.httpBody = try JSONEncoder().encode(["userId": userId, "code": code])
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIServiceError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 200 {
+            return try JSONDecoder().decode(GenericResponse.self, from: data)
         } else {
             let error = try? JSONDecoder().decode(APIError.self, from: data)
             throw APIServiceError.serverError(error?.error ?? "Verification failed")
@@ -1642,6 +1693,7 @@ struct UserProfile: Codable {
     let isActive: Bool?
     let profilePicture: String?
     let organizationId: String?
+    let phoneChangeVerified: Bool?
     let createdAt: String?
     let lastLoginAt: String?
 }

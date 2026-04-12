@@ -52,6 +52,9 @@ class AppState: ObservableObject {
     func initialize() async {
         isLoading = true
         
+        // Listen for force logout notifications from API error handlers
+        startListeningForForceLogout()
+        
         // Runtime security checks (jailbreak, debugger)
         let securityWarnings = SecurityChecks.performChecks()
         if !securityWarnings.isEmpty {
@@ -259,7 +262,13 @@ class AppState: ObservableObject {
         
         do {
             let response = try await APIService.shared.getCurrentUserProfile(token: token)
-            if response.success, response.data?.user != nil {
+            if response.success, let user = response.data?.user {
+                // If phone was changed and not re-verified, force logout
+                // User must re-login with new phone and go through verification
+                if user.phoneChangeVerified == false {
+                    print("🚨 Phone change detected but not verified — forcing logout")
+                    return false
+                }
                 return true
             }
             return false
@@ -309,6 +318,18 @@ class AppState: ObservableObject {
         } catch {
             errorMessage = "Failed to logout: \(error.localizedDescription)"
         }
+    }
+    
+    // MARK: - Force Logout Listener
+    private var forceLogoutCancellable: AnyCancellable?
+    
+    func startListeningForForceLogout() {
+        forceLogoutCancellable = NotificationCenter.default.publisher(for: .forceLogout)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                print("🚨 Force logout triggered — user session invalid")
+                self?.logout()
+            }
     }
     
     // MARK: - Error Handling

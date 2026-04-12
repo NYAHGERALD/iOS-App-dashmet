@@ -19,7 +19,7 @@ struct DailyWeeklyView: View {
     @State private var activeFilter: TaskFilter = .all
     
     // Polling timer for cross-platform sync
-    private let syncTimer = Timer.publish(every: 15, on: .main, in: .common).autoconnect()
+    private let syncTimer = Timer.publish(every: 120, on: .main, in: .common).autoconnect()
     
     // Early completion / uncheck modal state
     @State private var showFutureTaskAlert = false
@@ -218,6 +218,16 @@ struct DailyWeeklyView: View {
                             .foregroundColor(textSecondary)
                     }
                     Spacer()
+                } else if lswService.isChangingWeek {
+                    Spacer()
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .scaleEffect(1.1)
+                        Text("Loading week \(currentOrgWeek)...")
+                            .font(.system(size: 13))
+                            .foregroundColor(textSecondary)
+                    }
+                    Spacer()
                 } else if let error = lswService.errorMessage, lswService.dailyTasks.isEmpty {
                     Spacer()
                     VStack(spacing: 16) {
@@ -323,6 +333,8 @@ struct DailyWeeklyView: View {
             }
         }
         .onChange(of: currentWeekOffset) { _ in
+            // Mark as changing week to show loading overlay / clear stale data
+            lswService.isChangingWeek = true
             lswService.setActiveWeek(weekNumber: currentOrgWeek, year: currentOrgYear)
             Task {
                 await lswService.fetchDailyTasks(weekNumber: currentOrgWeek, year: currentOrgYear)
@@ -354,7 +366,7 @@ struct DailyWeeklyView: View {
                 }
             }
         }
-        // Periodic polling every 15s as reliable sync fallback
+        // Light periodic sync every 2 minutes as fallback (WebSocket handles real-time)
         .onReceive(syncTimer) { _ in
             guard configLoaded else { return }
             Task {

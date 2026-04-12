@@ -11,7 +11,7 @@ import FirebaseAuth
 
 // MARK: - Models
 
-struct LSWDailyTask: Codable, Identifiable {
+struct LSWDailyTask: Codable, Identifiable, Equatable {
     let id: String
     let userId: String?
     let facilityId: String?
@@ -147,6 +147,7 @@ class LSWService: ObservableObject {
     @Published var calendarConfig = LSWCalendarConfig(calendarYearStartMonth: 1, calendarYearStartDay: 1)
     @Published var workDaysPerWeek: Int = 5
     @Published var isLoading = false
+    @Published var isChangingWeek = false
     @Published var isSubmitting = false
     @Published var errorMessage: String?
     @Published var earlyCompletionLogs: [LSWEarlyCompletionLog] = []
@@ -155,6 +156,9 @@ class LSWService: ObservableObject {
     private var activeWeekNumber: Int?
     private var activeYear: Int?
     private var webSocketConnected = false
+    
+    // Fetch generation counter — used to discard stale responses during rapid week navigation
+    private var fetchGeneration: Int = 0
     
     private init() {}
     
@@ -166,7 +170,12 @@ class LSWService: ObservableObject {
         let userId = UserDefaults.standard.string(forKey: "user_id") ?? ""
         let orgId = UserDefaults.standard.string(forKey: "organization_id") ?? ""
         
-        guard !userId.isEmpty, !orgId.isEmpty else { return }
+        guard !userId.isEmpty, !orgId.isEmpty else {
+            print("⚠️ [LSW] WebSocket: missing userId or orgId in UserDefaults, skipping connect")
+            return
+        }
+        
+        print("🔌 [LSW] Connecting WebSocket for user \(userId.prefix(8))... org \(orgId.prefix(8))...")
         
         SocketIOClient.shared.on("lsw:completion-changed") { [weak self] data in
             guard let self = self,
@@ -174,12 +183,56 @@ class LSWService: ObservableObject {
                   let week = dict["weekNumber"] as? Int,
                   let year = dict["year"] as? Int else { return }
             
-            // Only refetch if it matches our active week/year
-            if week == self.activeWeekNumber && year == self.activeYear {
-                Task {
-                    await self.fetchDailyTasks(weekNumber: week, year: year)
-                    await self.fetchEarlyCompletionLogs(weekNumber: week, year: year)
+            // Only process if it matches our active week/year
+            guard week == self.activeWeekNumber && year == self.activeYear else { return }
+            
+            // If the event includes task details, apply directly — no API call needed
+            if let taskId = dict["taskId"] as? String,
+               let day = dict["day"] as? String,
+               let value = dict["value"] as? Bool {
+                
+                Task { @MainActor in
+                    // Apply checkbox change directly to local state
+                    if let idx = self.dailyTasks.firstIndex(where: { $0.id == taskId }) {
+                        let t = self.dailyTasks[idx]
+                        self.dailyTasks[idx] = LSWDailyTask(
+                            id: t.id, userId: t.userId, facilityId: t.facilityId, departmentId: t.departmentId,
+                            task: t.task, minutes: t.minutes, time: t.time,
+                            monday: day == "monday" ? value : t.monday,
+                            tuesday: day == "tuesday" ? value : t.tuesday,
+                            wednesday: day == "wednesday" ? value : t.wednesday,
+                            thursday: day == "thursday" ? value : t.thursday,
+                            friday: day == "friday" ? value : t.friday,
+                            saturday: day == "saturday" ? value : t.saturday,
+                            sunday: day == "sunday" ? value : t.sunday,
+                            sortOrder: t.sortOrder, isActive: t.isActive,
+                            createdAt: t.createdAt, updatedAt: t.updatedAt
+                        )
+                    }
+                    
+                    // Handle early completion log changes
+                    let action = dict["action"] as? String
+                    let dayKey = self.dbDayToUIKey(day)
+                    
+                    if action == "early-complete", let earlyLogDict = dict["earlyLog"] as? [String: Any] {
+                        if let logData = try? JSONSerialization.data(withJSONObject: earlyLogDict),
+                           let log = try? JSONDecoder().decode(LSWEarlyCompletionLog.self, from: logData),
+                           !self.earlyCompletionLogs.contains(where: { $0.id == log.id }) {
+                            self.earlyCompletionLogs.insert(log, at: 0)
+                        }
+                    } else if action == "uncheck" {
+                        self.earlyCompletionLogs.removeAll {
+                            $0.dailyTaskId == taskId && $0.dayKey == dayKey && $0.weekNumber == week && $0.year == year
+                        }
+                    }
                 }
+                return
+            }
+            
+            // Fallback: full re-fetch for legacy events without task details
+            Task {
+                await self.fetchDailyTasks(weekNumber: week, year: year)
+                await self.fetchEarlyCompletionLogs(weekNumber: week, year: year)
             }
         }
         
@@ -196,6 +249,21 @@ class LSWService: ObservableObject {
     func setActiveWeek(weekNumber: Int, year: Int) {
         activeWeekNumber = weekNumber
         activeYear = year
+        fetchGeneration += 1  // Invalidate any in-flight fetches
+    }
+    
+    /// Maps backend day names (monday, tuesday, etc.) to frontend/UI keys (M, T, etc.)
+    private func dbDayToUIKey(_ day: String) -> String {
+        switch day {
+        case "monday": return "M"
+        case "tuesday": return "T"
+        case "wednesday": return "W"
+        case "thursday": return "H"
+        case "friday": return "F"
+        case "saturday": return "S1"
+        case "sunday": return "S2"
+        default: return day
+        }
     }
     
     // MARK: - Auth Helper
@@ -336,25 +404,29 @@ class LSWService: ObservableObject {
     
     // MARK: - Fetch Daily Tasks
     func fetchDailyTasks(weekNumber: Int? = nil, year: Int? = nil) async {
+        let myGeneration = fetchGeneration
         await MainActor.run { isLoading = true; errorMessage = nil }
         
         var urlString = "\(baseURL)/lsw/daily-tasks"
         if let wn = weekNumber, let yr = year {
             urlString += "?weekNumber=\(wn)&year=\(yr)"
         }
-        print("📋 [LSW] Fetching daily tasks: \(urlString)")
+        print("📋 [LSW] Fetching daily tasks: \(urlString) (gen \(myGeneration))")
         guard let url = URL(string: urlString) else { return }
         
         do {
             let request = try await authorizedRequest(url: url)
-            let hasAuth = request.value(forHTTPHeaderField: "Authorization") != nil
-            print("📋 [LSW] Auth header present: \(hasAuth)")
-            
             let (data, response) = try await URLSession.shared.data(for: request)
+            
+            // Discard if user navigated to a different week while this request was in-flight
+            guard myGeneration == fetchGeneration else {
+                print("📋 [LSW] Discarding stale response for gen \(myGeneration), current gen \(fetchGeneration)")
+                return
+            }
             
             guard let httpResponse = response as? HTTPURLResponse else {
                 print("❌ [LSW] No HTTP response for daily tasks")
-                await MainActor.run { errorMessage = "No HTTP response"; isLoading = false }
+                await MainActor.run { errorMessage = "No HTTP response"; isLoading = false; isChangingWeek = false }
                 return
             }
             
@@ -363,7 +435,7 @@ class LSWService: ObservableObject {
             guard httpResponse.statusCode == 200 else {
                 let body = String(data: data, encoding: .utf8) ?? "no body"
                 print("❌ [LSW] Daily tasks failed: HTTP \(httpResponse.statusCode) - \(body.prefix(300))")
-                await MainActor.run { errorMessage = "Failed to load tasks (HTTP \(httpResponse.statusCode))"; isLoading = false }
+                await MainActor.run { errorMessage = "Failed to load tasks (HTTP \(httpResponse.statusCode))"; isLoading = false; isChangingWeek = false }
                 return
             }
             
@@ -371,15 +443,22 @@ class LSWService: ObservableObject {
             let result = try decoder.decode(LSWDailyTasksResponse.self, from: data)
             
             let activeTasks = result.data.filter { $0.isActive != false }
-            print("✅ [LSW] Loaded \(activeTasks.count) active daily tasks")
+            print("✅ [LSW] Loaded \(activeTasks.count) active daily tasks for week \(weekNumber ?? 0) year \(year ?? 0)")
+            
+            // Log first task's checkbox state for debugging
+            if let first = activeTasks.first {
+                print("📋 [LSW] First task '\(first.task.prefix(30))' M:\(first.monday) T:\(first.tuesday) W:\(first.wednesday) H:\(first.thursday) F:\(first.friday)")
+            }
             
             await MainActor.run {
                 self.dailyTasks = activeTasks
                 self.isLoading = false
+                self.isChangingWeek = false
             }
         } catch {
+            guard myGeneration == fetchGeneration else { return }
             print("❌ [LSW] Daily tasks error: \(error.localizedDescription)")
-            await MainActor.run { errorMessage = error.localizedDescription; isLoading = false }
+            await MainActor.run { errorMessage = error.localizedDescription; isLoading = false; isChangingWeek = false }
         }
     }
     

@@ -77,6 +77,13 @@ class TaskViewModel: ObservableObject {
         if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
             print("ℹ️ \(context): Request cancelled - ignoring")
         } else {
+            let msg = error.localizedDescription.lowercased()
+            // If user no longer exists (e.g. phone number changed), force logout
+            if msg.contains("user not found") || msg.contains("not found") {
+                print("🚨 \(context): User not found — triggering force logout")
+                NotificationCenter.default.post(name: .forceLogout, object: nil)
+                return
+            }
             errorMessage = error.localizedDescription
             print("❌ \(context): \(error)")
         }

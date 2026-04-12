@@ -187,6 +187,7 @@ class SocketIOClient {
             isConnected = true
             isConnecting = false
             reconnectAttempts = 0
+            print("✅ [Socket.IO] Connected and authenticated successfully")
             
         case "2":
             // Socket.IO EVENT - format: 2["eventName", {data}]
@@ -198,6 +199,8 @@ class SocketIOClient {
             let eventData = array.count > 1 ? array[1] : [:]
             
             DispatchQueue.main.async { [weak self] in
+                let handlerCount = self?.eventHandlers[eventName]?.count ?? 0
+                print("📩 [Socket.IO] Event received: \(eventName) (\(handlerCount) handler(s))")
                 self?.eventHandlers[eventName]?.forEach { handler in
                     handler(eventData)
                 }

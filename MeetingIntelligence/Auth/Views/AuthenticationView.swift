@@ -16,7 +16,7 @@ struct AuthenticationView: View {
     @StateObject private var registrationViewModel = RegistrationViewModel()
     
     enum AuthScreen {
-        case phone, otp, success, error, registration, registrationSuccess, phoneNotLinked
+        case phone, otp, success, error, registration, registrationSuccess, phoneNotLinked, phoneChangeVerification
     }
     
     var body: some View {
@@ -39,7 +39,8 @@ struct AuthenticationView: View {
                             // Link Firebase UID to user in database and get profile
                             // SECURITY: Only grant access if linking succeeds
                             Task {
-                                if let user = await viewModel.linkFirebaseUID() {
+                                if let result = await viewModel.linkFirebaseUID() {
+                                    let user = result.user
                                     // Save user profile to AppState
                                     appState.setUserProfile(
                                         userId: user.id,
@@ -49,6 +50,15 @@ struct AuthenticationView: View {
                                         facilityId: user.facilityId,
                                         role: user.role ?? ""
                                     )
+                                    
+                                    // Check if phone change verification is required
+                                    if result.requiresPhoneChangeVerification {
+                                        viewModel.phoneChangeUserId = user.id
+                                        viewModel.showSuccessScreen = false
+                                        viewModel.showPhoneChangeVerification = true
+                                        return
+                                    }
+                                    
                                     // Brief delay to show success animation
                                     try? await Task.sleep(nanoseconds: 1_500_000_000)
                                     let userID = appState.currentUserID ?? viewModel.currentUserID ?? ""
@@ -101,6 +111,21 @@ struct AuthenticationView: View {
                     PhoneNotLinkedView {
                         viewModel.goBackFromPhoneNotLinked()
                     }
+                case .phoneChangeVerification:
+                    PhoneChangeVerificationView(
+                        userId: viewModel.phoneChangeUserId ?? "",
+                        email: appState.email ?? "",
+                        onVerified: {
+                            let userID = appState.currentUserID ?? viewModel.currentUserID ?? ""
+                            viewModel.showPhoneChangeVerification = false
+                            onAuthenticated(userID, viewModel.idToken)
+                        },
+                        onCancel: {
+                            viewModel.fullReset()
+                            try? FirebaseAuthService.shared.signOut()
+                            appState.logout()
+                        }
+                    )
                 }
             }
             
@@ -161,6 +186,12 @@ struct AuthenticationView: View {
                 currentScreen = .phoneNotLinked
             } else {
                 currentScreen = .phone
+            }
+        }
+        .onChange(of: viewModel.showPhoneChangeVerification) { _, newValue in
+            print("🔄 onChange showPhoneChangeVerification: \(newValue)")
+            if newValue {
+                currentScreen = .phoneChangeVerification
             }
         }
         .onReceive(viewModel.$showOTPScreen) { value in

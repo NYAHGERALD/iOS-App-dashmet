@@ -193,4 +193,5 @@ extension Notification.Name {
     static let fcmTokenRefreshed = Notification.Name("fcmTokenRefreshed")
     static let didReceivePushNotification = Notification.Name("didReceivePushNotification")
     static let navigateToTask = Notification.Name("navigateToTask")
+    static let forceLogout = Notification.Name("forceLogout")
 }

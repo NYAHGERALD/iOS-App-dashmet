@@ -31,6 +31,8 @@ class AuthViewModel: ObservableObject {
     @Published var showRegistration: Bool = false
     @Published var showRegistrationSuccess: Bool = false
     @Published var showPhoneNotLinked: Bool = false
+    @Published var showPhoneChangeVerification: Bool = false
+    @Published var phoneChangeUserId: String?
     @Published var currentUserID: String?
     @Published var currentVerificationID: String?
     
@@ -199,6 +201,8 @@ class AuthViewModel: ObservableObject {
         showRegistration = false
         showRegistrationSuccess = false
         showPhoneNotLinked = false
+        showPhoneChangeVerification = false
+        phoneChangeUserId = nil
         authState = .enteringPhone
         print("🔄 Reset to phone input")
     }
@@ -219,6 +223,8 @@ class AuthViewModel: ObservableObject {
         showRegistration = false
         showRegistrationSuccess = false
         showPhoneNotLinked = false
+        showPhoneChangeVerification = false
+        phoneChangeUserId = nil
         authState = .enteringPhone
         print("🔄 Full auth reset")
     }
@@ -280,8 +286,8 @@ class AuthViewModel: ObservableObject {
     }
     
     /// Link Firebase UID to existing user after OTP verification
-    /// Returns user profile data if successful
-    func linkFirebaseUID() async -> LinkedUserInfo? {
+    /// Returns (user, requiresPhoneChangeVerification) if successful
+    func linkFirebaseUID() async -> (user: LinkedUserInfo, requiresPhoneChangeVerification: Bool)? {
         guard let firebaseUID = authService.firebaseUID else {
             print("❌ No Firebase UID to link")
             return nil
@@ -298,7 +304,11 @@ class AuthViewModel: ObservableObject {
             
             if response.success, let user = response.user {
                 print("✅ Firebase UID linked to user: \(user.id)")
-                return user
+                let requiresVerification = response.requiresPhoneChangeVerification ?? false
+                if requiresVerification {
+                    print("🔐 Phone change detected — email verification required")
+                }
+                return (user: user, requiresPhoneChangeVerification: requiresVerification)
             } else {
                 print("⚠️ Failed to link Firebase UID: \(response.error ?? "Unknown")")
                 return nil
