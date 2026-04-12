@@ -645,14 +645,12 @@ struct DailyWeeklyView: View {
     }
     
     private func formatTime(_ time: String) -> String {
+        // Display time in 24-hour format as stored (HH:mm)
         let parts = time.split(separator: ":")
         guard parts.count >= 2,
               let hour = Int(parts[0]),
               let minute = Int(parts[1]) else { return time }
-        
-        let period = hour >= 12 ? "PM" : "AM"
-        let displayHour = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour)
-        return String(format: "%d:%02d %@", displayHour, minute, period)
+        return String(format: "%02d:%02d", hour, minute)
     }
 }
 
