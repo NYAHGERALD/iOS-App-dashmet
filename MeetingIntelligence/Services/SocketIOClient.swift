@@ -145,7 +145,9 @@ class SocketIOClient {
                 if let authData = try? JSONSerialization.data(withJSONObject: auth),
                    let authStr = String(data: authData, encoding: .utf8) {
                     // 40 = Engine.IO message (4) + Socket.IO CONNECT (0)
-                    send("40{\"auth\":\(authStr)}")
+                    // Auth data goes directly as CONNECT payload (no "auth" wrapper)
+                    // This matches how the official Socket.IO client sends it
+                    send("40\(authStr)")
                 }
             } else {
                 send("40")
