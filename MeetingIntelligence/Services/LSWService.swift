@@ -240,6 +240,38 @@ struct LSWFollowUpSingleResponse: Codable {
     let data: LSWFollowUp
 }
 
+// MARK: - RCA Trigger Models
+
+struct LSWRcaTrigger: Codable, Identifiable {
+    let id: String
+    let trigger: String
+    let eventDate: String?
+    let comments: String?
+    let sortOrder: Int?
+    let isActive: Bool?
+    
+    var eventDateFormatted: String {
+        guard let raw = eventDate?.prefix(10), !raw.isEmpty else { return "" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        if let date = formatter.date(from: String(raw)) {
+            formatter.dateFormat = "MMM d, yyyy"
+            return formatter.string(from: date)
+        }
+        return String(raw)
+    }
+}
+
+struct LSWRcaTriggersResponse: Codable {
+    let success: Bool
+    let data: [LSWRcaTrigger]
+}
+
+struct LSWRcaTriggerSingleResponse: Codable {
+    let success: Bool
+    let data: LSWRcaTrigger
+}
+
 // MARK: - Service
 
 class LSWService: ObservableObject {
@@ -259,6 +291,8 @@ class LSWService: ObservableObject {
     @Published var isLoadingProjects = false
     @Published var followUps: [LSWFollowUp] = []
     @Published var isLoadingFollowUps = false
+    @Published var rcaTriggers: [LSWRcaTrigger] = []
+    @Published var isLoadingTriggers = false
     
     // WebSocket sync state
     private var activeWeekNumber: Int?
@@ -512,6 +546,57 @@ class LSWService: ObservableObject {
                     
                 default:
                     Task { await self.fetchFollowUps() }
+                }
+            }
+        }
+        
+        // Ensure WebSocket is connected
+        if !webSocketConnected {
+            SocketIOClient.shared.connect(userId: userId, organizationId: orgId)
+            webSocketConnected = true
+        }
+    }
+    
+    // MARK: - WebSocket Trigger Sync
+    
+    func connectTriggerWebSocket() {
+        let userId = UserDefaults.standard.string(forKey: "user_id") ?? ""
+        let orgId = UserDefaults.standard.string(forKey: "organization_id") ?? ""
+        
+        guard !userId.isEmpty, !orgId.isEmpty else { return }
+        
+        SocketIOClient.shared.on("lsw:trigger-changed") { [weak self] data in
+            guard let self = self,
+                  let dict = data as? [String: Any],
+                  let action = dict["action"] as? String else { return }
+            
+            Task { @MainActor in
+                switch action {
+                case "trigger-created":
+                    if let tDict = dict["trigger"] as? [String: Any],
+                       let tData = try? JSONSerialization.data(withJSONObject: tDict),
+                       let trigger = try? JSONDecoder().decode(LSWRcaTrigger.self, from: tData) {
+                        if !self.rcaTriggers.contains(where: { $0.id == trigger.id }) {
+                            self.rcaTriggers.append(trigger)
+                        }
+                    }
+                    
+                case "trigger-updated":
+                    if let tDict = dict["trigger"] as? [String: Any],
+                       let tData = try? JSONSerialization.data(withJSONObject: tDict),
+                       let trigger = try? JSONDecoder().decode(LSWRcaTrigger.self, from: tData) {
+                        if let idx = self.rcaTriggers.firstIndex(where: { $0.id == trigger.id }) {
+                            self.rcaTriggers[idx] = trigger
+                        }
+                    }
+                    
+                case "trigger-deleted":
+                    if let triggerId = dict["triggerId"] as? String {
+                        self.rcaTriggers.removeAll { $0.id == triggerId }
+                    }
+                    
+                default:
+                    Task { await self.fetchRcaTriggers() }
                 }
             }
         }
@@ -1117,6 +1202,78 @@ class LSWService: ObservableObject {
             return true
         } catch {
             print("❌ [LSW] deleteFollowUp error: \(error.localizedDescription)")
+            return false
+        }
+    }
+    
+    // MARK: - RCA Triggers API
+    
+    func fetchRcaTriggers() async {
+        await MainActor.run { isLoadingTriggers = true }
+        guard let url = URL(string: "\(baseURL)/lsw/rca-triggers") else {
+            await MainActor.run { isLoadingTriggers = false }
+            return
+        }
+        do {
+            let request = try await authorizedRequest(url: url)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                await MainActor.run { isLoadingTriggers = false }
+                return
+            }
+            let result = try JSONDecoder().decode(LSWRcaTriggersResponse.self, from: data)
+            await MainActor.run {
+                self.rcaTriggers = result.data
+                self.isLoadingTriggers = false
+            }
+        } catch {
+            print("❌ [LSW] fetchRcaTriggers error: \(error.localizedDescription)")
+            await MainActor.run { isLoadingTriggers = false }
+        }
+    }
+    
+    func createRcaTrigger(trigger: String, eventDate: String?, comments: String?) async -> LSWRcaTrigger? {
+        guard let url = URL(string: "\(baseURL)/lsw/rca-triggers") else { return nil }
+        var body: [String: Any] = ["trigger": trigger]
+        if let eventDate = eventDate, !eventDate.isEmpty { body["eventDate"] = eventDate }
+        if let comments = comments, !comments.isEmpty { body["comments"] = comments }
+        do {
+            var request = try await authorizedRequest(url: url, method: "POST")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, (200...201).contains(httpResponse.statusCode) else { return nil }
+            let result = try JSONDecoder().decode(LSWRcaTriggerSingleResponse.self, from: data)
+            return result.data
+        } catch {
+            print("❌ [LSW] createRcaTrigger error: \(error.localizedDescription)")
+            return nil
+        }
+    }
+    
+    func updateRcaTrigger(id: String, data: [String: Any]) async -> LSWRcaTrigger? {
+        guard let url = URL(string: "\(baseURL)/lsw/rca-triggers/\(id)") else { return nil }
+        do {
+            var request = try await authorizedRequest(url: url, method: "PUT")
+            request.httpBody = try JSONSerialization.data(withJSONObject: data)
+            let (responseData, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return nil }
+            let result = try JSONDecoder().decode(LSWRcaTriggerSingleResponse.self, from: responseData)
+            return result.data
+        } catch {
+            print("❌ [LSW] updateRcaTrigger error: \(error.localizedDescription)")
+            return nil
+        }
+    }
+    
+    func deleteRcaTrigger(id: String) async -> Bool {
+        guard let url = URL(string: "\(baseURL)/lsw/rca-triggers/\(id)") else { return false }
+        do {
+            let request = try await authorizedRequest(url: url, method: "DELETE")
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return false }
+            return true
+        } catch {
+            print("❌ [LSW] deleteRcaTrigger error: \(error.localizedDescription)")
             return false
         }
     }

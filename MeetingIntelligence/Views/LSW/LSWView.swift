@@ -141,6 +141,8 @@ struct LSWSectionDetailView: View {
             ProjectsView()
         case .followUps:
             FollowUpsView()
+        case .rcaTriggers:
+            TriggersView()
         default:
             LSWPlaceholderView(section: section)
         }
