@@ -298,26 +298,32 @@ class LSWService: ObservableObject {
     private var activeWeekNumber: Int?
     private var activeYear: Int?
     private var webSocketConnected = false
+    private var registeredHandlers: Set<String> = []
     
     // Fetch generation counter — used to discard stale responses during rapid week navigation
     private var fetchGeneration: Int = 0
     
     private init() {}
     
+    // MARK: - WebSocket Connection Helper
+    
+    private func ensureWebSocketConnected() {
+        guard !webSocketConnected else { return }
+        let userId = UserDefaults.standard.string(forKey: "user_id") ?? ""
+        let orgId = UserDefaults.standard.string(forKey: "organization_id") ?? ""
+        guard !userId.isEmpty, !orgId.isEmpty else { return }
+        SocketIOClient.shared.connect(userId: userId, organizationId: orgId)
+        webSocketConnected = true
+    }
+    
     // MARK: - WebSocket Real-Time Sync
     
     func connectWebSocket() {
-        guard !webSocketConnected else { return }
-        
-        let userId = UserDefaults.standard.string(forKey: "user_id") ?? ""
-        let orgId = UserDefaults.standard.string(forKey: "organization_id") ?? ""
-        
-        guard !userId.isEmpty, !orgId.isEmpty else {
-            print("⚠️ [LSW] WebSocket: missing userId or orgId in UserDefaults, skipping connect")
+        guard !registeredHandlers.contains("completion") else {
+            ensureWebSocketConnected()
             return
         }
-        
-        print("🔌 [LSW] Connecting WebSocket for user \(userId.prefix(8))... org \(orgId.prefix(8))...")
+        registeredHandlers.insert("completion")
         
         SocketIOClient.shared.on("lsw:completion-changed") { [weak self] data in
             guard let self = self,
@@ -378,17 +384,17 @@ class LSWService: ObservableObject {
             }
         }
         
-        SocketIOClient.shared.connect(userId: userId, organizationId: orgId)
-        webSocketConnected = true
+        ensureWebSocketConnected()
     }
     
     // MARK: - WebSocket Project Sync
     
     func connectProjectWebSocket() {
-        let userId = UserDefaults.standard.string(forKey: "user_id") ?? ""
-        let orgId = UserDefaults.standard.string(forKey: "organization_id") ?? ""
-        
-        guard !userId.isEmpty, !orgId.isEmpty else { return }
+        guard !registeredHandlers.contains("project") else {
+            ensureWebSocketConnected()
+            return
+        }
+        registeredHandlers.insert("project")
         
         SocketIOClient.shared.on("lsw:project-changed") { [weak self] data in
             guard let self = self,
@@ -499,20 +505,17 @@ class LSWService: ObservableObject {
             }
         }
         
-        // Ensure WebSocket is connected
-        if !webSocketConnected {
-            SocketIOClient.shared.connect(userId: userId, organizationId: orgId)
-            webSocketConnected = true
-        }
+        ensureWebSocketConnected()
     }
     
     // MARK: - WebSocket Follow-Up Sync
     
     func connectFollowUpWebSocket() {
-        let userId = UserDefaults.standard.string(forKey: "user_id") ?? ""
-        let orgId = UserDefaults.standard.string(forKey: "organization_id") ?? ""
-        
-        guard !userId.isEmpty, !orgId.isEmpty else { return }
+        guard !registeredHandlers.contains("follow-up") else {
+            ensureWebSocketConnected()
+            return
+        }
+        registeredHandlers.insert("follow-up")
         
         SocketIOClient.shared.on("lsw:follow-up-changed") { [weak self] data in
             guard let self = self,
@@ -550,20 +553,17 @@ class LSWService: ObservableObject {
             }
         }
         
-        // Ensure WebSocket is connected
-        if !webSocketConnected {
-            SocketIOClient.shared.connect(userId: userId, organizationId: orgId)
-            webSocketConnected = true
-        }
+        ensureWebSocketConnected()
     }
     
     // MARK: - WebSocket Trigger Sync
     
     func connectTriggerWebSocket() {
-        let userId = UserDefaults.standard.string(forKey: "user_id") ?? ""
-        let orgId = UserDefaults.standard.string(forKey: "organization_id") ?? ""
-        
-        guard !userId.isEmpty, !orgId.isEmpty else { return }
+        guard !registeredHandlers.contains("trigger") else {
+            ensureWebSocketConnected()
+            return
+        }
+        registeredHandlers.insert("trigger")
         
         SocketIOClient.shared.on("lsw:trigger-changed") { [weak self] data in
             guard let self = self,
@@ -601,17 +601,14 @@ class LSWService: ObservableObject {
             }
         }
         
-        // Ensure WebSocket is connected
-        if !webSocketConnected {
-            SocketIOClient.shared.connect(userId: userId, organizationId: orgId)
-            webSocketConnected = true
-        }
+        ensureWebSocketConnected()
     }
     
     func disconnectWebSocket() {
         SocketIOClient.shared.removeAllHandlers()
         SocketIOClient.shared.disconnect()
         webSocketConnected = false
+        registeredHandlers.removeAll()
     }
     
     func setActiveWeek(weekNumber: Int, year: Int) {

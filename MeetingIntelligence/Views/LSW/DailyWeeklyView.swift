@@ -354,9 +354,6 @@ struct DailyWeeklyView: View {
             await lswService.fetchDailyTasks(weekNumber: week, year: year)
             await lswService.fetchEarlyCompletionLogs(weekNumber: week, year: year)
         }
-        .onDisappear {
-            lswService.disconnectWebSocket()
-        }
         // Cross-platform sync: refetch when app returns to foreground
         .onChange(of: scenePhase) { newPhase in
             if newPhase == .active && configLoaded {
