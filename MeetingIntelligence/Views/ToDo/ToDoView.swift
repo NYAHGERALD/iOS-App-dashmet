@@ -2,11 +2,19 @@ import SwiftUI
 
 struct ToDoView: View {
     @StateObject private var service = ToDoService.shared
+    @ObservedObject private var lswService = LSWService.shared
     @Environment(\.colorScheme) private var colorScheme
     @State private var showAddTask = false
     @State private var selectedItem: APIToDoItem?
+    @State private var currentWeekOffset = 0
     
     var onMenuTap: (() -> Void)?
+    
+    private var referenceDate: Date {
+        Calendar.current.date(byAdding: .weekOfYear, value: currentWeekOffset, to: Date())!
+    }
+    private var currentWeekNumber: Int { lswService.orgWeekNumber(for: referenceDate) }
+    private var currentYear: Int { lswService.orgYear(for: referenceDate) }
     
     private var textPrimary: Color { colorScheme == .dark ? .white : .black }
     private var textSecondary: Color { colorScheme == .dark ? .white.opacity(0.6) : .black.opacity(0.6) }
@@ -19,9 +27,15 @@ struct ToDoView: View {
             ZStack {
                 AppColors.background.ignoresSafeArea()
                 
-                if service.isLoading && service.items.isEmpty {
-                    loadingView
-                } else {
+                VStack(spacing: 0) {
+                    WeekNavigatorView(currentWeekOffset: $currentWeekOffset, lswService: lswService)
+                    Divider()
+                    
+                    if service.isLoading && service.items.isEmpty {
+                        Spacer()
+                        loadingView
+                        Spacer()
+                    } else {
                     ScrollView {
                         VStack(spacing: 20) {
                             quickStatsSection
@@ -32,6 +46,7 @@ struct ToDoView: View {
                         .padding(.bottom, 100)
                     }
                 }
+                } // end VStack
                 
                 // Floating Add button
                 VStack {
@@ -58,8 +73,13 @@ struct ToDoView: View {
                 }
             }
             .task {
-                await service.fetchItems()
+                lswService.setActiveWeek(weekNumber: currentWeekNumber, year: currentYear)
+                await service.fetchItems(weekNumber: currentWeekNumber, year: currentYear)
                 service.connectWebSocket()
+            }
+            .onChange(of: currentWeekOffset) { _, _ in
+                lswService.setActiveWeek(weekNumber: currentWeekNumber, year: currentYear)
+                Task { await service.fetchItems(weekNumber: currentWeekNumber, year: currentYear) }
             }
             .fullScreenCover(isPresented: $showAddTask) {
                 AddTaskView(colorScheme: colorScheme)

@@ -17,6 +17,7 @@ struct TriggersView: View {
     @State private var showAddSheet = false
     @State private var showDeleteConfirm = false
     @State private var deleteTargetId: String?
+    @State private var currentWeekOffset = 0
     
     private let accentColor = Color(hex: "EF4444") // Red
     
@@ -26,16 +27,31 @@ struct TriggersView: View {
     private var cardBackground: Color { colorScheme == .dark ? Color.white.opacity(0.08) : Color.white }
     private var cardBorder: Color { colorScheme == .dark ? Color.white.opacity(0.1) : Color.black.opacity(0.08) }
     
+    private var referenceDate: Date {
+        Calendar.current.date(byAdding: .weekOfYear, value: currentWeekOffset, to: Date())!
+    }
+    private var currentWeekNumber: Int { lswService.orgWeekNumber(for: referenceDate) }
+    private var currentYear: Int { lswService.orgYear(for: referenceDate) }
+    
     var body: some View {
         ZStack {
             AppColors.background.ignoresSafeArea()
             
-            if lswService.isLoadingTriggers {
-                loadingView
-            } else if lswService.rcaTriggers.isEmpty {
-                emptyStateView
-            } else {
-                triggersList
+            VStack(spacing: 0) {
+                WeekNavigatorView(currentWeekOffset: $currentWeekOffset, lswService: lswService)
+                Divider()
+                
+                if lswService.isLoadingTriggers {
+                    Spacer()
+                    loadingView
+                    Spacer()
+                } else if lswService.rcaTriggers.isEmpty {
+                    Spacer()
+                    emptyStateView
+                    Spacer()
+                } else {
+                    triggersList
+                }
             }
             
             // Floating add button
@@ -52,8 +68,13 @@ struct TriggersView: View {
         .navigationTitle("RCA Triggers")
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            await lswService.fetchRcaTriggers()
+            lswService.setActiveWeek(weekNumber: currentWeekNumber, year: currentYear)
+            await lswService.fetchRcaTriggers(weekNumber: currentWeekNumber, year: currentYear)
             lswService.connectTriggerWebSocket()
+        }
+        .onChange(of: currentWeekOffset) { _, _ in
+            lswService.setActiveWeek(weekNumber: currentWeekNumber, year: currentYear)
+            Task { await lswService.fetchRcaTriggers(weekNumber: currentWeekNumber, year: currentYear) }
         }
         .alert("Delete Trigger", isPresented: $showDeleteConfirm) {
             Button("Cancel", role: .cancel) { }
@@ -368,7 +389,9 @@ struct TriggerEditSheet: View {
             if let created = await lswService.createRcaTrigger(
                 trigger: trimmedTrigger,
                 eventDate: eventDateStr,
-                comments: trimmedComments.isEmpty ? nil : trimmedComments
+                comments: trimmedComments.isEmpty ? nil : trimmedComments,
+                weekNumber: lswService.activeWeekNumber,
+                year: lswService.activeYear
             ) {
                 await MainActor.run {
                     if !lswService.rcaTriggers.contains(where: { $0.id == created.id }) {

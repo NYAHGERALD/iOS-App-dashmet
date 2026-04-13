@@ -17,6 +17,7 @@ struct FollowUpsView: View {
     @State private var showAddSheet = false
     @State private var showDeleteConfirm = false
     @State private var deleteTargetId: String?
+    @State private var currentWeekOffset = 0
     
     private let accentColor = Color(hex: "F97316") // Orange
     
@@ -26,16 +27,31 @@ struct FollowUpsView: View {
     private var cardBackground: Color { colorScheme == .dark ? Color.white.opacity(0.08) : Color.white }
     private var cardBorder: Color { colorScheme == .dark ? Color.white.opacity(0.1) : Color.black.opacity(0.08) }
     
+    private var referenceDate: Date {
+        Calendar.current.date(byAdding: .weekOfYear, value: currentWeekOffset, to: Date())!
+    }
+    private var currentWeekNumber: Int { lswService.orgWeekNumber(for: referenceDate) }
+    private var currentYear: Int { lswService.orgYear(for: referenceDate) }
+    
     var body: some View {
         ZStack {
             AppColors.background.ignoresSafeArea()
             
-            if lswService.isLoadingFollowUps {
-                loadingView
-            } else if lswService.followUps.isEmpty {
-                emptyStateView
-            } else {
-                followUpsList
+            VStack(spacing: 0) {
+                WeekNavigatorView(currentWeekOffset: $currentWeekOffset, lswService: lswService)
+                Divider()
+                
+                if lswService.isLoadingFollowUps {
+                    Spacer()
+                    loadingView
+                    Spacer()
+                } else if lswService.followUps.isEmpty {
+                    Spacer()
+                    emptyStateView
+                    Spacer()
+                } else {
+                    followUpsList
+                }
             }
             
             // Floating add button
@@ -52,8 +68,13 @@ struct FollowUpsView: View {
         .navigationTitle("Follow Ups")
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            await lswService.fetchFollowUps()
+            lswService.setActiveWeek(weekNumber: currentWeekNumber, year: currentYear)
+            await lswService.fetchFollowUps(weekNumber: currentWeekNumber, year: currentYear)
             lswService.connectFollowUpWebSocket()
+        }
+        .onChange(of: currentWeekOffset) { _, _ in
+            lswService.setActiveWeek(weekNumber: currentWeekNumber, year: currentYear)
+            Task { await lswService.fetchFollowUps(weekNumber: currentWeekNumber, year: currentYear) }
         }
         .alert("Delete Follow Up", isPresented: $showDeleteConfirm) {
             Button("Cancel", role: .cancel) { }
@@ -406,7 +427,9 @@ struct FollowUpEditSheet: View {
                 task: trimmedTask,
                 dueDate: dueDateStr,
                 responsibleName: trimmedResponsible,
-                comments: trimmedComments
+                comments: trimmedComments,
+                weekNumber: lswService.activeWeekNumber,
+                year: lswService.activeYear
             ) {
                 await MainActor.run {
                     if !lswService.followUps.contains(where: { $0.id == created.id }) {

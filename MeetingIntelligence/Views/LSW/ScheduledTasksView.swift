@@ -15,6 +15,7 @@ struct ScheduledTasksView: View {
     
     @State private var selectedTask: LSWFrequencyTask?
     @State private var addFrequency: LSWFrequency?
+    @State private var currentWeekOffset = 0
     
     private let accentColor = Color(hex: "10B981") // Green
     
@@ -24,16 +25,31 @@ struct ScheduledTasksView: View {
     private var cardBackground: Color { colorScheme == .dark ? Color.white.opacity(0.08) : Color.white }
     private var cardBorder: Color { colorScheme == .dark ? Color.white.opacity(0.1) : Color.black.opacity(0.08) }
     
+    private var referenceDate: Date {
+        Calendar.current.date(byAdding: .weekOfYear, value: currentWeekOffset, to: Date())!
+    }
+    private var currentWeekNumber: Int { lswService.orgWeekNumber(for: referenceDate) }
+    private var currentYear: Int { lswService.orgYear(for: referenceDate) }
+    
     var body: some View {
         ZStack {
             AppColors.background.ignoresSafeArea()
             
-            if lswService.isLoadingFreqTasks {
-                loadingView
-            } else if lswService.frequencyTasks.isEmpty {
-                emptyStateView
-            } else {
-                tasksList
+            VStack(spacing: 0) {
+                WeekNavigatorView(currentWeekOffset: $currentWeekOffset, lswService: lswService)
+                Divider()
+                
+                if lswService.isLoadingFreqTasks {
+                    Spacer()
+                    loadingView
+                    Spacer()
+                } else if lswService.frequencyTasks.isEmpty {
+                    Spacer()
+                    emptyStateView
+                    Spacer()
+                } else {
+                    tasksList
+                }
             }
             
             // Floating add button
@@ -50,8 +66,13 @@ struct ScheduledTasksView: View {
         .navigationTitle("Scheduled Tasks")
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            await lswService.fetchFrequencyTasks()
+            lswService.setActiveWeek(weekNumber: currentWeekNumber, year: currentYear)
+            await lswService.fetchFrequencyTasks(weekNumber: currentWeekNumber, year: currentYear)
             lswService.connectFreqTaskWebSocket()
+        }
+        .onChange(of: currentWeekOffset) { _, _ in
+            lswService.setActiveWeek(weekNumber: currentWeekNumber, year: currentYear)
+            Task { await lswService.fetchFrequencyTasks(weekNumber: currentWeekNumber, year: currentYear) }
         }
         .sheet(item: $selectedTask) { task in
             FreqTaskEditSheet(task: task, frequency: task.frequency)
@@ -385,7 +406,9 @@ struct FreqTaskEditSheet: View {
                 task: trimmedTask,
                 minutes: minutes,
                 dueDate: dueDateStr,
-                frequency: frequency
+                frequency: frequency,
+                weekNumber: lswService.activeWeekNumber,
+                year: lswService.activeYear
             ) {
                 await MainActor.run {
                     if !lswService.frequencyTasks.contains(where: { $0.id == created.id }) {

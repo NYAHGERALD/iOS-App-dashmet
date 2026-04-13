@@ -15,6 +15,7 @@ struct MeetingRailsView: View {
     
     @State private var selectedRail: LSWMeetingRail?
     @State private var showAddSheet = false
+    @State private var currentWeekOffset = 0
     
     private let accentColor = Color(hex: "6366F1") // Indigo/Purple
     
@@ -24,16 +25,31 @@ struct MeetingRailsView: View {
     private var cardBackground: Color { colorScheme == .dark ? Color.white.opacity(0.08) : Color.white }
     private var cardBorder: Color { colorScheme == .dark ? Color.white.opacity(0.1) : Color.black.opacity(0.08) }
     
+    private var referenceDate: Date {
+        Calendar.current.date(byAdding: .weekOfYear, value: currentWeekOffset, to: Date())!
+    }
+    private var currentWeekNumber: Int { lswService.orgWeekNumber(for: referenceDate) }
+    private var currentYear: Int { lswService.orgYear(for: referenceDate) }
+    
     var body: some View {
         ZStack {
             AppColors.background.ignoresSafeArea()
             
-            if lswService.isLoadingRails {
-                loadingView
-            } else if lswService.meetingRails.isEmpty {
-                emptyStateView
-            } else {
-                railsList
+            VStack(spacing: 0) {
+                WeekNavigatorView(currentWeekOffset: $currentWeekOffset, lswService: lswService)
+                Divider()
+                
+                if lswService.isLoadingRails {
+                    Spacer()
+                    loadingView
+                    Spacer()
+                } else if lswService.meetingRails.isEmpty {
+                    Spacer()
+                    emptyStateView
+                    Spacer()
+                } else {
+                    railsList
+                }
             }
             
             // Floating add button
@@ -50,8 +66,13 @@ struct MeetingRailsView: View {
         .navigationTitle("Meeting Rails")
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            await lswService.fetchMeetingRails()
+            lswService.setActiveWeek(weekNumber: currentWeekNumber, year: currentYear)
+            await lswService.fetchMeetingRails(weekNumber: currentWeekNumber, year: currentYear)
             lswService.connectRailWebSocket()
+        }
+        .onChange(of: currentWeekOffset) { _, _ in
+            lswService.setActiveWeek(weekNumber: currentWeekNumber, year: currentYear)
+            Task { await lswService.fetchMeetingRails(weekNumber: currentWeekNumber, year: currentYear) }
         }
         .sheet(isPresented: $showAddSheet) {
             RailEditSheet(rail: nil)
@@ -358,7 +379,9 @@ struct RailEditSheet: View {
         if isNew {
             if let created = await lswService.createMeetingRail(
                 rail: trimmedRail,
-                dueDate: dueDateStr
+                dueDate: dueDateStr,
+                weekNumber: lswService.activeWeekNumber,
+                year: lswService.activeYear
             ) {
                 await MainActor.run {
                     if !lswService.meetingRails.contains(where: { $0.id == created.id }) {

@@ -18,6 +18,7 @@ struct ProjectsView: View {
     @State private var newProjectName = ""
     @State private var showDeleteConfirm = false
     @State private var deleteTargetId: String?
+    @State private var currentWeekOffset = 0
     
     private let accentColor = Color(hex: "8B5CF6")
     
@@ -27,16 +28,31 @@ struct ProjectsView: View {
     private var cardBackground: Color { colorScheme == .dark ? Color.white.opacity(0.08) : Color.white }
     private var cardBorder: Color { colorScheme == .dark ? Color.white.opacity(0.1) : Color.black.opacity(0.08) }
     
+    private var referenceDate: Date {
+        Calendar.current.date(byAdding: .weekOfYear, value: currentWeekOffset, to: Date())!
+    }
+    private var currentWeekNumber: Int { lswService.orgWeekNumber(for: referenceDate) }
+    private var currentYear: Int { lswService.orgYear(for: referenceDate) }
+    
     var body: some View {
         ZStack {
             AppColors.background.ignoresSafeArea()
             
-            if lswService.isLoadingProjects {
-                loadingView
-            } else if lswService.projects.isEmpty {
-                emptyStateView
-            } else {
-                projectsList
+            VStack(spacing: 0) {
+                WeekNavigatorView(currentWeekOffset: $currentWeekOffset, lswService: lswService)
+                Divider()
+                
+                if lswService.isLoadingProjects {
+                    Spacer()
+                    loadingView
+                    Spacer()
+                } else if lswService.projects.isEmpty {
+                    Spacer()
+                    emptyStateView
+                    Spacer()
+                } else {
+                    projectsList
+                }
             }
             
             // Floating add button
@@ -53,8 +69,11 @@ struct ProjectsView: View {
         .navigationTitle("Projects")
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            await lswService.fetchProjects()
+            await lswService.fetchProjects(weekNumber: currentWeekNumber, year: currentYear)
             lswService.connectProjectWebSocket()
+        }
+        .onChange(of: currentWeekOffset) { _, _ in
+            Task { await lswService.fetchProjects(weekNumber: currentWeekNumber, year: currentYear) }
         }
         .alert("New Project", isPresented: $showNewProjectAlert) {
             TextField("Project name", text: $newProjectName)
@@ -226,7 +245,7 @@ struct ProjectsView: View {
     // MARK: - Actions
     
     private func handleAddProject(name: String) async {
-        if let created = await lswService.createProject(name: name) {
+        if let created = await lswService.createProject(name: name, weekNumber: currentWeekNumber, year: currentYear) {
             await MainActor.run {
                 if !lswService.projects.contains(where: { $0.id == created.id }) {
                     lswService.projects.append(created)

@@ -15,6 +15,7 @@ struct PersonalGoalsView: View {
     
     @State private var selectedGoal: LSWPersonalGoal?
     @State private var showAddSheet = false
+    @State private var currentWeekOffset = 0
     
     private let accentColor = Color(hex: "F59E0B") // Amber
     
@@ -24,16 +25,31 @@ struct PersonalGoalsView: View {
     private var cardBackground: Color { colorScheme == .dark ? Color.white.opacity(0.08) : Color.white }
     private var cardBorder: Color { colorScheme == .dark ? Color.white.opacity(0.1) : Color.black.opacity(0.08) }
     
+    private var referenceDate: Date {
+        Calendar.current.date(byAdding: .weekOfYear, value: currentWeekOffset, to: Date())!
+    }
+    private var currentWeekNumber: Int { lswService.orgWeekNumber(for: referenceDate) }
+    private var currentYear: Int { lswService.orgYear(for: referenceDate) }
+    
     var body: some View {
         ZStack {
             AppColors.background.ignoresSafeArea()
             
-            if lswService.isLoadingGoals {
-                loadingView
-            } else if lswService.personalGoals.isEmpty {
-                emptyStateView
-            } else {
-                goalsList
+            VStack(spacing: 0) {
+                WeekNavigatorView(currentWeekOffset: $currentWeekOffset, lswService: lswService)
+                Divider()
+                
+                if lswService.isLoadingGoals {
+                    Spacer()
+                    loadingView
+                    Spacer()
+                } else if lswService.personalGoals.isEmpty {
+                    Spacer()
+                    emptyStateView
+                    Spacer()
+                } else {
+                    goalsList
+                }
             }
             
             // Floating add button
@@ -50,8 +66,13 @@ struct PersonalGoalsView: View {
         .navigationTitle("Personal Goals")
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            await lswService.fetchPersonalGoals()
+            lswService.setActiveWeek(weekNumber: currentWeekNumber, year: currentYear)
+            await lswService.fetchPersonalGoals(weekNumber: currentWeekNumber, year: currentYear)
             lswService.connectGoalWebSocket()
+        }
+        .onChange(of: currentWeekOffset) { _, _ in
+            lswService.setActiveWeek(weekNumber: currentWeekNumber, year: currentYear)
+            Task { await lswService.fetchPersonalGoals(weekNumber: currentWeekNumber, year: currentYear) }
         }
         .sheet(isPresented: $showAddSheet) {
             GoalEditSheet(goal: nil)
@@ -370,7 +391,9 @@ struct GoalEditSheet: View {
             if let created = await lswService.createPersonalGoal(
                 objective: trimmedObjective,
                 dueDate: dueDateStr,
-                progress: Int(progress)
+                progress: Int(progress),
+                weekNumber: lswService.activeWeekNumber,
+                year: lswService.activeYear
             ) {
                 await MainActor.run {
                     if !lswService.personalGoals.contains(where: { $0.id == created.id }) {

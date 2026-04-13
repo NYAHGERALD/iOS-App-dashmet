@@ -444,9 +444,9 @@ class LSWService: ObservableObject {
     @Published var meetingRails: [LSWMeetingRail] = []
     @Published var isLoadingRails = false
     
-    // WebSocket sync state
-    private var activeWeekNumber: Int?
-    private var activeYear: Int?
+    // Active week context — set by section views, used by edit sheets for creates
+    @Published var activeWeekNumber: Int?
+    @Published var activeYear: Int?
     private var webSocketConnected = false
     private var registeredHandlers: Set<String> = []
     
@@ -1291,9 +1291,11 @@ class LSWService: ObservableObject {
     
     // MARK: - Improvement Projects API
     
-    func fetchProjects() async {
+    func fetchProjects(weekNumber: Int? = nil, year: Int? = nil) async {
         await MainActor.run { isLoadingProjects = true }
-        guard let url = URL(string: "\(baseURL)/lsw/projects") else {
+        var urlString = "\(baseURL)/lsw/projects"
+        if let wn = weekNumber, let yr = year { urlString += "?weekNumber=\(wn)&year=\(yr)" }
+        guard let url = URL(string: urlString) else {
             await MainActor.run { isLoadingProjects = false }
             return
         }
@@ -1315,9 +1317,9 @@ class LSWService: ObservableObject {
         }
     }
     
-    func createProject(name: String) async -> LSWProject? {
+    func createProject(name: String, weekNumber: Int? = nil, year: Int? = nil) async -> LSWProject? {
         guard let url = URL(string: "\(baseURL)/lsw/projects") else { return nil }
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "name": name,
             "initialUpdateText": "",
             "fontColor": "#1f2937",
@@ -1331,6 +1333,8 @@ class LSWService: ObservableObject {
             "defaultUpdateCellColor": "#10b981",
             "defaultUpdateCellColorIntensity": 10
         ]
+        if let wn = weekNumber { body["weekNumber"] = wn }
+        if let yr = year { body["year"] = yr }
         do {
             var request = try await authorizedRequest(url: url, method: "POST")
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -1424,9 +1428,11 @@ class LSWService: ObservableObject {
     
     // MARK: - Follow-Ups API
     
-    func fetchFollowUps() async {
+    func fetchFollowUps(weekNumber: Int? = nil, year: Int? = nil) async {
         await MainActor.run { isLoadingFollowUps = true }
-        guard let url = URL(string: "\(baseURL)/lsw/follow-ups") else {
+        var urlString = "\(baseURL)/lsw/follow-ups"
+        if let wn = weekNumber, let yr = year { urlString += "?weekNumber=\(wn)&year=\(yr)" }
+        guard let url = URL(string: urlString) else {
             await MainActor.run { isLoadingFollowUps = false }
             return
         }
@@ -1448,14 +1454,16 @@ class LSWService: ObservableObject {
         }
     }
     
-    func createFollowUp(task: String, dueDate: String, responsibleName: String, comments: String) async -> LSWFollowUp? {
+    func createFollowUp(task: String, dueDate: String, responsibleName: String, comments: String, weekNumber: Int? = nil, year: Int? = nil) async -> LSWFollowUp? {
         guard let url = URL(string: "\(baseURL)/lsw/follow-ups") else { return nil }
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "task": task,
             "dueDate": dueDate,
             "responsibleName": responsibleName,
             "comments": comments
         ]
+        if let wn = weekNumber { body["weekNumber"] = wn }
+        if let yr = year { body["year"] = yr }
         do {
             var request = try await authorizedRequest(url: url, method: "POST")
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -1499,9 +1507,11 @@ class LSWService: ObservableObject {
     
     // MARK: - RCA Triggers API
     
-    func fetchRcaTriggers() async {
+    func fetchRcaTriggers(weekNumber: Int? = nil, year: Int? = nil) async {
         await MainActor.run { isLoadingTriggers = true }
-        guard let url = URL(string: "\(baseURL)/lsw/rca-triggers") else {
+        var urlString = "\(baseURL)/lsw/rca-triggers"
+        if let wn = weekNumber, let yr = year { urlString += "?weekNumber=\(wn)&year=\(yr)" }
+        guard let url = URL(string: urlString) else {
             await MainActor.run { isLoadingTriggers = false }
             return
         }
@@ -1523,11 +1533,13 @@ class LSWService: ObservableObject {
         }
     }
     
-    func createRcaTrigger(trigger: String, eventDate: String?, comments: String?) async -> LSWRcaTrigger? {
+    func createRcaTrigger(trigger: String, eventDate: String?, comments: String?, weekNumber: Int? = nil, year: Int? = nil) async -> LSWRcaTrigger? {
         guard let url = URL(string: "\(baseURL)/lsw/rca-triggers") else { return nil }
         var body: [String: Any] = ["trigger": trigger]
         if let eventDate = eventDate, !eventDate.isEmpty { body["eventDate"] = eventDate }
         if let comments = comments, !comments.isEmpty { body["comments"] = comments }
+        if let wn = weekNumber { body["weekNumber"] = wn }
+        if let yr = year { body["year"] = yr }
         do {
             var request = try await authorizedRequest(url: url, method: "POST")
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -1571,9 +1583,11 @@ class LSWService: ObservableObject {
     
     // MARK: - Frequency Tasks CRUD
     
-    func fetchFrequencyTasks() async {
+    func fetchFrequencyTasks(weekNumber: Int? = nil, year: Int? = nil) async {
         await MainActor.run { isLoadingFreqTasks = true }
-        guard let url = URL(string: "\(baseURL)/lsw/frequency-tasks") else {
+        var urlString = "\(baseURL)/lsw/frequency-tasks"
+        if let wn = weekNumber, let yr = year { urlString += "?weekNumber=\(wn)&year=\(yr)" }
+        guard let url = URL(string: urlString) else {
             await MainActor.run { isLoadingFreqTasks = false }
             return
         }
@@ -1595,14 +1609,16 @@ class LSWService: ObservableObject {
         }
     }
     
-    func createFrequencyTask(task: String, minutes: Int, dueDate: String, frequency: LSWFrequency) async -> LSWFrequencyTask? {
+    func createFrequencyTask(task: String, minutes: Int, dueDate: String, frequency: LSWFrequency, weekNumber: Int? = nil, year: Int? = nil) async -> LSWFrequencyTask? {
         guard let url = URL(string: "\(baseURL)/lsw/frequency-tasks") else { return nil }
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "task": task,
             "minutes": minutes,
             "dueDate": dueDate,
             "frequency": frequency.rawValue
         ]
+        if let wn = weekNumber { body["weekNumber"] = wn }
+        if let yr = year { body["year"] = yr }
         do {
             var request = try await authorizedRequest(url: url, method: "POST")
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -1646,9 +1662,11 @@ class LSWService: ObservableObject {
     
     // MARK: - Personal Goals CRUD
     
-    func fetchPersonalGoals() async {
+    func fetchPersonalGoals(weekNumber: Int? = nil, year: Int? = nil) async {
         await MainActor.run { isLoadingGoals = true }
-        guard let url = URL(string: "\(baseURL)/lsw/personal-goals") else {
+        var urlString = "\(baseURL)/lsw/personal-goals"
+        if let wn = weekNumber, let yr = year { urlString += "?weekNumber=\(wn)&year=\(yr)" }
+        guard let url = URL(string: urlString) else {
             await MainActor.run { isLoadingGoals = false }
             return
         }
@@ -1670,13 +1688,15 @@ class LSWService: ObservableObject {
         }
     }
     
-    func createPersonalGoal(objective: String, dueDate: String, progress: Int = 0) async -> LSWPersonalGoal? {
+    func createPersonalGoal(objective: String, dueDate: String, progress: Int = 0, weekNumber: Int? = nil, year: Int? = nil) async -> LSWPersonalGoal? {
         guard let url = URL(string: "\(baseURL)/lsw/personal-goals") else { return nil }
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "objective": objective,
             "dueDate": dueDate,
             "progress": progress
         ]
+        if let wn = weekNumber { body["weekNumber"] = wn }
+        if let yr = year { body["year"] = yr }
         do {
             var request = try await authorizedRequest(url: url, method: "POST")
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -1720,9 +1740,11 @@ class LSWService: ObservableObject {
     
     // MARK: - Meeting Rails CRUD
     
-    func fetchMeetingRails() async {
+    func fetchMeetingRails(weekNumber: Int? = nil, year: Int? = nil) async {
         await MainActor.run { isLoadingRails = true }
-        guard let url = URL(string: "\(baseURL)/lsw/meeting-rails") else {
+        var urlString = "\(baseURL)/lsw/meeting-rails"
+        if let wn = weekNumber, let yr = year { urlString += "?weekNumber=\(wn)&year=\(yr)" }
+        guard let url = URL(string: urlString) else {
             await MainActor.run { isLoadingRails = false }
             return
         }
@@ -1744,12 +1766,14 @@ class LSWService: ObservableObject {
         }
     }
     
-    func createMeetingRail(rail: String, dueDate: String) async -> LSWMeetingRail? {
+    func createMeetingRail(rail: String, dueDate: String, weekNumber: Int? = nil, year: Int? = nil) async -> LSWMeetingRail? {
         guard let url = URL(string: "\(baseURL)/lsw/meeting-rails") else { return nil }
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "rail": rail,
             "dueDate": dueDate
         ]
+        if let wn = weekNumber { body["weekNumber"] = wn }
+        if let yr = year { body["year"] = yr }
         do {
             var request = try await authorizedRequest(url: url, method: "POST")
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
