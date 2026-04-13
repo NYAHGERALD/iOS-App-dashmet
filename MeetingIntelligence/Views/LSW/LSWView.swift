@@ -143,6 +143,8 @@ struct LSWSectionDetailView: View {
             FollowUpsView()
         case .rcaTriggers:
             TriggersView()
+        case .scheduledTasks:
+            ScheduledTasksView()
         default:
             LSWPlaceholderView(section: section)
         }

@@ -7,6 +7,7 @@
 
 import Foundation
 import Combine
+import SwiftUI
 import FirebaseAuth
 
 // MARK: - Models
@@ -277,6 +278,72 @@ struct LSWRcaTriggerSingleResponse: Codable {
     let data: LSWRcaTrigger
 }
 
+// MARK: - Frequency Task Models (Scheduled Tasks/Meetings)
+
+enum LSWFrequency: String, Codable, CaseIterable, Identifiable {
+    case BIWEEKLY
+    case MONTHLY
+    case QUARTERLY
+    case ANNUALLY
+    
+    var id: String { rawValue }
+    
+    var displayName: String {
+        switch self {
+        case .BIWEEKLY: return "Bi-Weekly"
+        case .MONTHLY: return "Monthly"
+        case .QUARTERLY: return "Quarterly"
+        case .ANNUALLY: return "Annually"
+        }
+    }
+    
+    var sectionTitle: String {
+        "\(displayName) (Standard Tasks/Meetings)"
+    }
+    
+    var color: Color {
+        switch self {
+        case .BIWEEKLY: return Color(hex: "3B82F6")   // Blue
+        case .MONTHLY: return Color(hex: "8B5CF6")     // Purple
+        case .QUARTERLY: return Color(hex: "10B981")   // Green
+        case .ANNUALLY: return Color(hex: "F59E0B")    // Amber
+        }
+    }
+}
+
+struct LSWFrequencyTask: Codable, Identifiable {
+    let id: String
+    let task: String
+    let minutes: Int
+    let dueDate: String
+    let frequency: LSWFrequency
+    let periodKey: String?
+    let sortOrder: Int?
+    let isActive: Bool?
+    
+    var dueDateFormatted: String {
+        let raw = String(dueDate.prefix(10))
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        if let date = formatter.date(from: raw) {
+            formatter.dateFormat = "MMM d, yyyy"
+            return formatter.string(from: date)
+        }
+        return raw
+    }
+}
+
+struct LSWFrequencyTasksResponse: Codable {
+    let success: Bool
+    let data: [LSWFrequencyTask]
+}
+
+struct LSWFrequencyTaskSingleResponse: Codable {
+    let success: Bool
+    let data: LSWFrequencyTask
+}
+
 // MARK: - Service
 
 class LSWService: ObservableObject {
@@ -298,6 +365,8 @@ class LSWService: ObservableObject {
     @Published var isLoadingFollowUps = false
     @Published var rcaTriggers: [LSWRcaTrigger] = []
     @Published var isLoadingTriggers = false
+    @Published var frequencyTasks: [LSWFrequencyTask] = []
+    @Published var isLoadingFreqTasks = false
     
     // WebSocket sync state
     private var activeWeekNumber: Int?
@@ -602,6 +671,54 @@ class LSWService: ObservableObject {
                     
                 default:
                     Task { await self.fetchRcaTriggers() }
+                }
+            }
+        }
+        
+        ensureWebSocketConnected()
+    }
+    
+    // MARK: - WebSocket Frequency Task Sync
+    
+    func connectFreqTaskWebSocket() {
+        guard !registeredHandlers.contains("freq-task") else {
+            ensureWebSocketConnected()
+            return
+        }
+        registeredHandlers.insert("freq-task")
+        
+        SocketIOClient.shared.on("lsw:freq-task-changed") { [weak self] data in
+            guard let self = self,
+                  let dict = data as? [String: Any],
+                  let action = dict["action"] as? String else { return }
+            
+            Task { @MainActor in
+                switch action {
+                case "freq-task-created":
+                    if let tDict = dict["task"] as? [String: Any],
+                       let tData = try? JSONSerialization.data(withJSONObject: tDict),
+                       let task = try? JSONDecoder().decode(LSWFrequencyTask.self, from: tData) {
+                        if !self.frequencyTasks.contains(where: { $0.id == task.id }) {
+                            self.frequencyTasks.append(task)
+                        }
+                    }
+                    
+                case "freq-task-updated":
+                    if let tDict = dict["task"] as? [String: Any],
+                       let tData = try? JSONSerialization.data(withJSONObject: tDict),
+                       let task = try? JSONDecoder().decode(LSWFrequencyTask.self, from: tData) {
+                        if let idx = self.frequencyTasks.firstIndex(where: { $0.id == task.id }) {
+                            self.frequencyTasks[idx] = task
+                        }
+                    }
+                    
+                case "freq-task-deleted":
+                    if let taskId = dict["taskId"] as? String {
+                        self.frequencyTasks.removeAll { $0.id == taskId }
+                    }
+                    
+                default:
+                    Task { await self.fetchFrequencyTasks() }
                 }
             }
         }
@@ -1276,6 +1393,81 @@ class LSWService: ObservableObject {
             return true
         } catch {
             print("❌ [LSW] deleteRcaTrigger error: \(error.localizedDescription)")
+            return false
+        }
+    }
+    
+    // MARK: - Frequency Tasks CRUD
+    
+    func fetchFrequencyTasks() async {
+        await MainActor.run { isLoadingFreqTasks = true }
+        guard let url = URL(string: "\(baseURL)/lsw/frequency-tasks") else {
+            await MainActor.run { isLoadingFreqTasks = false }
+            return
+        }
+        do {
+            let request = try await authorizedRequest(url: url)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                await MainActor.run { isLoadingFreqTasks = false }
+                return
+            }
+            let result = try JSONDecoder().decode(LSWFrequencyTasksResponse.self, from: data)
+            await MainActor.run {
+                self.frequencyTasks = result.data
+                self.isLoadingFreqTasks = false
+            }
+        } catch {
+            print("❌ [LSW] fetchFrequencyTasks error: \(error.localizedDescription)")
+            await MainActor.run { isLoadingFreqTasks = false }
+        }
+    }
+    
+    func createFrequencyTask(task: String, minutes: Int, dueDate: String, frequency: LSWFrequency) async -> LSWFrequencyTask? {
+        guard let url = URL(string: "\(baseURL)/lsw/frequency-tasks") else { return nil }
+        let body: [String: Any] = [
+            "task": task,
+            "minutes": minutes,
+            "dueDate": dueDate,
+            "frequency": frequency.rawValue
+        ]
+        do {
+            var request = try await authorizedRequest(url: url, method: "POST")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, (200...201).contains(httpResponse.statusCode) else { return nil }
+            let result = try JSONDecoder().decode(LSWFrequencyTaskSingleResponse.self, from: data)
+            return result.data
+        } catch {
+            print("❌ [LSW] createFrequencyTask error: \(error.localizedDescription)")
+            return nil
+        }
+    }
+    
+    func updateFrequencyTask(id: String, data: [String: Any]) async -> LSWFrequencyTask? {
+        guard let url = URL(string: "\(baseURL)/lsw/frequency-tasks/\(id)") else { return nil }
+        do {
+            var request = try await authorizedRequest(url: url, method: "PUT")
+            request.httpBody = try JSONSerialization.data(withJSONObject: data)
+            let (responseData, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return nil }
+            let result = try JSONDecoder().decode(LSWFrequencyTaskSingleResponse.self, from: responseData)
+            return result.data
+        } catch {
+            print("❌ [LSW] updateFrequencyTask error: \(error.localizedDescription)")
+            return nil
+        }
+    }
+    
+    func deleteFrequencyTask(id: String) async -> Bool {
+        guard let url = URL(string: "\(baseURL)/lsw/frequency-tasks/\(id)") else { return false }
+        do {
+            let request = try await authorizedRequest(url: url, method: "DELETE")
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return false }
+            return true
+        } catch {
+            print("❌ [LSW] deleteFrequencyTask error: \(error.localizedDescription)")
             return false
         }
     }
