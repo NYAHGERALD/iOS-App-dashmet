@@ -124,6 +124,18 @@ struct ScheduledTasksView: View {
                                     Label("Delete", systemImage: "trash")
                                 }
                             }
+                            .contextMenu {
+                                Button {
+                                    selectedTask = task
+                                } label: {
+                                    Label("Edit", systemImage: "pencil")
+                                }
+                                Button(role: .destructive) {
+                                    Task { await handleDelete(task.id) }
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
                         }
                     } header: {
                         frequencySectionHeader(frequency: freq)
