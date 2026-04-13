@@ -449,6 +449,7 @@ class LSWService: ObservableObject {
     @Published var activeYear: Int?
     private var webSocketConnected = false
     private var registeredHandlers: Set<String> = []
+    private var calendarConfigLoaded = false
     
     // Fetch generation counter — used to discard stale responses during rapid week navigation
     private var fetchGeneration: Int = 0
@@ -940,6 +941,29 @@ class LSWService: ObservableObject {
         return request
     }
     
+    // MARK: - Lightweight Calendar Config Fetch
+    /// Ensures calendar config is loaded; only fetches from server once.
+    func ensureCalendarConfigLoaded() async {
+        guard !calendarConfigLoaded else { return }
+        guard let url = URL(string: "\(baseURL)/organizations/calendar-config") else { return }
+        do {
+            let request = try await authorizedRequest(url: url)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return }
+            struct CalendarConfigResponse: Codable {
+                let success: Bool
+                let data: LSWCalendarConfig
+            }
+            let result = try JSONDecoder().decode(CalendarConfigResponse.self, from: data)
+            await MainActor.run {
+                self.calendarConfig = result.data
+                self.calendarConfigLoaded = true
+            }
+        } catch {
+            print("⚠️ [LSW] ensureCalendarConfigLoaded error: \(error.localizedDescription)")
+        }
+    }
+    
     // MARK: - Fetch Calendar Config & Preferences
     func fetchConfig() async {
         // Use current ISO week/year for config fetch (config itself is org-level)
@@ -964,6 +988,7 @@ class LSWService: ObservableObject {
             await MainActor.run {
                 if let config = result.data.calendarConfig {
                     self.calendarConfig = config
+                    self.calendarConfigLoaded = true
                 }
                 if let prefs = result.data.userPreferences {
                     self.workDaysPerWeek = max(5, min(7, prefs.workDaysPerWeek))

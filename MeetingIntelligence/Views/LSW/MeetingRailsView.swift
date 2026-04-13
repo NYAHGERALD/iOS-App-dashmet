@@ -66,8 +66,12 @@ struct MeetingRailsView: View {
         .navigationTitle("Meeting Rails")
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            lswService.setActiveWeek(weekNumber: currentWeekNumber, year: currentYear)
-            await lswService.fetchMeetingRails(weekNumber: currentWeekNumber, year: currentYear)
+            await lswService.ensureCalendarConfigLoaded()
+            let refDate = Calendar.current.date(byAdding: .weekOfYear, value: currentWeekOffset, to: Date())!
+            let week = lswService.orgWeekNumber(for: refDate)
+            let year = lswService.orgYear(for: refDate)
+            lswService.setActiveWeek(weekNumber: week, year: year)
+            await lswService.fetchMeetingRails(weekNumber: week, year: year)
             lswService.connectRailWebSocket()
         }
         .onChange(of: currentWeekOffset) { _, _ in

@@ -359,16 +359,10 @@ struct AddTaskView: View {
             reminderStr = formatter.string(from: reminderDate)
         }
         
-        // Get week context from active selection
+        // Get week context from active selection (org-calendar-aware)
         let lswService = LSWService.shared
-        let wk = lswService.activeWeekNumber ?? {
-            let cal = Calendar(identifier: .iso8601)
-            return cal.component(.weekOfYear, from: Date())
-        }()
-        let yr = lswService.activeYear ?? {
-            let cal = Calendar(identifier: .iso8601)
-            return cal.component(.yearForWeekOfYear, from: Date())
-        }()
+        let wk = lswService.activeWeekNumber ?? lswService.orgWeekNumber(for: Date())
+        let yr = lswService.activeYear ?? lswService.orgYear(for: Date())
         
         if let created = await service.createItem(
             task: trimmed,

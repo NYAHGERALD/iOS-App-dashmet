@@ -69,10 +69,16 @@ struct ProjectsView: View {
         .navigationTitle("Projects")
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            await lswService.fetchProjects(weekNumber: currentWeekNumber, year: currentYear)
+            await lswService.ensureCalendarConfigLoaded()
+            let refDate = Calendar.current.date(byAdding: .weekOfYear, value: currentWeekOffset, to: Date())!
+            let week = lswService.orgWeekNumber(for: refDate)
+            let year = lswService.orgYear(for: refDate)
+            lswService.setActiveWeek(weekNumber: week, year: year)
+            await lswService.fetchProjects(weekNumber: week, year: year)
             lswService.connectProjectWebSocket()
         }
         .onChange(of: currentWeekOffset) { _, _ in
+            lswService.setActiveWeek(weekNumber: currentWeekNumber, year: currentYear)
             Task { await lswService.fetchProjects(weekNumber: currentWeekNumber, year: currentYear) }
         }
         .alert("New Project", isPresented: $showNewProjectAlert) {

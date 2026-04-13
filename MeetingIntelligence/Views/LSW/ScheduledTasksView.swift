@@ -66,8 +66,12 @@ struct ScheduledTasksView: View {
         .navigationTitle("Scheduled Tasks")
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            lswService.setActiveWeek(weekNumber: currentWeekNumber, year: currentYear)
-            await lswService.fetchFrequencyTasks(weekNumber: currentWeekNumber, year: currentYear)
+            await lswService.ensureCalendarConfigLoaded()
+            let refDate = Calendar.current.date(byAdding: .weekOfYear, value: currentWeekOffset, to: Date())!
+            let week = lswService.orgWeekNumber(for: refDate)
+            let year = lswService.orgYear(for: refDate)
+            lswService.setActiveWeek(weekNumber: week, year: year)
+            await lswService.fetchFrequencyTasks(weekNumber: week, year: year)
             lswService.connectFreqTaskWebSocket()
         }
         .onChange(of: currentWeekOffset) { _, _ in
