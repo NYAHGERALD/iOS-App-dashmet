@@ -310,7 +310,6 @@ struct RailEditSheet: View {
                     let raw = String(r.dueDate.prefix(10))
                     let formatter = DateFormatter()
                     formatter.dateFormat = "yyyy-MM-dd"
-                    formatter.timeZone = TimeZone(identifier: "UTC")
                     if let date = formatter.date(from: raw) {
                         dueDate = date
                     }
@@ -354,7 +353,6 @@ struct RailEditSheet: View {
         
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
-        formatter.timeZone = TimeZone(identifier: "UTC")
         let dueDateStr = formatter.string(from: dueDate)
         
         if isNew {

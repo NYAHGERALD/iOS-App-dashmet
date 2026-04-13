@@ -353,7 +353,6 @@ struct FollowUpEditSheet: View {
                     let raw = String(fu.dueDate.prefix(10))
                     let formatter = DateFormatter()
                     formatter.dateFormat = "yyyy-MM-dd"
-                    formatter.timeZone = TimeZone(identifier: "UTC")
                     if let date = formatter.date(from: raw) {
                         dueDate = date
                     }
@@ -397,7 +396,6 @@ struct FollowUpEditSheet: View {
         
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
-        formatter.timeZone = TimeZone(identifier: "UTC")
         let dueDateStr = formatter.string(from: dueDate)
         let trimmedResponsible = responsible.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedComments = comments.trimmingCharacters(in: .whitespacesAndNewlines)

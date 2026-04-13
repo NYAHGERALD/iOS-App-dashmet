@@ -335,7 +335,6 @@ struct FreqTaskEditSheet: View {
                     let raw = String(t.dueDate.prefix(10))
                     let formatter = DateFormatter()
                     formatter.dateFormat = "yyyy-MM-dd"
-                    formatter.timeZone = TimeZone(identifier: "UTC")
                     if let date = formatter.date(from: raw) {
                         dueDate = date
                     }
@@ -379,7 +378,6 @@ struct FreqTaskEditSheet: View {
         
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
-        formatter.timeZone = TimeZone(identifier: "UTC")
         let dueDateStr = formatter.string(from: dueDate)
         
         if isNew {
