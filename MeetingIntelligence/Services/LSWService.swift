@@ -383,6 +383,39 @@ struct LSWPersonalGoalSingleResponse: Codable {
     let data: LSWPersonalGoal
 }
 
+// MARK: - Meeting Rail Models
+
+struct LSWMeetingRail: Codable, Identifiable {
+    let id: String
+    let rail: String
+    let dueDate: String
+    let completed: Bool
+    let sortOrder: Int?
+    let isActive: Bool?
+    
+    var dueDateFormatted: String {
+        let raw = String(dueDate.prefix(10))
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        if let date = formatter.date(from: raw) {
+            formatter.dateFormat = "MMM d, yyyy"
+            return formatter.string(from: date)
+        }
+        return raw
+    }
+}
+
+struct LSWMeetingRailsResponse: Codable {
+    let success: Bool
+    let data: [LSWMeetingRail]
+}
+
+struct LSWMeetingRailSingleResponse: Codable {
+    let success: Bool
+    let data: LSWMeetingRail
+}
+
 // MARK: - Service
 
 class LSWService: ObservableObject {
@@ -408,6 +441,8 @@ class LSWService: ObservableObject {
     @Published var isLoadingFreqTasks = false
     @Published var personalGoals: [LSWPersonalGoal] = []
     @Published var isLoadingGoals = false
+    @Published var meetingRails: [LSWMeetingRail] = []
+    @Published var isLoadingRails = false
     
     // WebSocket sync state
     private var activeWeekNumber: Int?
@@ -808,6 +843,54 @@ class LSWService: ObservableObject {
                     
                 default:
                     Task { await self.fetchPersonalGoals() }
+                }
+            }
+        }
+        
+        ensureWebSocketConnected()
+    }
+    
+    // MARK: - WebSocket Meeting Rail Sync
+    
+    func connectRailWebSocket() {
+        guard !registeredHandlers.contains("rail") else {
+            ensureWebSocketConnected()
+            return
+        }
+        registeredHandlers.insert("rail")
+        
+        SocketIOClient.shared.on("lsw:rail-changed") { [weak self] data in
+            guard let self = self,
+                  let dict = data as? [String: Any],
+                  let action = dict["action"] as? String else { return }
+            
+            Task { @MainActor in
+                switch action {
+                case "rail-created":
+                    if let rDict = dict["rail"] as? [String: Any],
+                       let rData = try? JSONSerialization.data(withJSONObject: rDict),
+                       let rail = try? JSONDecoder().decode(LSWMeetingRail.self, from: rData) {
+                        if !self.meetingRails.contains(where: { $0.id == rail.id }) {
+                            self.meetingRails.append(rail)
+                        }
+                    }
+                    
+                case "rail-updated":
+                    if let rDict = dict["rail"] as? [String: Any],
+                       let rData = try? JSONSerialization.data(withJSONObject: rDict),
+                       let rail = try? JSONDecoder().decode(LSWMeetingRail.self, from: rData) {
+                        if let idx = self.meetingRails.firstIndex(where: { $0.id == rail.id }) {
+                            self.meetingRails[idx] = rail
+                        }
+                    }
+                    
+                case "rail-deleted":
+                    if let railId = dict["railId"] as? String {
+                        self.meetingRails.removeAll { $0.id == railId }
+                    }
+                    
+                default:
+                    Task { await self.fetchMeetingRails() }
                 }
             }
         }
@@ -1633,5 +1716,82 @@ class LSWService: ObservableObject {
             print("❌ [LSW] deletePersonalGoal error: \(error.localizedDescription)")
             return false
         }
+    }
+    
+    // MARK: - Meeting Rails CRUD
+    
+    func fetchMeetingRails() async {
+        await MainActor.run { isLoadingRails = true }
+        guard let url = URL(string: "\(baseURL)/lsw/meeting-rails") else {
+            await MainActor.run { isLoadingRails = false }
+            return
+        }
+        do {
+            let request = try await authorizedRequest(url: url)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                await MainActor.run { isLoadingRails = false }
+                return
+            }
+            let result = try JSONDecoder().decode(LSWMeetingRailsResponse.self, from: data)
+            await MainActor.run {
+                self.meetingRails = result.data
+                self.isLoadingRails = false
+            }
+        } catch {
+            print("❌ [LSW] fetchMeetingRails error: \(error.localizedDescription)")
+            await MainActor.run { isLoadingRails = false }
+        }
+    }
+    
+    func createMeetingRail(rail: String, dueDate: String) async -> LSWMeetingRail? {
+        guard let url = URL(string: "\(baseURL)/lsw/meeting-rails") else { return nil }
+        let body: [String: Any] = [
+            "rail": rail,
+            "dueDate": dueDate
+        ]
+        do {
+            var request = try await authorizedRequest(url: url, method: "POST")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, (200...201).contains(httpResponse.statusCode) else { return nil }
+            let result = try JSONDecoder().decode(LSWMeetingRailSingleResponse.self, from: data)
+            return result.data
+        } catch {
+            print("❌ [LSW] createMeetingRail error: \(error.localizedDescription)")
+            return nil
+        }
+    }
+    
+    func updateMeetingRail(id: String, data: [String: Any]) async -> LSWMeetingRail? {
+        guard let url = URL(string: "\(baseURL)/lsw/meeting-rails/\(id)") else { return nil }
+        do {
+            var request = try await authorizedRequest(url: url, method: "PUT")
+            request.httpBody = try JSONSerialization.data(withJSONObject: data)
+            let (responseData, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return nil }
+            let result = try JSONDecoder().decode(LSWMeetingRailSingleResponse.self, from: responseData)
+            return result.data
+        } catch {
+            print("❌ [LSW] updateMeetingRail error: \(error.localizedDescription)")
+            return nil
+        }
+    }
+    
+    func deleteMeetingRail(id: String) async -> Bool {
+        guard let url = URL(string: "\(baseURL)/lsw/meeting-rails/\(id)") else { return false }
+        do {
+            let request = try await authorizedRequest(url: url, method: "DELETE")
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return false }
+            return true
+        } catch {
+            print("❌ [LSW] deleteMeetingRail error: \(error.localizedDescription)")
+            return false
+        }
+    }
+    
+    func toggleMeetingRailCompleted(id: String, completed: Bool) async -> LSWMeetingRail? {
+        return await updateMeetingRail(id: id, data: ["completed": completed])
     }
 }

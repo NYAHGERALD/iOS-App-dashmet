@@ -147,6 +147,8 @@ struct LSWSectionDetailView: View {
             ScheduledTasksView()
         case .personalObjectives:
             PersonalGoalsView()
+        case .meetingRails:
+            MeetingRailsView()
         default:
             LSWPlaceholderView(section: section)
         }
