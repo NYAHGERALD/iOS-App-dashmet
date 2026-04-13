@@ -145,6 +145,8 @@ struct LSWSectionDetailView: View {
             TriggersView()
         case .scheduledTasks:
             ScheduledTasksView()
+        case .personalObjectives:
+            PersonalGoalsView()
         default:
             LSWPlaceholderView(section: section)
         }

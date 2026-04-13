@@ -344,6 +344,45 @@ struct LSWFrequencyTaskSingleResponse: Codable {
     let data: LSWFrequencyTask
 }
 
+// MARK: - Personal Goal Models
+
+struct LSWPersonalGoal: Codable, Identifiable {
+    let id: String
+    let objective: String
+    let dueDate: String
+    let progress: Int
+    let sortOrder: Int?
+    let isActive: Bool?
+    
+    var dueDateFormatted: String {
+        let raw = String(dueDate.prefix(10))
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        if let date = formatter.date(from: raw) {
+            formatter.dateFormat = "MMM d, yyyy"
+            return formatter.string(from: date)
+        }
+        return raw
+    }
+    
+    var progressColor: Color {
+        if progress >= 80 { return Color(hex: "10B981") }      // Green
+        if progress >= 50 { return Color(hex: "3B82F6") }      // Blue
+        return Color(hex: "EF4444")                              // Red
+    }
+}
+
+struct LSWPersonalGoalsResponse: Codable {
+    let success: Bool
+    let data: [LSWPersonalGoal]
+}
+
+struct LSWPersonalGoalSingleResponse: Codable {
+    let success: Bool
+    let data: LSWPersonalGoal
+}
+
 // MARK: - Service
 
 class LSWService: ObservableObject {
@@ -367,6 +406,8 @@ class LSWService: ObservableObject {
     @Published var isLoadingTriggers = false
     @Published var frequencyTasks: [LSWFrequencyTask] = []
     @Published var isLoadingFreqTasks = false
+    @Published var personalGoals: [LSWPersonalGoal] = []
+    @Published var isLoadingGoals = false
     
     // WebSocket sync state
     private var activeWeekNumber: Int?
@@ -719,6 +760,54 @@ class LSWService: ObservableObject {
                     
                 default:
                     Task { await self.fetchFrequencyTasks() }
+                }
+            }
+        }
+        
+        ensureWebSocketConnected()
+    }
+    
+    // MARK: - WebSocket Goal Sync
+    
+    func connectGoalWebSocket() {
+        guard !registeredHandlers.contains("goal") else {
+            ensureWebSocketConnected()
+            return
+        }
+        registeredHandlers.insert("goal")
+        
+        SocketIOClient.shared.on("lsw:goal-changed") { [weak self] data in
+            guard let self = self,
+                  let dict = data as? [String: Any],
+                  let action = dict["action"] as? String else { return }
+            
+            Task { @MainActor in
+                switch action {
+                case "goal-created":
+                    if let gDict = dict["goal"] as? [String: Any],
+                       let gData = try? JSONSerialization.data(withJSONObject: gDict),
+                       let goal = try? JSONDecoder().decode(LSWPersonalGoal.self, from: gData) {
+                        if !self.personalGoals.contains(where: { $0.id == goal.id }) {
+                            self.personalGoals.append(goal)
+                        }
+                    }
+                    
+                case "goal-updated":
+                    if let gDict = dict["goal"] as? [String: Any],
+                       let gData = try? JSONSerialization.data(withJSONObject: gDict),
+                       let goal = try? JSONDecoder().decode(LSWPersonalGoal.self, from: gData) {
+                        if let idx = self.personalGoals.firstIndex(where: { $0.id == goal.id }) {
+                            self.personalGoals[idx] = goal
+                        }
+                    }
+                    
+                case "goal-deleted":
+                    if let goalId = dict["goalId"] as? String {
+                        self.personalGoals.removeAll { $0.id == goalId }
+                    }
+                    
+                default:
+                    Task { await self.fetchPersonalGoals() }
                 }
             }
         }
@@ -1468,6 +1557,80 @@ class LSWService: ObservableObject {
             return true
         } catch {
             print("❌ [LSW] deleteFrequencyTask error: \(error.localizedDescription)")
+            return false
+        }
+    }
+    
+    // MARK: - Personal Goals CRUD
+    
+    func fetchPersonalGoals() async {
+        await MainActor.run { isLoadingGoals = true }
+        guard let url = URL(string: "\(baseURL)/lsw/personal-goals") else {
+            await MainActor.run { isLoadingGoals = false }
+            return
+        }
+        do {
+            let request = try await authorizedRequest(url: url)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                await MainActor.run { isLoadingGoals = false }
+                return
+            }
+            let result = try JSONDecoder().decode(LSWPersonalGoalsResponse.self, from: data)
+            await MainActor.run {
+                self.personalGoals = result.data
+                self.isLoadingGoals = false
+            }
+        } catch {
+            print("❌ [LSW] fetchPersonalGoals error: \(error.localizedDescription)")
+            await MainActor.run { isLoadingGoals = false }
+        }
+    }
+    
+    func createPersonalGoal(objective: String, dueDate: String, progress: Int = 0) async -> LSWPersonalGoal? {
+        guard let url = URL(string: "\(baseURL)/lsw/personal-goals") else { return nil }
+        let body: [String: Any] = [
+            "objective": objective,
+            "dueDate": dueDate,
+            "progress": progress
+        ]
+        do {
+            var request = try await authorizedRequest(url: url, method: "POST")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, (200...201).contains(httpResponse.statusCode) else { return nil }
+            let result = try JSONDecoder().decode(LSWPersonalGoalSingleResponse.self, from: data)
+            return result.data
+        } catch {
+            print("❌ [LSW] createPersonalGoal error: \(error.localizedDescription)")
+            return nil
+        }
+    }
+    
+    func updatePersonalGoal(id: String, data: [String: Any]) async -> LSWPersonalGoal? {
+        guard let url = URL(string: "\(baseURL)/lsw/personal-goals/\(id)") else { return nil }
+        do {
+            var request = try await authorizedRequest(url: url, method: "PUT")
+            request.httpBody = try JSONSerialization.data(withJSONObject: data)
+            let (responseData, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return nil }
+            let result = try JSONDecoder().decode(LSWPersonalGoalSingleResponse.self, from: responseData)
+            return result.data
+        } catch {
+            print("❌ [LSW] updatePersonalGoal error: \(error.localizedDescription)")
+            return nil
+        }
+    }
+    
+    func deletePersonalGoal(id: String) async -> Bool {
+        guard let url = URL(string: "\(baseURL)/lsw/personal-goals/\(id)") else { return false }
+        do {
+            let request = try await authorizedRequest(url: url, method: "DELETE")
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return false }
+            return true
+        } catch {
+            print("❌ [LSW] deletePersonalGoal error: \(error.localizedDescription)")
             return false
         }
     }
