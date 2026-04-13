@@ -1,48 +1,31 @@
 import SwiftUI
 
 struct AddTaskView: View {
-    @StateObject private var manager = ToDoManager.shared
+    @StateObject private var service = ToDoService.shared
     @Environment(\.dismiss) private var dismiss
     let colorScheme: ColorScheme
     
     @State private var title: String = ""
     @State private var notes: String = ""
     @State private var priority: ToDoPriority = .none
-    @State private var selectedCategoryId: UUID? = nil
-    @State private var dueDate: Date = Date()
-    @State private var hasDueDate: Bool = false
+    @State private var category: String = ""
+    @State private var dueTime: Date = Date()
+    @State private var hasDueTime: Bool = false
     @State private var hasReminder: Bool = false
     @State private var reminderDate: Date = Date()
     @State private var recurrence: RecurrenceType = .none
     @State private var isFlagged: Bool = false
-    @State private var estimatedMinutes: String = ""
-    @State private var subtasks: [String] = []
-    @State private var newSubtask: String = ""
-    @State private var selectedTags: [ToDoTag] = []
-    @State private var showTagPicker: Bool = false
-    @State private var newTagName: String = ""
-    @State private var showNewTagSheet: Bool = false
+    @State private var selectedTags: [String] = []
+    @State private var newTagText: String = ""
+    @State private var isSaving = false
     
-    // Adaptive colors
-    private var textPrimary: Color {
-        colorScheme == .dark ? .white : .black
-    }
+    private var textPrimary: Color { colorScheme == .dark ? .white : .black }
+    private var textSecondary: Color { colorScheme == .dark ? .white.opacity(0.6) : .black.opacity(0.6) }
+    private var textTertiary: Color { colorScheme == .dark ? .white.opacity(0.4) : .black.opacity(0.4) }
+    private var cardBackground: Color { colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.05) }
+    private var cardBorder: Color { colorScheme == .dark ? Color.white.opacity(0.1) : Color.black.opacity(0.1) }
     
-    private var textSecondary: Color {
-        colorScheme == .dark ? .white.opacity(0.6) : .black.opacity(0.6)
-    }
-    
-    private var textTertiary: Color {
-        colorScheme == .dark ? .white.opacity(0.4) : .black.opacity(0.4)
-    }
-    
-    private var cardBackground: Color {
-        colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.05)
-    }
-    
-    private var cardBorder: Color {
-        colorScheme == .dark ? Color.white.opacity(0.1) : Color.black.opacity(0.1)
-    }
+    private let categories = ["Personal", "Work", "Health", "Shopping", "Learning", "Home"]
     
     var body: some View {
         NavigationStack {
@@ -51,29 +34,14 @@ struct AddTaskView: View {
                 
                 ScrollView {
                     VStack(spacing: 20) {
-                        // Title Section
                         titleSection
-                        
-                        // Notes Section
                         notesSection
-                        
-                        // Priority & Category
-                        priorityCategorySection
-                        
-                        // Due Date & Reminder
+                        prioritySection
+                        categorySection
                         dateTimeSection
-                        
-                        // Recurrence
                         recurrenceSection
-                        
-                        // Subtasks
-                        subtasksSection
-                        
-                        // Tags
                         tagsSection
-                        
-                        // Additional Options
-                        additionalSection
+                        flagSection
                     }
                     .padding()
                     .padding(.bottom, 100)
@@ -83,54 +51,49 @@ struct AddTaskView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                    .foregroundColor(textSecondary)
+                    Button("Cancel") { dismiss() }
+                        .foregroundColor(textSecondary)
                 }
-                
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Add") {
-                        addTask()
+                    Button {
+                        Task { await addTask() }
+                    } label: {
+                        if isSaving {
+                            ProgressView().scaleEffect(0.8)
+                        } else {
+                            Text("Add")
+                                .fontWeight(.semibold)
+                        }
                     }
-                    .fontWeight(.semibold)
                     .foregroundColor(title.isEmpty ? textTertiary : Color.purple)
-                    .disabled(title.isEmpty)
+                    .disabled(title.isEmpty || isSaving)
                 }
-            }
-            .sheet(isPresented: $showNewTagSheet) {
-                newTagSheet
             }
         }
     }
     
-    // MARK: - Title Section
+    // MARK: - Title
     private var titleSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Task Title")
                 .font(.subheadline.weight(.semibold))
                 .foregroundColor(textPrimary)
-            
             TextField("What do you need to do?", text: $title)
                 .font(.body)
                 .foregroundColor(textPrimary)
                 .padding()
                 .background(cardBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(cardBorder, lineWidth: 1)
-                )
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(cardBorder, lineWidth: 1))
         }
     }
     
-    // MARK: - Notes Section
+    // MARK: - Notes
     private var notesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Notes")
+            Text("Note")
                 .font(.subheadline.weight(.semibold))
                 .foregroundColor(textPrimary)
-            
             TextEditor(text: $notes)
                 .font(.body)
                 .foregroundColor(textPrimary)
@@ -139,72 +102,77 @@ struct AddTaskView: View {
                 .scrollContentBackground(.hidden)
                 .background(cardBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(cardBorder, lineWidth: 1)
-                )
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(cardBorder, lineWidth: 1))
         }
     }
     
-    // MARK: - Priority & Category
-    private var priorityCategorySection: some View {
-        VStack(spacing: 16) {
-            // Priority
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Priority")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundColor(textPrimary)
-                
+    // MARK: - Priority
+    private var prioritySection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Priority")
+                .font(.subheadline.weight(.semibold))
+                .foregroundColor(textPrimary)
+            HStack(spacing: 10) {
+                ForEach(ToDoPriority.allCases, id: \.self) { p in
+                    Button {
+                        priority = p
+                    } label: {
+                        VStack(spacing: 4) {
+                            Image(systemName: p.icon)
+                                .font(.title3)
+                            Text(p.rawValue)
+                                .font(.caption)
+                        }
+                        .foregroundColor(priority == p ? .white : p.color)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(priority == p ? p.color : p.color.opacity(0.15))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                }
+            }
+        }
+    }
+    
+    // MARK: - Category
+    private var categorySection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Category")
+                .font(.subheadline.weight(.semibold))
+                .foregroundColor(textPrimary)
+            ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
-                    ForEach(ToDoPriority.allCases, id: \.self) { p in
-                        Button {
-                            priority = p
-                        } label: {
-                            VStack(spacing: 4) {
-                                Image(systemName: p.icon)
-                                    .font(.title3)
-                                Text(p.rawValue)
-                                    .font(.caption)
-                            }
-                            .foregroundColor(priority == p ? .white : p.color)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(priority == p ? p.color : p.color.opacity(0.15))
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                    // None
+                    Button {
+                        category = ""
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "minus.circle")
+                                .font(.caption)
+                            Text("None")
+                                .font(.caption)
                         }
+                        .foregroundColor(category.isEmpty ? .white : textPrimary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(category.isEmpty ? Color.gray : cardBackground)
+                        .clipShape(Capsule())
                     }
-                }
-            }
-            
-            // Category
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Category")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundColor(textPrimary)
-                
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        // No category
-                        CategorySelectionPill(
-                            name: "None",
-                            icon: "minus.circle",
-                            color: .gray,
-                            isSelected: selectedCategoryId == nil,
-                            colorScheme: colorScheme
-                        ) {
-                            selectedCategoryId = nil
-                        }
-                        
-                        ForEach(manager.categories) { category in
-                            CategorySelectionPill(
-                                name: category.name,
-                                icon: category.icon,
-                                color: category.color,
-                                isSelected: selectedCategoryId == category.id,
-                                colorScheme: colorScheme
-                            ) {
-                                selectedCategoryId = category.id
-                            }
+                    
+                    ForEach(categories, id: \.self) { cat in
+                        Button {
+                            category = cat
+                        } label: {
+                            Text(cat)
+                                .font(.caption)
+                                .foregroundColor(category == cat ? .white : textPrimary)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(category == cat ? Color.purple : cardBackground)
+                                .clipShape(Capsule())
+                                .overlay(
+                                    Capsule().stroke(category == cat ? Color.clear : cardBorder, lineWidth: 1)
+                                )
                         }
                     }
                 }
@@ -212,28 +180,25 @@ struct AddTaskView: View {
         }
     }
     
-    // MARK: - Date Time Section
+    // MARK: - Date/Time & Reminder
     private var dateTimeSection: some View {
         VStack(spacing: 16) {
-            // Due Date Toggle
+            // Due Time Toggle
             VStack(alignment: .leading, spacing: 12) {
-                Toggle(isOn: $hasDueDate) {
+                Toggle(isOn: $hasDueTime) {
                     HStack {
-                        Image(systemName: "calendar")
+                        Image(systemName: "clock")
                             .foregroundColor(.blue)
-                        Text("Due Date")
+                        Text("Due Time")
                             .foregroundColor(textPrimary)
                     }
                 }
                 .tint(.purple)
                 
-                if hasDueDate {
-                    DatePicker("", selection: $dueDate, displayedComponents: [.date, .hourAndMinute])
-                        .datePickerStyle(.graphical)
+                if hasDueTime {
+                    DatePicker("", selection: $dueTime, displayedComponents: [.hourAndMinute])
+                        .datePickerStyle(.wheel)
                         .tint(.purple)
-                        .padding()
-                        .background(cardBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
             }
             .padding()
@@ -264,16 +229,15 @@ struct AddTaskView: View {
         }
     }
     
-    // MARK: - Recurrence Section
+    // MARK: - Recurrence
     private var recurrenceSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Repeat")
                 .font(.subheadline.weight(.semibold))
                 .foregroundColor(textPrimary)
-            
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
-                    ForEach(RecurrenceType.allCases, id: \.self) { type in
+                    ForEach(RecurrenceType.allCases.filter { $0 != .custom }, id: \.self) { type in
                         Button {
                             recurrence = type
                         } label: {
@@ -288,10 +252,7 @@ struct AddTaskView: View {
                             .padding(.vertical, 8)
                             .background(recurrence == type ? Color.purple : cardBackground)
                             .clipShape(Capsule())
-                            .overlay(
-                                Capsule()
-                                    .stroke(recurrence == type ? Color.clear : cardBorder, lineWidth: 1)
-                            )
+                            .overlay(Capsule().stroke(recurrence == type ? Color.clear : cardBorder, lineWidth: 1))
                         }
                     }
                 }
@@ -299,278 +260,133 @@ struct AddTaskView: View {
         }
     }
     
-    // MARK: - Subtasks Section
-    private var subtasksSection: some View {
+    // MARK: - Tags
+    private var tagsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Subtasks")
+            Text("Tags")
                 .font(.subheadline.weight(.semibold))
                 .foregroundColor(textPrimary)
             
-            VStack(spacing: 8) {
-                // Add subtask field
-                HStack {
-                    TextField("Add subtask", text: $newSubtask)
-                        .foregroundColor(textPrimary)
-                    
-                    Button {
-                        if !newSubtask.isEmpty {
-                            subtasks.append(newSubtask)
-                            newSubtask = ""
-                        }
-                    } label: {
-                        Image(systemName: "plus.circle.fill")
-                            .foregroundColor(.purple)
-                    }
-                    .disabled(newSubtask.isEmpty)
-                }
-                .padding()
-                .background(cardBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                
-                // Subtasks list
-                ForEach(subtasks.indices, id: \.self) { index in
-                    HStack {
-                        Image(systemName: "circle")
-                            .foregroundColor(textSecondary)
-                        
-                        Text(subtasks[index])
-                            .foregroundColor(textPrimary)
-                        
-                        Spacer()
-                        
-                        Button {
-                            subtasks.remove(at: index)
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundColor(textTertiary)
-                        }
-                    }
-                    .padding(.horizontal)
-                    .padding(.vertical, 8)
-                    .background(cardBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                }
-            }
-        }
-    }
-    
-    // MARK: - Tags Section
-    private var tagsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+            // Add tag input
             HStack {
-                Text("Tags")
-                    .font(.subheadline.weight(.semibold))
+                TextField("Add tag...", text: $newTagText)
                     .foregroundColor(textPrimary)
-                
-                Spacer()
-                
+                    .onSubmit {
+                        addTag()
+                    }
                 Button {
-                    showNewTagSheet = true
+                    addTag()
                 } label: {
-                    Image(systemName: "plus")
-                        .font(.caption)
+                    Image(systemName: "plus.circle.fill")
                         .foregroundColor(.purple)
                 }
+                .disabled(newTagText.trimmingCharacters(in: .whitespaces).isEmpty)
             }
+            .padding()
+            .background(cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
             
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(manager.tags) { tag in
-                        Button {
-                            if selectedTags.contains(where: { $0.id == tag.id }) {
-                                selectedTags.removeAll { $0.id == tag.id }
-                            } else {
-                                selectedTags.append(tag)
-                            }
-                        } label: {
+            // Selected tags
+            if !selectedTags.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(selectedTags, id: \.self) { tag in
                             HStack(spacing: 4) {
-                                if selectedTags.contains(where: { $0.id == tag.id }) {
-                                    Image(systemName: "checkmark")
+                                Text(tag)
+                                    .font(.caption)
+                                Button {
+                                    selectedTags.removeAll { $0 == tag }
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
                                         .font(.caption2)
                                 }
-                                Text(tag.name)
-                                    .font(.caption)
                             }
-                            .foregroundColor(selectedTags.contains(where: { $0.id == tag.id }) ? .white : tag.color)
-                            .padding(.horizontal, 12)
+                            .foregroundColor(.purple)
+                            .padding(.horizontal, 10)
                             .padding(.vertical, 6)
-                            .background(selectedTags.contains(where: { $0.id == tag.id }) ? tag.color : tag.color.opacity(0.15))
+                            .background(Color.purple.opacity(0.15))
                             .clipShape(Capsule())
                         }
                     }
-                    
-                    if manager.tags.isEmpty {
-                        Text("No tags yet. Tap + to create one.")
-                            .font(.caption)
-                            .foregroundColor(textTertiary)
-                    }
                 }
             }
         }
     }
     
-    // MARK: - Additional Section
-    private var additionalSection: some View {
-        VStack(spacing: 12) {
-            // Flag toggle
-            Toggle(isOn: $isFlagged) {
-                HStack {
-                    Image(systemName: "flag.fill")
-                        .foregroundColor(.red)
-                    Text("Flag as Important")
-                        .foregroundColor(textPrimary)
-                }
-            }
-            .tint(.red)
-            .padding()
-            .background(cardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            
-            // Estimated time
+    // MARK: - Flag
+    private var flagSection: some View {
+        Toggle(isOn: $isFlagged) {
             HStack {
-                Image(systemName: "clock")
-                    .foregroundColor(.green)
-                Text("Estimated Time")
+                Image(systemName: "flag.fill")
+                    .foregroundColor(.red)
+                Text("Flag as Important")
                     .foregroundColor(textPrimary)
-                
-                Spacer()
-                
-                TextField("mins", text: $estimatedMinutes)
-                    .keyboardType(.numberPad)
-                    .frame(width: 60)
-                    .multilineTextAlignment(.center)
-                    .foregroundColor(textPrimary)
-                    .padding(8)
-                    .background(cardBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                
-                Text("min")
-                    .foregroundColor(textSecondary)
-            }
-            .padding()
-            .background(cardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-        }
-    }
-    
-    // MARK: - New Tag Sheet
-    private var newTagSheet: some View {
-        NavigationStack {
-            ZStack {
-                AppColors.background.ignoresSafeArea()
-                
-                VStack(spacing: 20) {
-                    TextField("Tag name", text: $newTagName)
-                        .foregroundColor(textPrimary)
-                        .padding()
-                        .background(cardBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                    
-                    // Color picker
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 12) {
-                        ForEach(tagColors, id: \.self) { hex in
-                            Circle()
-                                .fill(Color(hex: hex))
-                                .frame(width: 40, height: 40)
-                                .overlay(
-                                    Circle()
-                                        .stroke(selectedTagColor == hex ? textPrimary : Color.clear, lineWidth: 3)
-                                )
-                                .onTapGesture {
-                                    selectedTagColor = hex
-                                }
-                        }
-                    }
-                    
-                    Spacer()
-                }
-                .padding()
-            }
-            .navigationTitle("New Tag")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        showNewTagSheet = false
-                    }
-                    .foregroundColor(textSecondary)
-                }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Add") {
-                        let tag = ToDoTag(name: newTagName, colorHex: selectedTagColor)
-                        manager.addTag(tag)
-                        selectedTags.append(tag)
-                        newTagName = ""
-                        showNewTagSheet = false
-                    }
-                    .fontWeight(.semibold)
-                    .foregroundColor(newTagName.isEmpty ? textTertiary : Color.purple)
-                    .disabled(newTagName.isEmpty)
-                }
             }
         }
+        .tint(.red)
+        .padding()
+        .background(cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
     
-    @State private var selectedTagColor: String = "8B5CF6"
+    // MARK: - Actions
     
-    private var tagColors: [String] {
-        ["EF4444", "F59E0B", "10B981", "3B82F6", "8B5CF6", "EC4899",
-         "F97316", "84CC16", "06B6D4", "6366F1", "A855F7", "F43F5E"]
+    private func addTag() {
+        let tag = newTagText.trimmingCharacters(in: .whitespaces)
+        guard !tag.isEmpty, !selectedTags.contains(tag) else { return }
+        selectedTags.append(tag)
+        newTagText = ""
     }
     
-    // MARK: - Add Task
-    private func addTask() {
-        let task = ToDoItem(
-            title: title,
-            notes: notes,
-            categoryId: selectedCategoryId,
-            priority: priority,
-            tags: selectedTags,
-            dueDate: hasDueDate ? dueDate : nil,
-            reminderDate: hasReminder ? reminderDate : nil,
-            hasReminder: hasReminder,
-            recurrence: recurrence,
-            subtasks: subtasks.map { Subtask(title: $0) },
-            estimatedMinutes: Int(estimatedMinutes),
-            isFlagged: isFlagged
-        )
+    private func addTask() async {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
         
-        manager.addTask(task)
-        dismiss()
-    }
-}
-
-// MARK: - Category Selection Pill
-struct CategorySelectionPill: View {
-    let name: String
-    let icon: String
-    let color: Color
-    let isSelected: Bool
-    let colorScheme: ColorScheme
-    let action: () -> Void
-    
-    private var textPrimary: Color {
-        colorScheme == .dark ? .white : .black
-    }
-    
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(.caption)
-                Text(name)
-                    .font(.caption)
+        await MainActor.run { isSaving = true }
+        
+        var dueTimeStr: String? = nil
+        if hasDueTime {
+            let cal = Calendar.current
+            let h = cal.component(.hour, from: dueTime)
+            let m = cal.component(.minute, from: dueTime)
+            dueTimeStr = String(format: "%02d:%02d", h, m)
+        }
+        
+        var reminderStr: String? = nil
+        if hasReminder {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime]
+            reminderStr = formatter.string(from: reminderDate)
+        }
+        
+        // Get current week context
+        let cal = Calendar(identifier: .iso8601)
+        let now = Date()
+        let wk = cal.component(.weekOfYear, from: now)
+        let yr = cal.component(.yearForWeekOfYear, from: now)
+        
+        if let created = await service.createItem(
+            task: trimmed,
+            dueDate: dueTimeStr,
+            note: notes.isEmpty ? nil : notes,
+            priority: priority.rawValue.lowercased(),
+            category: category.isEmpty ? nil : category,
+            tags: selectedTags.isEmpty ? nil : selectedTags,
+            isFlagged: isFlagged,
+            reminderDate: reminderStr,
+            recurrence: recurrence.rawValue.lowercased(),
+            weekNumber: wk,
+            year: yr
+        ) {
+            await MainActor.run {
+                if !service.items.contains(where: { $0.id == created.id }) {
+                    service.items.append(created)
+                }
+                isSaving = false
+                dismiss()
             }
-            .foregroundColor(isSelected ? .white : textPrimary)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(isSelected ? color : color.opacity(0.15))
-            .clipShape(Capsule())
+        } else {
+            await MainActor.run { isSaving = false }
         }
     }
-}
-
-#Preview {
-    AddTaskView(colorScheme: .dark)
 }

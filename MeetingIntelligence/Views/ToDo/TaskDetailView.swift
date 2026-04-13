@@ -1,38 +1,35 @@
 import SwiftUI
 
 struct TaskDetailView: View {
-    @StateObject private var manager = ToDoManager.shared
+    @StateObject private var service = ToDoService.shared
     @Environment(\.dismiss) private var dismiss
     
-    @State var task: ToDoItem
+    let item: APIToDoItem
     let colorScheme: ColorScheme
+    
     @State private var isEditing = false
     @State private var editedTitle: String = ""
     @State private var editedNotes: String = ""
+    @State private var editedPriority: ToDoPriority = .none
+    @State private var editedCategory: String = ""
+    @State private var editedRecurrence: RecurrenceType = .none
+    @State private var editedIsFlagged: Bool = false
+    @State private var editedHasDueTime: Bool = false
+    @State private var editedDueTime: Date = Date()
+    @State private var editedHasReminder: Bool = false
+    @State private var editedReminderDate: Date = Date()
+    @State private var editedTags: [String] = []
+    @State private var newTagText: String = ""
     @State private var showDeleteAlert = false
-    @State private var newSubtask: String = ""
-    @State private var showFocusTimer = false
+    @State private var isSaving = false
     
-    // Adaptive colors
-    private var textPrimary: Color {
-        colorScheme == .dark ? .white : .black
-    }
+    private let categories = ["Personal", "Work", "Health", "Shopping", "Learning", "Home"]
     
-    private var textSecondary: Color {
-        colorScheme == .dark ? .white.opacity(0.6) : .black.opacity(0.6)
-    }
-    
-    private var textTertiary: Color {
-        colorScheme == .dark ? .white.opacity(0.4) : .black.opacity(0.4)
-    }
-    
-    private var cardBackground: Color {
-        colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.05)
-    }
-    
-    private var cardBorder: Color {
-        colorScheme == .dark ? Color.white.opacity(0.1) : Color.black.opacity(0.1)
-    }
+    private var textPrimary: Color { colorScheme == .dark ? .white : .black }
+    private var textSecondary: Color { colorScheme == .dark ? .white.opacity(0.6) : .black.opacity(0.6) }
+    private var textTertiary: Color { colorScheme == .dark ? .white.opacity(0.4) : .black.opacity(0.4) }
+    private var cardBackground: Color { colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.05) }
+    private var cardBorder: Color { colorScheme == .dark ? Color.white.opacity(0.1) : Color.black.opacity(0.1) }
     
     var body: some View {
         NavigationStack {
@@ -41,31 +38,14 @@ struct TaskDetailView: View {
                 
                 ScrollView {
                     VStack(spacing: 20) {
-                        // Header with completion status
                         headerSection
                         
-                        // Title & Notes
-                        titleNotesSection
-                        
-                        // Details Section
-                        detailsSection
-                        
-                        // Subtasks
-                        if !task.subtasks.isEmpty || isEditing {
-                            subtasksSection
+                        if isEditing {
+                            editingContent
+                        } else {
+                            readOnlyContent
                         }
                         
-                        // Tags
-                        if !task.tags.isEmpty {
-                            tagsSection
-                        }
-                        
-                        // Statistics
-                        if task.pomodorosCompleted > 0 || task.actualMinutes != nil {
-                            statisticsSection
-                        }
-                        
-                        // Actions
                         actionsSection
                     }
                     .padding()
@@ -76,62 +56,67 @@ struct TaskDetailView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Close") {
-                        dismiss()
-                    }
-                    .foregroundColor(textSecondary)
+                    Button("Close") { dismiss() }
+                        .foregroundColor(textSecondary)
                 }
-                
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(isEditing ? "Done" : "Edit") {
+                    Button {
                         if isEditing {
-                            saveChanges()
+                            Task { await saveChanges() }
+                        } else {
+                            loadEditFields()
+                            isEditing = true
                         }
-                        isEditing.toggle()
+                    } label: {
+                        if isSaving {
+                            ProgressView().scaleEffect(0.8)
+                        } else {
+                            Text(isEditing ? "Save" : "Edit")
+                                .fontWeight(.semibold)
+                        }
                     }
-                    .fontWeight(.semibold)
                     .foregroundColor(.purple)
+                    .disabled(isSaving)
                 }
             }
             .alert("Delete Task?", isPresented: $showDeleteAlert) {
                 Button("Cancel", role: .cancel) { }
                 Button("Delete", role: .destructive) {
-                    manager.deleteTask(task)
-                    dismiss()
+                    Task {
+                        await MainActor.run { service.items.removeAll { $0.id == item.id } }
+                        _ = await service.deleteItem(id: item.id)
+                        await MainActor.run { dismiss() }
+                    }
                 }
             } message: {
                 Text("This action cannot be undone.")
             }
-            .sheet(isPresented: $showFocusTimer) {
-                FocusTimerView(colorScheme: colorScheme, linkedTask: task)
-            }
-            .onAppear {
-                editedTitle = task.title
-                editedNotes = task.notes
-            }
         }
     }
     
-    // MARK: - Header Section
+    // MARK: - Header
     private var headerSection: some View {
         HStack(spacing: 16) {
-            // Completion button
             Button {
-                withAnimation(.spring(response: 0.3)) {
-                    manager.toggleTaskCompletion(task)
-                    task.isCompleted.toggle()
+                Task {
+                    let newCompleted = !item.completed
+                    if let updated = await service.toggleCompleted(id: item.id, completed: newCompleted) {
+                        await MainActor.run {
+                            if let idx = service.items.firstIndex(where: { $0.id == item.id }) {
+                                service.items[idx] = updated
+                            }
+                        }
+                    }
                 }
             } label: {
                 ZStack {
                     Circle()
-                        .stroke(task.isCompleted ? Color.green : task.priority.color, lineWidth: 3)
+                        .stroke(item.completed ? Color.green : item.priorityLevel.color, lineWidth: 3)
                         .frame(width: 40, height: 40)
-                    
-                    if task.isCompleted {
+                    if item.completed {
                         Circle()
                             .fill(Color.green)
                             .frame(width: 40, height: 40)
-                        
                         Image(systemName: "checkmark")
                             .font(.title3.weight(.bold))
                             .foregroundColor(.white)
@@ -140,31 +125,30 @@ struct TaskDetailView: View {
             }
             
             VStack(alignment: .leading, spacing: 4) {
-                Text(task.isCompleted ? "Completed" : "In Progress")
+                Text(item.completed ? "Completed" : "In Progress")
                     .font(.headline)
-                    .foregroundColor(task.isCompleted ? .green : textPrimary)
-                
-                if let completedAt = task.completedAt {
-                    Text("Completed \(formattedDate(completedAt))")
+                    .foregroundColor(item.completed ? .green : textPrimary)
+                if item.isDueTimePast {
+                    Text("Past Due")
+                        .font(.caption)
+                        .foregroundColor(.red)
+                } else if !item.formattedDueTime.isEmpty {
+                    Text("Due \(item.formattedDueTime)")
                         .font(.caption)
                         .foregroundColor(textSecondary)
-                } else if let dueDate = task.dueDate {
-                    Text(task.isOverdue ? "Overdue" : "Due \(task.formattedDueDate)")
-                        .font(.caption)
-                        .foregroundColor(task.isOverdue ? .red : textSecondary)
                 }
             }
             
             Spacer()
             
-            // Flag button
             Button {
-                manager.toggleFlag(task)
-                task.isFlagged.toggle()
+                Task {
+                    _ = await service.toggleFlagged(id: item.id, isFlagged: !item.isFlagged)
+                }
             } label: {
-                Image(systemName: task.isFlagged ? "flag.fill" : "flag")
+                Image(systemName: item.isFlagged ? "flag.fill" : "flag")
                     .font(.title3)
-                    .foregroundColor(task.isFlagged ? .red : textSecondary)
+                    .foregroundColor(item.isFlagged ? .red : textSecondary)
             }
         }
         .padding()
@@ -172,336 +156,379 @@ struct TaskDetailView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
     
-    // MARK: - Title Notes Section
-    private var titleNotesSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            if isEditing {
-                TextField("Task title", text: $editedTitle)
+    // MARK: - Read Only Content
+    private var readOnlyContent: some View {
+        VStack(spacing: 16) {
+            // Title & Notes
+            VStack(alignment: .leading, spacing: 12) {
+                Text(item.task)
                     .font(.title3.weight(.semibold))
                     .foregroundColor(textPrimary)
-                    .padding()
-                    .background(cardBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .strikethrough(item.completed)
                 
-                TextEditor(text: $editedNotes)
-                    .font(.body)
-                    .foregroundColor(textPrimary)
-                    .frame(minHeight: 100)
-                    .padding(8)
-                    .scrollContentBackground(.hidden)
-                    .background(cardBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-            } else {
-                Text(task.title)
-                    .font(.title3.weight(.semibold))
-                    .foregroundColor(textPrimary)
-                    .strikethrough(task.isCompleted)
-                
-                if !task.notes.isEmpty {
-                    Text(task.notes)
+                if let note = item.note, !note.isEmpty {
+                    Text(note)
                         .font(.body)
                         .foregroundColor(textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding()
+            .background(cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            
+            // Details
+            VStack(spacing: 12) {
+                if let cat = item.category, !cat.isEmpty {
+                    DetailRow(icon: "folder", iconColor: .purple, title: "Category", value: cat, colorScheme: colorScheme)
+                }
+                if item.priorityLevel != .none {
+                    DetailRow(icon: item.priorityLevel.icon, iconColor: item.priorityLevel.color, title: "Priority", value: item.priorityLevel.rawValue, colorScheme: colorScheme)
+                }
+                if !item.formattedDueTime.isEmpty {
+                    DetailRow(icon: "clock", iconColor: item.isDueTimePast ? .red : .blue, title: "Due Time", value: item.formattedDueTime, colorScheme: colorScheme)
+                }
+                if let reminder = item.parsedReminderDate {
+                    let formatter = DateFormatter()
+                    let _ = formatter.dateFormat = "MMM d, yyyy 'at' h:mm a"
+                    DetailRow(icon: "bell.fill", iconColor: .orange, title: "Reminder", value: formatter.string(from: reminder), colorScheme: colorScheme)
+                }
+                if item.recurrenceType != .none {
+                    DetailRow(icon: item.recurrenceType.icon, iconColor: .purple, title: "Repeat", value: item.recurrenceType.rawValue, colorScheme: colorScheme)
+                }
+            }
+            .padding()
+            .background(cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            
+            // Tags
+            if !item.parsedTags.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Tags")
+                        .font(.headline)
+                        .foregroundColor(textPrimary)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(item.parsedTags, id: \.self) { tag in
+                                Text(tag)
+                                    .font(.subheadline)
+                                    .foregroundColor(.purple)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(Color.purple.opacity(0.15))
+                                    .clipShape(Capsule())
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding()
+                .background(cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
     
-    // MARK: - Details Section
-    private var detailsSection: some View {
-        VStack(spacing: 12) {
-            // Category
-            if let categoryId = task.categoryId,
-               let category = manager.category(for: categoryId) {
-                DetailRow(
-                    icon: category.icon,
-                    iconColor: category.color,
-                    title: "Category",
-                    value: category.name,
-                    colorScheme: colorScheme
-                )
+    // MARK: - Editing Content
+    private var editingContent: some View {
+        VStack(spacing: 16) {
+            // Title
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Task Title")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(textPrimary)
+                TextField("Task title", text: $editedTitle)
+                    .font(.body)
+                    .padding()
+                    .background(cardBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+            
+            // Notes
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Note")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(textPrimary)
+                TextEditor(text: $editedNotes)
+                    .font(.body)
+                    .frame(minHeight: 80)
+                    .padding(8)
+                    .scrollContentBackground(.hidden)
+                    .background(cardBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
             }
             
             // Priority
-            if task.priority != .none {
-                DetailRow(
-                    icon: task.priority.icon,
-                    iconColor: task.priority.color,
-                    title: "Priority",
-                    value: task.priority.rawValue,
-                    colorScheme: colorScheme
-                )
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Priority")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(textPrimary)
+                HStack(spacing: 10) {
+                    ForEach(ToDoPriority.allCases, id: \.self) { p in
+                        Button { editedPriority = p } label: {
+                            VStack(spacing: 4) {
+                                Image(systemName: p.icon).font(.title3)
+                                Text(p.rawValue).font(.caption)
+                            }
+                            .foregroundColor(editedPriority == p ? .white : p.color)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(editedPriority == p ? p.color : p.color.opacity(0.15))
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                        }
+                    }
+                }
             }
             
-            // Due Date
-            if let dueDate = task.dueDate {
-                DetailRow(
-                    icon: "calendar",
-                    iconColor: task.dueDateColor,
-                    title: "Due Date",
-                    value: fullFormattedDate(dueDate),
-                    colorScheme: colorScheme
-                )
+            // Category
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Category")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(textPrimary)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        Button { editedCategory = "" } label: {
+                            Text("None").font(.caption)
+                                .foregroundColor(editedCategory.isEmpty ? .white : textPrimary)
+                                .padding(.horizontal, 12).padding(.vertical, 8)
+                                .background(editedCategory.isEmpty ? Color.gray : cardBackground)
+                                .clipShape(Capsule())
+                        }
+                        ForEach(categories, id: \.self) { cat in
+                            Button { editedCategory = cat } label: {
+                                Text(cat).font(.caption)
+                                    .foregroundColor(editedCategory == cat ? .white : textPrimary)
+                                    .padding(.horizontal, 12).padding(.vertical, 8)
+                                    .background(editedCategory == cat ? Color.purple : cardBackground)
+                                    .clipShape(Capsule())
+                            }
+                        }
+                    }
+                }
             }
+            
+            // Due Time
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle(isOn: $editedHasDueTime) {
+                    HStack {
+                        Image(systemName: "clock").foregroundColor(.blue)
+                        Text("Due Time").foregroundColor(textPrimary)
+                    }
+                }
+                .tint(.purple)
+                if editedHasDueTime {
+                    DatePicker("", selection: $editedDueTime, displayedComponents: [.hourAndMinute])
+                        .datePickerStyle(.wheel)
+                        .tint(.purple)
+                }
+            }
+            .padding()
+            .background(cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
             
             // Reminder
-            if task.hasReminder, let reminderDate = task.reminderDate {
-                DetailRow(
-                    icon: "bell.fill",
-                    iconColor: .orange,
-                    title: "Reminder",
-                    value: fullFormattedDate(reminderDate),
-                    colorScheme: colorScheme
-                )
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle(isOn: $editedHasReminder) {
+                    HStack {
+                        Image(systemName: "bell.fill").foregroundColor(.orange)
+                        Text("Reminder").foregroundColor(textPrimary)
+                    }
+                }
+                .tint(.purple)
+                if editedHasReminder {
+                    DatePicker("Remind at", selection: $editedReminderDate, displayedComponents: [.date, .hourAndMinute])
+                        .foregroundColor(textPrimary)
+                        .tint(.purple)
+                }
             }
+            .padding()
+            .background(cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
             
             // Recurrence
-            if task.recurrence != .none {
-                DetailRow(
-                    icon: task.recurrence.icon,
-                    iconColor: .purple,
-                    title: "Repeat",
-                    value: task.recurrence.rawValue,
-                    colorScheme: colorScheme
-                )
-            }
-            
-            // Estimated time
-            if let estimated = task.estimatedMinutes {
-                DetailRow(
-                    icon: "clock",
-                    iconColor: .green,
-                    title: "Estimated",
-                    value: "\(estimated) minutes",
-                    colorScheme: colorScheme
-                )
-            }
-        }
-        .padding()
-        .background(cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-    }
-    
-    // MARK: - Subtasks Section
-    private var subtasksSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Subtasks")
-                    .font(.headline)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Repeat")
+                    .font(.subheadline.weight(.semibold))
                     .foregroundColor(textPrimary)
-                
-                Spacer()
-                
-                if !task.subtasks.isEmpty {
-                    Text("\(task.completedSubtasksCount)/\(task.subtasks.count)")
-                        .font(.subheadline)
-                        .foregroundColor(textSecondary)
-                }
-            }
-            
-            // Progress bar
-            if !task.subtasks.isEmpty {
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(cardBorder)
-                            .frame(height: 6)
-                        
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.green)
-                            .frame(width: geo.size.width * task.subtaskProgress, height: 6)
-                    }
-                }
-                .frame(height: 6)
-            }
-            
-            // Subtasks list
-            ForEach(task.subtasks) { subtask in
-                HStack(spacing: 12) {
-                    Button {
-                        manager.toggleSubtask(task, subtaskId: subtask.id)
-                        if let index = task.subtasks.firstIndex(where: { $0.id == subtask.id }) {
-                            task.subtasks[index].isCompleted.toggle()
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(RecurrenceType.allCases.filter { $0 != .custom }, id: \.self) { type in
+                            Button { editedRecurrence = type } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: type.icon).font(.caption)
+                                    Text(type.rawValue).font(.caption)
+                                }
+                                .foregroundColor(editedRecurrence == type ? .white : textPrimary)
+                                .padding(.horizontal, 12).padding(.vertical, 8)
+                                .background(editedRecurrence == type ? Color.purple : cardBackground)
+                                .clipShape(Capsule())
+                            }
                         }
-                    } label: {
-                        Image(systemName: subtask.isCompleted ? "checkmark.circle.fill" : "circle")
-                            .foregroundColor(subtask.isCompleted ? .green : textSecondary)
                     }
-                    
-                    Text(subtask.title)
-                        .foregroundColor(subtask.isCompleted ? textSecondary : textPrimary)
-                        .strikethrough(subtask.isCompleted)
-                    
-                    Spacer()
                 }
-                .padding(.vertical, 4)
             }
             
-            // Add subtask (when editing)
-            if isEditing {
+            // Tags
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Tags")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(textPrimary)
                 HStack {
-                    TextField("Add subtask", text: $newSubtask)
+                    TextField("Add tag...", text: $newTagText)
                         .foregroundColor(textPrimary)
-                    
-                    Button {
-                        if !newSubtask.isEmpty {
-                            let subtask = Subtask(title: newSubtask)
-                            task.subtasks.append(subtask)
-                            newSubtask = ""
-                        }
-                    } label: {
-                        Image(systemName: "plus.circle.fill")
-                            .foregroundColor(.purple)
+                        .onSubmit { addEditTag() }
+                    Button { addEditTag() } label: {
+                        Image(systemName: "plus.circle.fill").foregroundColor(.purple)
                     }
-                    .disabled(newSubtask.isEmpty)
+                    .disabled(newTagText.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
-                .padding(10)
-                .background(cardBackground.opacity(0.5))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-            }
-        }
-        .padding()
-        .background(cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-    }
-    
-    // MARK: - Tags Section
-    private var tagsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Tags")
-                .font(.headline)
-                .foregroundColor(textPrimary)
-            
-            ToDoFlowLayout(spacing: 8) {
-                ForEach(task.tags) { tag in
-                    Text(tag.name)
-                        .font(.subheadline)
-                        .foregroundColor(tag.color)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(tag.color.opacity(0.15))
-                        .clipShape(Capsule())
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-    }
-    
-    // MARK: - Statistics Section
-    private var statisticsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Focus Statistics")
-                .font(.headline)
-                .foregroundColor(textPrimary)
-            
-            HStack(spacing: 16) {
-                StatBox(
-                    icon: "flame.fill",
-                    value: "\(task.pomodorosCompleted)",
-                    label: "Pomodoros",
-                    color: .orange,
-                    colorScheme: colorScheme
-                )
-                
-                if let actual = task.actualMinutes {
-                    StatBox(
-                        icon: "clock.fill",
-                        value: "\(actual)",
-                        label: "Minutes",
-                        color: .blue,
-                        colorScheme: colorScheme
-                    )
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-    }
-    
-    // MARK: - Actions Section
-    private var actionsSection: some View {
-        VStack(spacing: 12) {
-            // Start Focus
-            Button {
-                showFocusTimer = true
-            } label: {
-                HStack {
-                    Image(systemName: "timer")
-                    Text("Start Focus Session")
-                }
-                .font(.headline)
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .padding()
-                .background(Color.purple)
-                .clipShape(RoundedRectangle(cornerRadius: 14))
-            }
-            
-            // Archive
-            Button {
-                manager.archiveTask(task)
-                dismiss()
-            } label: {
-                HStack {
-                    Image(systemName: "archivebox")
-                    Text("Archive Task")
-                }
-                .font(.subheadline.weight(.medium))
-                .foregroundColor(textSecondary)
-                .frame(maxWidth: .infinity)
                 .padding()
                 .background(cardBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                
+                if !editedTags.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(editedTags, id: \.self) { tag in
+                                HStack(spacing: 4) {
+                                    Text(tag).font(.caption)
+                                    Button { editedTags.removeAll { $0 == tag } } label: {
+                                        Image(systemName: "xmark.circle.fill").font(.caption2)
+                                    }
+                                }
+                                .foregroundColor(.purple)
+                                .padding(.horizontal, 10).padding(.vertical, 6)
+                                .background(Color.purple.opacity(0.15))
+                                .clipShape(Capsule())
+                            }
+                        }
+                    }
+                }
             }
             
-            // Delete
-            Button {
-                showDeleteAlert = true
-            } label: {
+            // Flag
+            Toggle(isOn: $editedIsFlagged) {
                 HStack {
-                    Image(systemName: "trash")
-                    Text("Delete Task")
+                    Image(systemName: "flag.fill").foregroundColor(.red)
+                    Text("Flag as Important").foregroundColor(textPrimary)
                 }
-                .font(.subheadline.weight(.medium))
-                .foregroundColor(.red)
-                .frame(maxWidth: .infinity)
-                .padding()
-                .background(Color.red.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 14))
             }
+            .tint(.red)
+            .padding()
+            .background(cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+    }
+    
+    // MARK: - Actions
+    private var actionsSection: some View {
+        Button {
+            showDeleteAlert = true
+        } label: {
+            HStack {
+                Image(systemName: "trash")
+                Text("Delete Task")
+            }
+            .font(.subheadline.weight(.medium))
+            .foregroundColor(.red)
+            .frame(maxWidth: .infinity)
+            .padding()
+            .background(Color.red.opacity(0.1))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
         }
     }
     
     // MARK: - Helpers
-    private func formattedDate(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return formatter.localizedString(for: date, relativeTo: Date())
+    
+    private func loadEditFields() {
+        editedTitle = item.task
+        editedNotes = item.note ?? ""
+        editedPriority = item.priorityLevel
+        editedCategory = item.category ?? ""
+        editedRecurrence = item.recurrenceType
+        editedIsFlagged = item.isFlagged
+        editedTags = item.parsedTags
+        
+        if let dueDate = item.dueDate, !dueDate.isEmpty {
+            editedHasDueTime = true
+            let parts = dueDate.split(separator: ":")
+            if parts.count == 2, let h = Int(parts[0]), let m = Int(parts[1]) {
+                var comps = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+                comps.hour = h
+                comps.minute = m
+                editedDueTime = Calendar.current.date(from: comps) ?? Date()
+            }
+        }
+        
+        if let reminder = item.parsedReminderDate {
+            editedHasReminder = true
+            editedReminderDate = reminder
+        }
     }
     
-    private func fullFormattedDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d, yyyy 'at' h:mm a"
-        return formatter.string(from: date)
+    private func addEditTag() {
+        let tag = newTagText.trimmingCharacters(in: .whitespaces)
+        guard !tag.isEmpty, !editedTags.contains(tag) else { return }
+        editedTags.append(tag)
+        newTagText = ""
     }
     
-    private func saveChanges() {
-        task.title = editedTitle
-        task.notes = editedNotes
-        manager.updateTask(task)
+    private func saveChanges() async {
+        let trimmed = editedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        
+        await MainActor.run { isSaving = true }
+        
+        var data: [String: Any] = [
+            "task": trimmed,
+            "priority": editedPriority.rawValue.lowercased(),
+            "isFlagged": editedIsFlagged,
+            "recurrence": editedRecurrence.rawValue.lowercased(),
+        ]
+        
+        data["note"] = editedNotes.isEmpty ? NSNull() : editedNotes
+        data["category"] = editedCategory.isEmpty ? NSNull() : editedCategory
+        
+        if editedHasDueTime {
+            let cal = Calendar.current
+            let h = cal.component(.hour, from: editedDueTime)
+            let m = cal.component(.minute, from: editedDueTime)
+            data["dueDate"] = String(format: "%02d:%02d", h, m)
+        } else {
+            data["dueDate"] = NSNull()
+        }
+        
+        if editedHasReminder {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime]
+            data["reminderDate"] = formatter.string(from: editedReminderDate)
+        } else {
+            data["reminderDate"] = NSNull()
+        }
+        
+        if editedTags.isEmpty {
+            data["tags"] = NSNull()
+        } else if let jsonData = try? JSONEncoder().encode(editedTags),
+                  let jsonStr = String(data: jsonData, encoding: .utf8) {
+            data["tags"] = jsonStr
+        }
+        
+        if let updated = await service.updateItem(id: item.id, data: data) {
+            await MainActor.run {
+                if let idx = service.items.firstIndex(where: { $0.id == item.id }) {
+                    service.items[idx] = updated
+                }
+                isSaving = false
+                isEditing = false
+            }
+        } else {
+            await MainActor.run { isSaving = false }
+        }
     }
 }
 
-// MARK: - Detail Row
+// MARK: - Detail Row (Reused from existing code)
 struct DetailRow: View {
     let icon: String
     let iconColor: Color
@@ -509,119 +536,20 @@ struct DetailRow: View {
     let value: String
     let colorScheme: ColorScheme
     
-    private var textPrimary: Color {
-        colorScheme == .dark ? .white : .black
-    }
-    
-    private var textSecondary: Color {
-        colorScheme == .dark ? .white.opacity(0.6) : .black.opacity(0.6)
-    }
+    private var textPrimary: Color { colorScheme == .dark ? .white : .black }
+    private var textSecondary: Color { colorScheme == .dark ? .white.opacity(0.6) : .black.opacity(0.6) }
     
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.title3)
                 .foregroundColor(iconColor)
-                .frame(width: 30)
-            
+                .frame(width: 24)
             Text(title)
                 .foregroundColor(textSecondary)
-            
             Spacer()
-            
             Text(value)
                 .foregroundColor(textPrimary)
                 .fontWeight(.medium)
         }
     }
-}
-
-// MARK: - Stat Box
-struct StatBox: View {
-    let icon: String
-    let value: String
-    let label: String
-    let color: Color
-    let colorScheme: ColorScheme
-    
-    private var textPrimary: Color {
-        colorScheme == .dark ? .white : .black
-    }
-    
-    private var textSecondary: Color {
-        colorScheme == .dark ? .white.opacity(0.6) : .black.opacity(0.6)
-    }
-    
-    var body: some View {
-        VStack(spacing: 4) {
-            HStack(spacing: 4) {
-                Image(systemName: icon)
-                    .foregroundColor(color)
-                Text(value)
-                    .font(.title2.weight(.bold))
-                    .foregroundColor(textPrimary)
-            }
-            
-            Text(label)
-                .font(.caption)
-                .foregroundColor(textSecondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding()
-        .background(color.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-    }
-}
-
-// MARK: - Flow Layout
-struct ToDoFlowLayout: Layout {
-    var spacing: CGFloat = 8
-    
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let result = ToDoFlowResult(in: proposal.width ?? 0, subviews: subviews, spacing: spacing)
-        return CGSize(width: proposal.width ?? 0, height: result.height)
-    }
-    
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let result = ToDoFlowResult(in: bounds.width, subviews: subviews, spacing: spacing)
-        for (index, subview) in subviews.enumerated() {
-            subview.place(at: CGPoint(x: bounds.minX + result.positions[index].x,
-                                       y: bounds.minY + result.positions[index].y),
-                         proposal: .unspecified)
-        }
-    }
-    
-    struct ToDoFlowResult {
-        var positions: [CGPoint] = []
-        var height: CGFloat = 0
-        
-        init(in maxWidth: CGFloat, subviews: Subviews, spacing: CGFloat) {
-            var currentX: CGFloat = 0
-            var currentY: CGFloat = 0
-            var lineHeight: CGFloat = 0
-            
-            for subview in subviews {
-                let size = subview.sizeThatFits(.unspecified)
-                
-                if currentX + size.width > maxWidth && currentX > 0 {
-                    currentX = 0
-                    currentY += lineHeight + spacing
-                    lineHeight = 0
-                }
-                
-                positions.append(CGPoint(x: currentX, y: currentY))
-                lineHeight = max(lineHeight, size.height)
-                currentX += size.width + spacing
-            }
-            
-            height = currentY + lineHeight
-        }
-    }
-}
-
-#Preview {
-    TaskDetailView(
-        task: ToDoItem(title: "Sample Task", notes: "This is a sample note"),
-        colorScheme: .dark
-    )
 }
