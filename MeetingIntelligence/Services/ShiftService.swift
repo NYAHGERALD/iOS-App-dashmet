@@ -62,14 +62,21 @@ class ShiftService: ObservableObject {
     
     private init() {}
     
-    /// Fetch all shifts from backend
-    func fetchShifts(facilityId: String? = nil) async {
+    /// Fetch shifts from backend, optionally filtered by facilityId or departmentId
+    func fetchShifts(facilityId: String? = nil, departmentId: String? = nil) async {
         isLoading = true
         errorMessage = nil
         
         var urlString = "\(baseURL)/facilities/shifts"
+        var queryItems: [String] = []
         if let facilityId = facilityId {
-            urlString += "?facilityId=\(facilityId)"
+            queryItems.append("facilityId=\(facilityId)")
+        }
+        if let departmentId = departmentId {
+            queryItems.append("departmentId=\(departmentId)")
+        }
+        if !queryItems.isEmpty {
+            urlString += "?" + queryItems.joined(separator: "&")
         }
         
         guard let url = URL(string: urlString) else {

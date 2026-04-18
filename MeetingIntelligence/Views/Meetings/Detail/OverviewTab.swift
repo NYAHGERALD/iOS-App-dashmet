@@ -69,17 +69,23 @@ class URLAudioPlayer: ObservableObject {
         let playerItem = AVPlayerItem(url: url)
         player = AVPlayer(playerItem: playerItem)
         
-        // Observe when ready to play
-        playerItem.asset.loadValuesAsynchronously(forKeys: ["playable", "duration"]) { [weak self] in
-            Task { @MainActor in
-                guard let self = self else { return }
-                self.isLoading = false
+        // Load asset properties using modern async API
+        Task { @MainActor [weak self] in
+            do {
+                let asset = playerItem.asset
+                let durationValue = try await asset.load(.duration)
+                let durationSeconds = CMTimeGetSeconds(durationValue)
                 
-                let durationSeconds = playerItem.asset.duration.seconds
+                guard let self else { return }
+                self.isLoading = false
                 if !durationSeconds.isNaN && !durationSeconds.isInfinite {
                     self.duration = durationSeconds
                 }
-                
+                self.setupTimeObserver()
+            } catch {
+                guard let self else { return }
+                self.isLoading = false
+                self.error = "Failed to load audio properties"
                 self.setupTimeObserver()
             }
         }
@@ -88,16 +94,17 @@ class URLAudioPlayer: ObservableObject {
     private func setupTimeObserver() {
         let interval = CMTime(seconds: 0.1, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
         timeObserver = player?.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
-            Task { @MainActor in
-                guard let self = self else { return }
-                self.currentTime = time.seconds
+            let seconds = time.seconds
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.currentTime = seconds
                 if self.duration > 0 {
-                    self.progress = time.seconds / self.duration
+                    self.progress = seconds / self.duration
                 }
                 
                 // Check if playback ended
                 if let player = self.player, player.currentItem?.status == .readyToPlay {
-                    if time.seconds >= self.duration - 0.1 {
+                    if seconds >= self.duration - 0.1 {
                         self.isPlaying = false
                     }
                 }
@@ -1429,7 +1436,7 @@ struct OverviewTab: View {
     }
     
     /// Background-safe file system scan (no main thread dependency)
-    private static func getLocalRecordingURLBackground(meetingId: String) -> URL? {
+    private nonisolated static func getLocalRecordingURLBackground(meetingId: String) -> URL? {
         let fileManager = FileManager.default
         let documentsDirectory = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
         let recordingsDirectory = documentsDirectory.appendingPathComponent("Recordings")
@@ -1804,17 +1811,23 @@ class OverviewAudioPlayer: ObservableObject {
         player?.rate = 0 // Start paused
         
         // Observe when the item is ready to play
-        statusObserver = item.observe(\.status, options: [.new]) { [weak self] item, _ in
-            Task { @MainActor in
-                guard let self = self else { return }
-                if item.status == .readyToPlay {
-                    let dur = CMTimeGetSeconds(item.duration)
-                    if dur.isFinite && dur > 0 {
-                        self.duration = dur
+        statusObserver = item.observe(\.status, options: [.new]) { [weak self] observedItem, _ in
+            if observedItem.status == .readyToPlay {
+                Task { @MainActor [weak self] in
+                    do {
+                        let durationValue = try await observedItem.asset.load(.duration)
+                        let dur = CMTimeGetSeconds(durationValue)
+                        if dur.isFinite && dur > 0 {
+                            self?.duration = dur
+                        }
+                        print("✅ Loaded audio: \(url.lastPathComponent), duration: \(self?.duration ?? 0)s")
+                    } catch {
+                        print("❌ Failed to load duration: \(error.localizedDescription)")
                     }
-                    print("✅ Loaded audio: \(url.lastPathComponent), duration: \(self.duration)s")
-                } else if item.status == .failed {
-                    print("❌ Failed to load audio: \(item.error?.localizedDescription ?? "unknown")")
+                }
+            } else if observedItem.status == .failed {
+                Task { @MainActor in
+                    print("❌ Failed to load audio: \(observedItem.error?.localizedDescription ?? "unknown")")
                 }
             }
         }

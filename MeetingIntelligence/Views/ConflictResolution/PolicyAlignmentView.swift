@@ -26,6 +26,9 @@ struct PolicyAlignmentView: View {
     @State private var loadingStage: String = "Initializing..."
     @State private var showReanalyzeWarning = false  // Warning before re-analyzing
     @State private var arrowPulse = false  // For blinking arrow animation
+    @State private var deleteTarget: PolicyMatchResult?  // Section pending deletion
+    @State private var showDeleteConfirm = false
+    @State private var showPolicyReviewSheet = false  // Review Active Policy sheet
     
     @Environment(\.colorScheme) private var colorScheme
     
@@ -91,6 +94,46 @@ struct PolicyAlignmentView: View {
         } message: {
             Text("This will re-analyze policy alignment. Continue?")
         }
+        // Delete confirmation with dynamic messaging
+        .alert(deleteAlertTitle, isPresented: $showDeleteConfirm) {
+            Button("Cancel", role: .cancel) {
+                deleteTarget = nil
+            }
+            Button("Delete Section", role: .destructive) {
+                if let target = deleteTarget {
+                    deleteMatchSection(target)
+                }
+                deleteTarget = nil
+            }
+        } message: {
+            Text(deleteAlertMessage)
+        }
+        // Review Active Policy sheet
+        .sheet(isPresented: $showPolicyReviewSheet) {
+            if let policy = policy, let result = policyMatchResult {
+                PolicyReviewSheet(
+                    policy: policy,
+                    existingMatches: result.matches,
+                    conflictCase: conflictCase,
+                    analysisResult: analysisResult,
+                    onAddSections: { newMatches in
+                        // Merge new matches and persist
+                        let existingIds = Set(result.matches.map { $0.sectionId })
+                        let additions = newMatches.filter { !existingIds.contains($0.sectionId) }
+                        if !additions.isEmpty {
+                            let updatedResult = PolicyMatchingResult(
+                                matches: result.matches + additions,
+                                overallGuidance: result.overallGuidance,
+                                generatedAt: result.generatedAt
+                            )
+                            policyMatchResult = updatedResult
+                            onPolicyMatched(updatedResult.matches)
+                            onSaveResult(updatedResult)
+                        }
+                    }
+                )
+            }
+        }
     }
     
     // MARK: - Header
@@ -118,6 +161,25 @@ struct PolicyAlignmentView: View {
                 }
                 
                 Spacer()
+                
+                // Review Active Policy button
+                if policy != nil && policyMatchResult != nil {
+                    Button {
+                        showPolicyReviewSheet = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "eye")
+                                .font(.system(size: 11))
+                            Text("Review Policy")
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                        .foregroundColor(.purple)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.purple.opacity(0.1))
+                        .clipShape(Capsule())
+                    }
+                }
             }
         }
     }
@@ -418,7 +480,7 @@ struct PolicyAlignmentView: View {
                 }
             } label: {
                 VStack(alignment: .leading, spacing: 8) {
-                    // Top row: Section number + Confidence badge
+                    // Top row: Section number + Confidence badge + Delete
                     HStack {
                         Text("Section \(match.sectionNumber)")
                             .font(.system(size: 12, weight: .semibold))
@@ -434,6 +496,20 @@ struct PolicyAlignmentView: View {
                             .padding(.vertical, 5)
                             .background(confidenceColor(for: match).opacity(0.15))
                             .clipShape(Capsule())
+                        
+                        // Delete button
+                        Button {
+                            deleteTarget = match
+                            showDeleteConfirm = true
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 12))
+                                .foregroundColor(.gray.opacity(0.5))
+                                .padding(6)
+                                .background(Color.clear)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(PlainButtonStyle())
                     }
                     
                     // Section title row
@@ -601,6 +677,48 @@ struct PolicyAlignmentView: View {
                 }
             }
         }
+    }
+    
+    // MARK: - Delete Section Helpers
+    
+    private var deleteAlertTitle: String {
+        guard let target = deleteTarget else { return "Delete Policy Section?" }
+        let conf = target.matchConfidence
+        if conf < 0.5 {
+            return "Remove Low-Relevance Section?"
+        } else if conf < 0.65 {
+            return "Remove This Section?"
+        } else {
+            return "Delete Policy Section?"
+        }
+    }
+    
+    private var deleteAlertMessage: String {
+        guard let target = deleteTarget else { return "" }
+        let conf = target.matchConfidence
+        let sectionLabel = "Section \(target.sectionNumber)"
+        
+        if conf < 0.5 {
+            return "Good choice. \(sectionLabel) has low relevancy and doesn't directly relate to this conflict, making it a better candidate for removal.\n\nThis action is permanent and cannot be undone."
+        } else if conf < 0.65 {
+            return "\(sectionLabel) has moderate-to-low relevance. It may still provide supporting context, but removing it is reasonable if it doesn't align with the core issues.\n\nThis action is permanent and cannot be undone."
+        } else {
+            return "Caution: \(sectionLabel) has \(conf >= 0.8 ? "high" : "moderate") relevance to this case and is likely important for the policy alignment analysis. Removing it could weaken the assessment.\n\nThis action is permanent and cannot be undone."
+        }
+    }
+    
+    private func deleteMatchSection(_ match: PolicyMatchResult) {
+        guard var result = policyMatchResult else { return }
+        let updated = result.matches.filter { $0.id != match.id }
+        let updatedResult = PolicyMatchingResult(
+            matches: updated,
+            overallGuidance: result.overallGuidance,
+            generatedAt: result.generatedAt
+        )
+        policyMatchResult = updatedResult
+        if expandedMatchId == match.id { expandedMatchId = nil }
+        onPolicyMatched(updatedResult.matches)
+        onSaveResult(updatedResult)
     }
     
     // MARK: - Run Policy Matching

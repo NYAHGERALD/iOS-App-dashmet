@@ -282,7 +282,16 @@ struct CreateCaseView: View {
         .onAppear {
             Task {
                 await departmentService.fetchDepartments()
-                await shiftService.fetchShifts()
+            }
+        }
+        .onChange(of: selectedDepartment) { _, newDept in
+            selectedShift = nil
+            Task {
+                if let dept = newDept {
+                    await shiftService.fetchShifts(departmentId: dept.id)
+                } else {
+                    shiftService.shifts = []
+                }
             }
         }
     }
