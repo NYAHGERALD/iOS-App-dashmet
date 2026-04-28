@@ -15,36 +15,66 @@ struct ActionGenerationView: View {
     let policyMatches: [PolicyMatchResult]?
     let onDocumentGenerated: (GeneratedDocumentResult) -> Void
     let onBack: () -> Void
-    
+
     @State private var generatedResult: GeneratedDocumentResult?
     @State private var isGenerating = false
     @State private var errorMessage: String?
     @State private var showEditMode = false
-    
+
     @Environment(\.colorScheme) private var colorScheme
-    
+
+    /// Resolves the target employee name from the recommendation.
+    /// Prefers extracting from the recommendation title (always correct),
+    /// falls back to UUID lookup, then to first employee.
+    private var targetEmployeeDisplayName: String {
+        // 1. Extract from recommendation title (e.g. "Coaching for Carmen More" → "Carmen More")
+        if let forRange = selectedRecommendation.title.range(of: " for ", options: .backwards) {
+            let name = String(selectedRecommendation.title[forRange.upperBound...]).trimmingCharacters(in: .whitespaces)
+            if !name.isEmpty { return name }
+        }
+        // 2. UUID lookup
+        let names = selectedRecommendation.targetEmployeeIds.compactMap { id in
+            conflictCase.involvedEmployees.first(where: { $0.id == id })?.name
+        }
+        if !names.isEmpty { return names.joined(separator: ", ") }
+        // 3. Fallback
+        return conflictCase.involvedEmployees.first?.name ?? "Employee"
+    }
+
+    /// Builds a per-employee document title using the recommendation's target
+    private func displayTitle(for docTitle: String) -> String {
+        let baseLabel: String
+        switch selectedRecommendation.type {
+        case .coaching: baseLabel = "Coaching Session Guide"
+        case .counseling: baseLabel = "Documented Counseling"
+        case .warning: baseLabel = "Warning Notice"
+        case .escalate: baseLabel = "HR Escalation Request"
+        }
+        return "\(baseLabel) for \(targetEmployeeDisplayName)"
+    }
+
     private var textPrimary: Color {
         colorScheme == .dark ? .white : .black
     }
-    
+
     private var textSecondary: Color {
         colorScheme == .dark ? .white.opacity(0.7) : .black.opacity(0.6)
     }
-    
+
     private var cardBackground: Color {
         colorScheme == .dark ? Color.white.opacity(0.08) : Color.white
     }
-    
+
     private var innerCardBackground: Color {
         colorScheme == .dark ? Color.white.opacity(0.05) : Color.gray.opacity(0.08)
     }
-    
+
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
                 // Header
                 headerSection
-                
+
                 if isGenerating {
                     generatingSection
                 } else if let error = errorMessage {
@@ -66,7 +96,7 @@ struct ActionGenerationView: View {
                     onBack()
                 }
             }
-            
+
             if generatedResult != nil {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
@@ -83,7 +113,7 @@ struct ActionGenerationView: View {
             }
         }
     }
-    
+
     // MARK: - Header Section
     private var headerSection: some View {
         VStack(spacing: 12) {
@@ -92,22 +122,22 @@ struct ActionGenerationView: View {
                     Circle()
                         .fill(actionColor.opacity(0.15))
                         .frame(width: 48, height: 48)
-                    
+
                     Image(systemName: selectedRecommendation.type.icon)
                         .font(.system(size: 24))
                         .foregroundColor(actionColor)
                 }
-                
+
                 VStack(alignment: .leading, spacing: 4) {
                     Text(selectedRecommendation.title)
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundColor(textPrimary)
-                    
+
                     Text("Case \(conflictCase.caseNumber)")
                         .font(.system(size: 13))
                         .foregroundColor(textSecondary)
                 }
-                
+
                 Spacer()
             }
         }
@@ -115,7 +145,7 @@ struct ActionGenerationView: View {
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
-    
+
     private var actionColor: Color {
         switch selectedRecommendation.type {
         case .coaching: return .green
@@ -124,7 +154,7 @@ struct ActionGenerationView: View {
         case .escalate: return .red
         }
     }
-    
+
     // MARK: - Generating Section
     private var generatingSection: some View {
         VStack(spacing: 24) {
@@ -133,30 +163,30 @@ struct ActionGenerationView: View {
                 Circle()
                     .stroke(Color.gray.opacity(0.2), lineWidth: 4)
                     .frame(width: 80, height: 80)
-                
+
                 Circle()
                     .trim(from: 0, to: 0.7)
                     .stroke(actionColor, style: StrokeStyle(lineWidth: 4, lineCap: .round))
                     .frame(width: 80, height: 80)
                     .rotationEffect(.degrees(-90))
                     .animation(Animation.linear(duration: 1).repeatForever(autoreverses: false), value: isGenerating)
-                
+
                 Image(systemName: "doc.text.fill")
                     .font(.system(size: 28))
                     .foregroundColor(actionColor)
             }
-            
+
             VStack(spacing: 8) {
                 Text("Generating Document...")
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundColor(textPrimary)
-                
+
                 Text("Our System is creating your \(selectedRecommendation.type.displayName.lowercased()) document")
                     .font(.system(size: 14))
                     .foregroundColor(textSecondary)
                     .multilineTextAlignment(.center)
             }
-            
+
             // What's being generated
             VStack(alignment: .leading, spacing: 8) {
                 generatingItem("Analyzing case details", completed: true)
@@ -172,7 +202,7 @@ struct ActionGenerationView: View {
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
-    
+
     private func generatingItem(_ text: String, completed: Bool) -> some View {
         HStack(spacing: 12) {
             if completed {
@@ -183,13 +213,13 @@ struct ActionGenerationView: View {
                 ProgressView()
                     .scaleEffect(0.8)
             }
-            
+
             Text(text)
                 .font(.system(size: 13))
                 .foregroundColor(completed ? textSecondary : textPrimary)
         }
     }
-    
+
     // MARK: - Error Section
     private func errorSection(_ error: String) -> some View {
         VStack(spacing: 16) {
@@ -197,21 +227,21 @@ struct ActionGenerationView: View {
                 Circle()
                     .fill(Color.red.opacity(0.15))
                     .frame(width: 64, height: 64)
-                
+
                 Image(systemName: "exclamationmark.circle.fill")
                     .font(.system(size: 28))
                     .foregroundColor(.red)
             }
-            
+
             Text("Generation Failed")
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundColor(textPrimary)
-            
+
             Text(error)
                 .font(.system(size: 14))
                 .foregroundColor(textSecondary)
                 .multilineTextAlignment(.center)
-            
+
             Button {
                 errorMessage = nil
                 generateDocument()
@@ -229,23 +259,23 @@ struct ActionGenerationView: View {
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
-    
+
     // MARK: - Ready to Generate Section
     private var readyToGenerateSection: some View {
         VStack(spacing: 16) {
             Image(systemName: "doc.badge.gearshape.fill")
                 .font(.system(size: 48))
                 .foregroundColor(actionColor)
-            
+
             Text("Ready to Generate")
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundColor(textPrimary)
-            
+
             Text("Tap below to generate your \(selectedRecommendation.type.displayName.lowercased()) document")
                 .font(.system(size: 14))
                 .foregroundColor(textSecondary)
                 .multilineTextAlignment(.center)
-            
+
             Button {
                 generateDocument()
             } label: {
@@ -265,7 +295,7 @@ struct ActionGenerationView: View {
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
-    
+
     // MARK: - Document Section
     private func documentSection(_ result: GeneratedDocumentResult) -> some View {
         VStack(spacing: 16) {
@@ -274,23 +304,23 @@ struct ActionGenerationView: View {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 24))
                     .foregroundColor(.green)
-                
+
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Document Generated")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(textPrimary)
-                    
+
                     Text("Review and edit as needed")
                         .font(.system(size: 12))
                         .foregroundColor(textSecondary)
                 }
-                
+
                 Spacer()
             }
             .padding()
             .background(Color.green.opacity(0.1))
             .clipShape(RoundedRectangle(cornerRadius: 12))
-            
+
             // Document content based on type
             switch result.document {
             case .coaching(let doc):
@@ -302,7 +332,7 @@ struct ActionGenerationView: View {
             case .escalation(let doc):
                 escalationDocumentView(doc)
             }
-            
+
             // Action buttons
             VStack(spacing: 12) {
                 Button {
@@ -319,7 +349,7 @@ struct ActionGenerationView: View {
                     .background(actionColor)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
-                
+
                 Button {
                     generatedResult = nil
                     generateDocument()
@@ -337,27 +367,27 @@ struct ActionGenerationView: View {
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
-    
+
     // MARK: - Coaching Document View
     private func coachingDocumentView(_ doc: CoachingDocument) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            documentTitle(doc.title)
-            
+            documentTitle(displayTitle(for: doc.title))
+
             // Overview
             documentSection(title: "Overview", content: doc.overview)
-            
+
             // Discussion Outline
             VStack(alignment: .leading, spacing: 12) {
                 sectionHeader("Discussion Outline")
-                
+
                 labeledText("Opening:", doc.discussionOutline.opening)
-                
+
                 if !doc.discussionOutline.keyPoints.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Key Points:")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(textSecondary)
-                        
+
                         ForEach(doc.discussionOutline.keyPoints, id: \.self) { point in
                             bulletPoint(point)
                         }
@@ -367,28 +397,28 @@ struct ActionGenerationView: View {
             .padding()
             .background(innerCardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 10))
-            
+
             // Talking Points
             listSection(title: "Talking Points", items: doc.talkingPoints)
-            
+
             // Questions to Ask
             listSection(title: "Questions to Ask", items: doc.questionsToAsk)
-            
+
             // Behavioral Focus Areas
             if !doc.behavioralFocusAreas.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     sectionHeader("Behavioral Focus Areas")
-                    
+
                     ForEach(doc.behavioralFocusAreas, id: \.area) { area in
                         VStack(alignment: .leading, spacing: 6) {
                             Text(area.area)
                                 .font(.system(size: 14, weight: .semibold))
                                 .foregroundColor(textPrimary)
-                            
+
                             Text(area.description)
                                 .font(.system(size: 13))
                                 .foregroundColor(textSecondary)
-                            
+
                             HStack(spacing: 4) {
                                 Text("Expected:")
                                     .font(.system(size: 12, weight: .medium))
@@ -404,13 +434,13 @@ struct ActionGenerationView: View {
                     }
                 }
             }
-            
+
             // Follow-up Plan
             VStack(alignment: .leading, spacing: 12) {
                 sectionHeader("Follow-up Plan")
-                
+
                 labeledText("Timeline:", doc.followUpPlan.timeline)
-                
+
                 if !doc.followUpPlan.checkInDates.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Check-in Dates:")
@@ -421,7 +451,7 @@ struct ActionGenerationView: View {
                         }
                     }
                 }
-                
+
                 if !doc.followUpPlan.successIndicators.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Success Indicators:")
@@ -438,42 +468,42 @@ struct ActionGenerationView: View {
             .clipShape(RoundedRectangle(cornerRadius: 10))
         }
     }
-    
+
     // MARK: - Counseling Document View
     private func counselingDocumentView(_ doc: CounselingDocument) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            documentTitle(doc.title)
-            
+            documentTitle(displayTitle(for: doc.title))
+
             // Header info
             HStack {
                 labeledText("Date:", doc.documentDate)
                 Spacer()
-                labeledText("Employee:", doc.employeeNames.joined(separator: ", "))
+                labeledText("Employee:", targetEmployeeDisplayName)
             }
             .padding()
             .background(innerCardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 10))
-            
+
             // Incident Summary
             documentSection(title: "Incident Summary", content: doc.incidentSummary)
-            
+
             // Discussion Points
             listSection(title: "Discussion Points", items: doc.discussionPoints)
-            
+
             // Expectations
             listSection(title: "Expectations", items: doc.expectations)
-            
+
             // Policy References
             if !doc.policyReferences.isEmpty {
                 listSection(title: "Policy References", items: doc.policyReferences)
             }
-            
+
             // Improvement Plan
             VStack(alignment: .leading, spacing: 12) {
                 sectionHeader("Improvement Plan")
-                
+
                 labeledText("Timeline:", doc.improvementPlan.timeline)
-                
+
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Goals:")
                         .font(.system(size: 12, weight: .medium))
@@ -482,7 +512,7 @@ struct ActionGenerationView: View {
                         bulletPoint(goal)
                     }
                 }
-                
+
                 if !doc.improvementPlan.supportProvided.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Support Provided:")
@@ -497,10 +527,10 @@ struct ActionGenerationView: View {
             .padding()
             .background(innerCardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 10))
-            
+
             // Consequences
             documentSection(title: "Consequences", content: doc.consequences)
-            
+
             // Acknowledgment
             VStack(alignment: .leading, spacing: 8) {
                 sectionHeader("Acknowledgment")
@@ -514,12 +544,12 @@ struct ActionGenerationView: View {
             .clipShape(RoundedRectangle(cornerRadius: 10))
         }
     }
-    
+
     // MARK: - Warning Document View
     private func warningDocumentView(_ doc: WarningDocument) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            documentTitle(doc.title)
-            
+            documentTitle(displayTitle(for: doc.title))
+
             // Warning level badge
             HStack {
                 Text(doc.warningLevel)
@@ -529,32 +559,32 @@ struct ActionGenerationView: View {
                     .padding(.vertical, 6)
                     .background(Color.orange)
                     .clipShape(Capsule())
-                
+
                 Spacer()
-                
+
                 Text(doc.documentDate)
                     .font(.system(size: 13))
                     .foregroundColor(textSecondary)
             }
-            
+
             // Employees
             HStack {
                 Text("Employee:")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(textSecondary)
-                Text(doc.employeeNames.joined(separator: ", "))
+                Text(targetEmployeeDisplayName)
                     .font(.system(size: 13))
                     .foregroundColor(textPrimary)
             }
-            
+
             // Company Rules Violated
             if !doc.companyRulesViolated.isEmpty {
                 listSection(title: "Company Rules Violated", items: doc.companyRulesViolated, color: .red)
             }
-            
+
             // Describe in Detail What Happened
             documentSection(title: "Describe in Detail What Happened", content: doc.describeInDetail)
-            
+
             // Conduct Deficiency
             VStack(alignment: .leading, spacing: 8) {
                 sectionHeader("Conduct Deficiency")
@@ -566,10 +596,10 @@ struct ActionGenerationView: View {
             .padding()
             .background(Color.orange.opacity(0.1))
             .clipShape(RoundedRectangle(cornerRadius: 10))
-            
+
             // Required Corrective Action
             listSection(title: "Required Corrective Action", items: doc.requiredCorrectiveAction, color: .blue)
-            
+
             // Consequences of Not Performing
             VStack(alignment: .leading, spacing: 8) {
                 sectionHeader("Consequences of Not Performing")
@@ -581,12 +611,12 @@ struct ActionGenerationView: View {
             .padding()
             .background(Color.red.opacity(0.1))
             .clipShape(RoundedRectangle(cornerRadius: 10))
-            
+
             // Prior Actions (if any)
             if !doc.priorActions.isEmpty && doc.priorActions != "No prior formal actions documented" {
                 documentSection(title: "Prior Actions", content: doc.priorActions)
             }
-            
+
             // Review Date
             HStack {
                 Image(systemName: "calendar")
@@ -598,11 +628,11 @@ struct ActionGenerationView: View {
             .padding()
             .background(innerCardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 10))
-            
+
             // Signature Section
             VStack(alignment: .leading, spacing: 12) {
                 sectionHeader("Signatures Required")
-                
+
                 signatureLine("Employee Acknowledgment", doc.signatureSection.employeeAcknowledgment)
                 signatureLine("Supervisor Statement", doc.signatureSection.supervisorStatement)
                 signatureLine("HR Review", doc.signatureSection.hrReviewStatement)
@@ -612,12 +642,12 @@ struct ActionGenerationView: View {
             .clipShape(RoundedRectangle(cornerRadius: 10))
         }
     }
-    
+
     // MARK: - Escalation Document View
     private func escalationDocumentView(_ doc: EscalationDocument) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            documentTitle(doc.title)
-            
+            documentTitle(displayTitle(for: doc.title))
+
             // Urgency badge
             HStack {
                 Text("Urgency: \(doc.urgencyLevel)")
@@ -627,18 +657,18 @@ struct ActionGenerationView: View {
                     .padding(.vertical, 6)
                     .background(doc.urgencyLevel == "Urgent" ? Color.red : (doc.urgencyLevel == "High" ? Color.orange : Color.blue))
                     .clipShape(Capsule())
-                
+
                 Spacer()
-                
+
                 Text("Prepared by: \(doc.preparedBy)")
                     .font(.system(size: 13))
                     .foregroundColor(textSecondary)
             }
-            
+
             // Case Summary
             VStack(alignment: .leading, spacing: 8) {
                 sectionHeader("Case Summary")
-                
+
                 summaryRow("Case Number", doc.caseSummary.caseNumber)
                 summaryRow("Type", doc.caseSummary.caseType)
                 summaryRow("Incident Date", doc.caseSummary.incidentDate)
@@ -648,11 +678,11 @@ struct ActionGenerationView: View {
             .padding()
             .background(innerCardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 10))
-            
+
             // Involved Parties
             VStack(alignment: .leading, spacing: 12) {
                 sectionHeader("Involved Parties")
-                
+
                 ForEach(doc.involvedParties, id: \.name) { party in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
@@ -672,19 +702,19 @@ struct ActionGenerationView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
             }
-            
+
             // Timeline
             if !doc.incidentTimeline.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     sectionHeader("Incident Timeline")
-                    
+
                     ForEach(doc.incidentTimeline, id: \.date) { event in
                         HStack(alignment: .top, spacing: 12) {
                             Text(event.date)
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundColor(.blue)
                                 .frame(width: 80, alignment: .leading)
-                            
+
                             Text(event.event)
                                 .font(.system(size: 13))
                                 .foregroundColor(textSecondary)
@@ -695,15 +725,15 @@ struct ActionGenerationView: View {
                 .background(innerCardBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
             }
-            
+
             // Evidence Summary
             listSection(title: "Evidence Summary", items: doc.evidenceSummary)
-            
+
             // Policy References
             if !doc.policyReferences.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     sectionHeader("Policy References")
-                    
+
                     ForEach(doc.policyReferences, id: \.section) { ref in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(ref.section)
@@ -719,20 +749,20 @@ struct ActionGenerationView: View {
                 .background(innerCardBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
             }
-            
+
             // Analysis Findings
             listSection(title: "Analysis Findings", items: doc.analysisFindings)
-            
+
             // Supervisor Notes
             documentSection(title: "Supervisor Notes", content: doc.supervisorNotes)
-            
+
             // Recommended Actions
             listSection(title: "Recommended Actions", items: doc.recommendedActions)
-            
+
             // Requested HR Actions
             VStack(alignment: .leading, spacing: 12) {
                 sectionHeader("Requested HR Actions")
-                
+
                 ForEach(doc.requestedHRActions, id: \.self) { action in
                     HStack(spacing: 8) {
                         Image(systemName: "arrow.right.circle.fill")
@@ -749,21 +779,21 @@ struct ActionGenerationView: View {
             .clipShape(RoundedRectangle(cornerRadius: 10))
         }
     }
-    
+
     // MARK: - Helper Views
-    
+
     private func documentTitle(_ title: String) -> some View {
         Text(title)
             .font(.system(size: 18, weight: .bold))
             .foregroundColor(textPrimary)
     }
-    
+
     private func sectionHeader(_ title: String) -> some View {
         Text(title)
             .font(.system(size: 14, weight: .semibold))
             .foregroundColor(textPrimary)
     }
-    
+
     private func documentSection(title: String, content: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             sectionHeader(title)
@@ -776,11 +806,11 @@ struct ActionGenerationView: View {
         .background(innerCardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
-    
+
     private func listSection(title: String, items: [String], color: Color = .blue) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             sectionHeader(title)
-            
+
             ForEach(items, id: \.self) { item in
                 bulletPoint(item, color: color)
             }
@@ -789,20 +819,20 @@ struct ActionGenerationView: View {
         .background(innerCardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
-    
+
     private func bulletPoint(_ text: String, color: Color = .blue) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Circle()
                 .fill(color)
                 .frame(width: 6, height: 6)
                 .padding(.top, 6)
-            
+
             Text(text)
                 .font(.system(size: 13))
                 .foregroundColor(textSecondary)
         }
     }
-    
+
     private func labeledText(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label)
@@ -813,7 +843,7 @@ struct ActionGenerationView: View {
                 .foregroundColor(textPrimary)
         }
     }
-    
+
     private func summaryRow(_ label: String, _ value: String) -> some View {
         HStack {
             Text(label)
@@ -825,7 +855,7 @@ struct ActionGenerationView: View {
                 .foregroundColor(textPrimary)
         }
     }
-    
+
     private func signatureLine(_ title: String, _ text: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
@@ -835,36 +865,36 @@ struct ActionGenerationView: View {
                 .font(.system(size: 11))
                 .foregroundColor(textSecondary)
                 .italic()
-            
+
             Rectangle()
                 .fill(Color.gray.opacity(0.3))
                 .frame(height: 1)
                 .padding(.top, 8)
-            
+
             Text("Signature / Date")
                 .font(.system(size: 10))
                 .foregroundColor(textSecondary)
         }
     }
-    
+
     // MARK: - Generate Document
     private func generateDocument() {
         // Get complaints
         let complaintA = conflictCase.documents.first { $0.type == .complaintA }
         let complaintB = conflictCase.documents.first { $0.type == .complaintB }
-        
+
         guard let docA = complaintA, let docB = complaintB else {
             errorMessage = "Missing complaint documents"
             return
         }
-        
+
         // Get employees
         let employees = conflictCase.involvedEmployees.filter { $0.isComplainant }
         guard employees.count >= 2 else {
             errorMessage = "Missing employee information"
             return
         }
-        
+
         // Map recommendation type to action type
         let actionType: ActionType
         switch selectedRecommendation.type {
@@ -873,15 +903,22 @@ struct ActionGenerationView: View {
         case .warning: actionType = .warning
         case .escalate: actionType = .escalate
         }
-        
+
         isGenerating = true
         errorMessage = nil
-        
-        // Convert targetEmployeeIds to names
-        let targetNames = selectedRecommendation.targetEmployeeIds.compactMap { id in
+
+        // Convert targetEmployeeIds to names, fallback to title-parsed name
+        var targetNames = selectedRecommendation.targetEmployeeIds.compactMap { id in
             conflictCase.involvedEmployees.first(where: { $0.id == id })?.name
         }
-        
+        if targetNames.isEmpty {
+            // Extract from recommendation title (e.g. "Coaching for Carmen More")
+            if let forRange = selectedRecommendation.title.range(of: " for ", options: .backwards) {
+                let name = String(selectedRecommendation.title[forRange.upperBound...]).trimmingCharacters(in: .whitespaces)
+                if !name.isEmpty { targetNames = [name] }
+            }
+        }
+
         Task {
             do {
                 let result = try await ActionGenerationService.shared.generateDocument(
@@ -897,7 +934,7 @@ struct ActionGenerationView: View {
                     recommendationRationale: selectedRecommendation.rationale,
                     supervisorName: nil
                 )
-                
+
                 await MainActor.run {
                     self.generatedResult = result
                     self.isGenerating = false

@@ -14,9 +14,9 @@ enum CaseType: String, Codable, CaseIterable, Identifiable {
     case conduct = "CONDUCT"
     case safety = "SAFETY"
     case other = "OTHER"
-    
+
     var id: String { rawValue }
-    
+
     var displayName: String {
         switch self {
         case .conflict: return "Conflict"
@@ -25,7 +25,7 @@ enum CaseType: String, Codable, CaseIterable, Identifiable {
         case .other: return "Other"
         }
     }
-    
+
     var icon: String {
         switch self {
         case .conflict: return "person.2.fill"
@@ -34,7 +34,7 @@ enum CaseType: String, Codable, CaseIterable, Identifiable {
         case .other: return "folder.fill"
         }
     }
-    
+
     var color: Color {
         switch self {
         case .conflict: return Color(hex: "F59E0B")  // Amber
@@ -53,7 +53,7 @@ enum CaseStatus: String, Codable, CaseIterable {
     case awaitingAction = "AWAITING_ACTION"
     case closed = "CLOSED"
     case escalated = "ESCALATED"
-    
+
     var displayName: String {
         switch self {
         case .draft: return "Draft"
@@ -64,7 +64,7 @@ enum CaseStatus: String, Codable, CaseIterable {
         case .escalated: return "Escalated to HR"
         }
     }
-    
+
     var icon: String {
         switch self {
         case .draft: return "doc.badge.clock"
@@ -75,7 +75,7 @@ enum CaseStatus: String, Codable, CaseIterable {
         case .escalated: return "arrow.up.forward.square"
         }
     }
-    
+
     var color: Color {
         switch self {
         case .draft: return Color(hex: "6B7280")
@@ -98,7 +98,7 @@ enum CaseDocumentType: String, Codable, CaseIterable {
     case warningDocument = "WARNING_DOCUMENT"
     case evidence = "EVIDENCE"
     case other = "OTHER"
-    
+
     var displayName: String {
         switch self {
         case .complaintA: return "Complaint A"
@@ -111,7 +111,7 @@ enum CaseDocumentType: String, Codable, CaseIterable {
         case .other: return "Other Document"
         }
     }
-    
+
     var icon: String {
         switch self {
         case .complaintA, .complaintB: return "doc.text.fill"
@@ -123,7 +123,7 @@ enum CaseDocumentType: String, Codable, CaseIterable {
         case .other: return "doc.fill"
         }
     }
-    
+
     var color: Color {
         switch self {
         case .complaintA: return Color(hex: "3B82F6")     // Blue
@@ -144,9 +144,9 @@ enum RecommendedAction: String, Codable, CaseIterable, Identifiable {
     case counseling = "COUNSELING"
     case writtenWarning = "WRITTEN_WARNING"
     case escalateToHR = "ESCALATE_TO_HR"
-    
+
     var id: String { rawValue }
-    
+
     var displayName: String {
         switch self {
         case .coaching: return "Coaching Recommended"
@@ -155,7 +155,7 @@ enum RecommendedAction: String, Codable, CaseIterable, Identifiable {
         case .escalateToHR: return "Escalate to HR"
         }
     }
-    
+
     var description: String {
         switch self {
         case .coaching:
@@ -168,7 +168,7 @@ enum RecommendedAction: String, Codable, CaseIterable, Identifiable {
             return "Escalate case to Human Resources for further investigation"
         }
     }
-    
+
     var icon: String {
         switch self {
         case .coaching: return "person.fill.questionmark"
@@ -177,7 +177,7 @@ enum RecommendedAction: String, Codable, CaseIterable, Identifiable {
         case .escalateToHR: return "arrow.up.forward.square.fill"
         }
     }
-    
+
     var color: Color {
         switch self {
         case .coaching: return Color(hex: "10B981")      // Green
@@ -186,7 +186,7 @@ enum RecommendedAction: String, Codable, CaseIterable, Identifiable {
         case .escalateToHR: return Color(hex: "8B5CF6")   // Purple
         }
     }
-    
+
     var riskLevel: String {
         switch self {
         case .coaching: return "Low"
@@ -205,7 +205,7 @@ struct InvolvedEmployee: Identifiable, Codable, Hashable {
     var department: String
     var employeeId: String?
     var isComplainant: Bool
-    
+
     init(id: UUID = UUID(), name: String, role: String = "", department: String = "", employeeId: String? = nil, isComplainant: Bool = false) {
         self.id = id
         self.name = name
@@ -233,7 +233,7 @@ struct CaseDocument: Identifiable, Codable {
     var submittedBy: String?          // Name of person who submitted
     var createdAt: Date
     var pageCount: Int
-    
+
     // MARK: - Audit Log Fields (Employee Review & Signature Workflow)
     var signatureImageBase64: String?           // Employee digital signature as PNG
     var employeeReviewTimestamp: Date?          // When employee confirmed review
@@ -245,7 +245,7 @@ struct CaseDocument: Identifiable, Codable {
     var deviceId: String?                       // Device identifier
     var appVersion: String?                     // App version
     var versionHash: String?                    // Hash for document integrity verification
-    
+
     init(
         id: UUID = UUID(),
         type: CaseDocumentType,
@@ -310,7 +310,20 @@ struct SideBySideComparisonItem: Identifiable, Codable {
     var partyAVersion: String
     var partyBVersion: String
     var status: ComparisonStatus
-    
+
+    enum CodingKeys: String, CodingKey {
+        case id, topic, partyAVersion, partyBVersion, status
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? container.decode(UUID.self, forKey: .id)) ?? UUID()
+        topic = try container.decode(String.self, forKey: .topic)
+        partyAVersion = try container.decode(String.self, forKey: .partyAVersion)
+        partyBVersion = try container.decode(String.self, forKey: .partyBVersion)
+        status = try container.decode(ComparisonStatus.self, forKey: .status)
+    }
+
     init(id: UUID = UUID(), topic: String, partyAVersion: String, partyBVersion: String, status: ComparisonStatus) {
         self.id = id
         self.topic = topic
@@ -325,7 +338,7 @@ enum ComparisonStatus: String, Codable {
     case contradiction = "contradiction"
     case partial = "partial"
     case unclear = "unclear"
-    
+
     var displayName: String {
         switch self {
         case .agreement: return "Agreement"
@@ -334,7 +347,7 @@ enum ComparisonStatus: String, Codable {
         case .unclear: return "Unclear"
         }
     }
-    
+
     var color: Color {
         switch self {
         case .agreement: return Color(hex: "10B981")     // Green
@@ -343,7 +356,7 @@ enum ComparisonStatus: String, Codable {
         case .unclear: return Color(hex: "6B7280")       // Gray
         }
     }
-    
+
     var icon: String {
         switch self {
         case .agreement: return "checkmark.circle.fill"
@@ -366,11 +379,11 @@ struct AIComparisonResult: Codable {
     var partyAName: String
     var partyBName: String
     var generatedAt: Date
-    
+
     // Dynamic fields based on evidence provided
     var witnessAnalysis: [String]?
     var priorHistoryAnalysis: [String]?
-    
+
     init(
         timelineDifferences: [String] = [],
         agreementPoints: [String] = [],
@@ -408,7 +421,7 @@ struct PolicyMatch: Identifiable, Codable {
     var sectionNumber: String
     var relevanceExplanation: String
     var matchConfidence: Double  // 0.0 to 1.0
-    
+
     init(
         id: UUID = UUID(),
         policySectionId: UUID,
@@ -434,7 +447,7 @@ struct AIRecommendation: Identifiable, Codable {
     var riskAssessment: String
     var suggestedNextSteps: [String]
     var confidence: Double  // 0.0 to 1.0
-    
+
     init(
         id: UUID = UUID(),
         action: RecommendedAction,
@@ -467,7 +480,7 @@ struct GeneratedActionDocument: Identifiable, Codable {
     var isApproved: Bool
     var createdAt: Date
     var approvedAt: Date?
-    
+
     init(
         id: UUID = UUID(),
         actionType: RecommendedAction,
@@ -507,7 +520,7 @@ struct CaseAuditEntry: Identifiable, Codable {
     var userId: String
     var userName: String
     var timestamp: Date
-    
+
     init(id: UUID = UUID(), action: String, details: String, userId: String, userName: String, timestamp: Date = Date()) {
         self.id = id
         self.action = action
@@ -530,22 +543,22 @@ struct ConflictCase: Identifiable, Codable {
     var location: String
     var department: String
     var shift: String?
-    
+
     // Involved Parties
     var involvedEmployees: [InvolvedEmployee]
-    
+
     // Documents
     var documents: [CaseDocument]
-    
+
     // AI Analysis
     var comparisonResult: AIComparisonResult?
     var policyMatches: [PolicyMatch]
     var recommendations: [AIRecommendation]
-    
+
     // Full AI Results (for UI restoration)
     var policyMatchingResult: PolicyMatchingResult?
     var recommendationResult: RecommendationResult?
-    
+
     // Selected Action
     var selectedAction: RecommendedAction?
     var selectedTargetEmployeeIds: [UUID]  // Target employees for the selected action
@@ -553,24 +566,24 @@ struct ConflictCase: Identifiable, Codable {
     var fullGeneratedDocumentResult: GeneratedDocumentResult?  // Full result for UI display
     var employeeGeneratedDocuments: [String: GeneratedDocumentResult]?  // Per-employee generated documents
     var approvedEmployeeNames: [String]  // Employee names whose documents have been approved
-    
+
     // Supervisor Notes
     var supervisorNotes: String?
     var supervisorDecision: String?  // Final decision reason
-    
+
     // Company Logo
     var companyLogoUrl: String?  // Firebase Storage URL for company logo
-    
+
     // Case Closure Details
     var closureReason: String?       // Reason for closing the case
     var closureSummary: String?      // Final closure summary
     var closedBy: String?            // User ID who closed the case
     var closedByName: String?        // Name of user who closed the case
     var isLocked: Bool               // Whether the case is permanently locked
-    
+
     // Audit Trail
     var auditLog: [CaseAuditEntry]
-    
+
     // Metadata
     var createdBy: String
     var creatorName: String?  // Full name of creator (from backend)
@@ -579,7 +592,7 @@ struct ConflictCase: Identifiable, Codable {
     var updatedAt: Date
     var closedAt: Date?
     var activePolicyId: UUID?
-    
+
     init(
         id: UUID = UUID(),
         backendId: String? = nil,
@@ -661,55 +674,55 @@ struct ConflictCase: Identifiable, Codable {
         self.closedAt = closedAt
         self.activePolicyId = activePolicyId
     }
-    
+
     // MARK: - Computed Properties
-    
+
     var complainantA: InvolvedEmployee? {
         involvedEmployees.first { $0.isComplainant }
     }
-    
+
     var complainantB: InvolvedEmployee? {
         involvedEmployees.filter { $0.isComplainant }.dropFirst().first
     }
-    
+
     var witnesses: [InvolvedEmployee] {
         involvedEmployees.filter { !$0.isComplainant }
     }
-    
+
     var complaintDocumentA: CaseDocument? {
         documents.first { $0.type == .complaintA }
     }
-    
+
     var complaintDocumentB: CaseDocument? {
         documents.first { $0.type == .complaintB }
     }
-    
+
     var witnessStatements: [CaseDocument] {
         documents.filter { $0.type == .witnessStatement }
     }
-    
+
     var hasAllRequiredDocuments: Bool {
         complaintDocumentA != nil && complaintDocumentB != nil
     }
-    
+
     var canRunComparison: Bool {
         hasAllRequiredDocuments && comparisonResult == nil
     }
-    
+
     var displayTitle: String {
         if !caseNumber.isEmpty {
             return "Case #\(caseNumber)"
         }
         return "New Case"
     }
-    
+
     var formattedIncidentDate: String {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         formatter.timeStyle = .none
         return formatter.string(from: incidentDate)
     }
-    
+
     // Generate case number
     static func generateCaseNumber() -> String {
         let dateFormatter = DateFormatter()

@@ -12,13 +12,13 @@ import SwiftUI
 // MARK: - Recommendation Service
 class RecommendationService {
     static let shared = RecommendationService()
-    
+
     private let baseURL = "https://dashmet-rca-api.onrender.com/api/decision-support"
-    
+
     private init() {}
-    
+
     // MARK: - Get Recommendations
-    
+
     /// Generates AI recommendations for case resolution
     /// - Parameters:
     ///   - conflictCase: The conflict case
@@ -42,11 +42,11 @@ class RecommendationService {
         witnessStatements: [WitnessStatementInput] = [],
         priorHistory: PriorHistoryInfo? = nil
     ) async throws -> RecommendationResult {
-        
+
         guard let url = URL(string: baseURL + "/recommendations") else {
             throw RecommendationError.invalidURL
         }
-        
+
         // Build case details
         let caseDetails: [String: Any] = [
             "caseType": conflictCase.type.rawValue,
@@ -54,19 +54,19 @@ class RecommendationService {
             "location": conflictCase.location,
             "department": conflictCase.department
         ]
-        
+
         // Build complaint A
         let complaintAData: [String: Any] = [
             "employeeName": complaintAEmployee.name,
             "text": complaintA.cleanedText
         ]
-        
+
         // Build complaint B
         let complaintBData: [String: Any] = [
             "employeeName": complaintBEmployee.name,
             "text": complaintB.cleanedText
         ]
-        
+
         // Build analysis result if available
         var analysisData: [String: Any]? = nil
         if let analysis = analysisResult {
@@ -77,7 +77,7 @@ class RecommendationService {
                 "emotionalLanguage": analysis.emotionalLanguage
             ]
         }
-        
+
         // Build policy matches if available
         var policyMatchData: [[String: Any]]? = nil
         if let matches = policyMatches, !matches.isEmpty {
@@ -89,7 +89,7 @@ class RecommendationService {
                 ]
             }
         }
-        
+
         // Build witness statements
         let witnessData: [[String: String]] = witnessStatements.map { witness in
             [
@@ -97,7 +97,7 @@ class RecommendationService {
                 "text": witness.text
             ]
         }
-        
+
         // Build prior history if available
         var historyData: [String: Any]? = nil
         if let history = priorHistory {
@@ -108,52 +108,52 @@ class RecommendationService {
                 "notes": history.notes ?? ""
             ]
         }
-        
+
         // Build full request body
         var requestBody: [String: Any] = [
             "caseDetails": caseDetails,
             "complaintA": complaintAData,
             "complaintB": complaintBData
         ]
-        
+
         if let analysis = analysisData {
             requestBody["analysisResult"] = analysis
         }
-        
+
         if let policyMatches = policyMatchData {
             requestBody["policyMatches"] = policyMatches
         }
-        
+
         if !witnessData.isEmpty {
             requestBody["witnessStatements"] = witnessData
         }
-        
+
         if let history = historyData {
             requestBody["priorHistory"] = history
         }
-        
+
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
         request.timeoutInterval = 120 // 2 minutes for recommendation generation
-        
+
         let startTime = Date()
         print("RecommendationService: Starting recommendation generation at \(startTime)")
-        
+
         let (data, response) = try await URLSession.shared.data(for: request)
-        
+
         let elapsed = Date().timeIntervalSince(startTime)
         print("RecommendationService: Response received in \(String(format: "%.1f", elapsed))s")
-        
+
         guard let httpResponse = response as? HTTPURLResponse else {
             throw RecommendationError.invalidResponse
         }
-        
+
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw RecommendationError.invalidResponse
         }
-        
+
         // Check for error
         if httpResponse.statusCode != 200 {
             if let errorMessage = json["message"] as? String {
@@ -164,26 +164,26 @@ class RecommendationService {
             }
             throw RecommendationError.apiError("Server error: HTTP \(httpResponse.statusCode)")
         }
-        
+
         // Check success
         guard let success = json["success"] as? Bool, success,
               let resultData = json["data"] as? [String: Any] else {
             throw RecommendationError.parsingError
         }
-        
+
         // Parse result with employee info for ID matching
         let employees = [complaintAEmployee, complaintBEmployee]
         return try parseRecommendationResult(resultData, employees: employees)
     }
-    
+
     // MARK: - Parse Result
-    
+
     private func parseRecommendationResult(_ data: [String: Any], employees: [InvolvedEmployee]) throws -> RecommendationResult {
         let recommendationsData = data["recommendations"] as? [[String: Any]] ?? []
         let primaryRecommendation = data["primaryRecommendation"] as? String ?? ""
         let supervisorGuidance = data["supervisorGuidance"] as? String ?? ""
         let generatedAt = data["generatedAt"] as? String ?? ISO8601DateFormatter().string(from: Date())
-        
+
         // Parse per-employee recommendation groups
         let employeeRecommendationGroups: [EmployeeRecommendationGroup]
         if let empRecsData = data["employeeRecommendations"] as? [[String: Any]], !empRecsData.isEmpty {
@@ -194,13 +194,13 @@ class RecommendationService {
                 }
                 let assessment = groupData["assessment"] as? String ?? ""
                 let groupPrimary = groupData["primaryRecommendation"] as? String ?? ""
-                
+
                 let recs: [RecommendationOption] = recsData.compactMap { recData in
                     self.parseRecommendationOption(recData, employees: employees)
                 }
-                
+
                 guard !recs.isEmpty else { return nil }
-                
+
                 return EmployeeRecommendationGroup(
                     employeeName: employeeName,
                     assessment: assessment,
@@ -211,12 +211,12 @@ class RecommendationService {
         } else {
             employeeRecommendationGroups = []
         }
-        
+
         // Parse flat recommendations (backward compat)
         let recommendations: [RecommendationOption] = recommendationsData.compactMap { recData in
             self.parseRecommendationOption(recData, employees: employees)
         }
-        
+
         return RecommendationResult(
             recommendations: recommendations,
             employeeRecommendations: employeeRecommendationGroups,
@@ -225,7 +225,7 @@ class RecommendationService {
             generatedAt: ISO8601DateFormatter().date(from: generatedAt) ?? Date()
         )
     }
-    
+
     /// Parse a single recommendation option from JSON
     private func parseRecommendationOption(_ recData: [String: Any], employees: [InvolvedEmployee]) -> RecommendationOption? {
         guard let id = recData["id"] as? String,
@@ -240,20 +240,20 @@ class RecommendationService {
               let confidence = recData["confidence"] as? Double else {
             return nil
         }
-        
+
         guard let type = RecommendationType(fromAPI: typeString) else {
             print("[RecommendationService] Warning: Skipping recommendation with unrecognized type: \(typeString)")
             return nil
         }
-        
+
         guard let riskLevel = RiskLevel(fromAPI: riskLevelString) else {
             print("[RecommendationService] Warning: Skipping recommendation with unrecognized risk level: \(riskLevelString)")
             return nil
         }
-        
+
         let targetEmployeeNames = recData["targetEmployeeNames"] as? [String] ?? []
         let targetEmployeeIds: [UUID] = matchEmployeeNamesToIds(names: targetEmployeeNames, employees: employees)
-        
+
         return RecommendationOption(
             id: id,
             type: type,
@@ -268,17 +268,17 @@ class RecommendationService {
             targetEmployeeIds: targetEmployeeIds
         )
     }
-    
+
     // MARK: - Match Employee Names to IDs
-    
+
     /// Matches employee names from AI response to actual employee IDs
     /// Uses fuzzy matching to handle slight variations in names
     private func matchEmployeeNamesToIds(names: [String], employees: [InvolvedEmployee]) -> [UUID] {
         var matchedIds: [UUID] = []
-        
+
         for name in names {
             let normalizedName = name.lowercased().trimmingCharacters(in: .whitespaces)
-            
+
             // Try exact match first
             if let employee = employees.first(where: { $0.name.lowercased() == normalizedName }) {
                 if !matchedIds.contains(employee.id) {
@@ -286,10 +286,10 @@ class RecommendationService {
                 }
                 continue
             }
-            
+
             // Try partial match (name contains or is contained)
-            if let employee = employees.first(where: { 
-                $0.name.lowercased().contains(normalizedName) || 
+            if let employee = employees.first(where: {
+                $0.name.lowercased().contains(normalizedName) ||
                 normalizedName.contains($0.name.lowercased())
             }) {
                 if !matchedIds.contains(employee.id) {
@@ -297,12 +297,12 @@ class RecommendationService {
                 }
                 continue
             }
-            
+
             // Try matching individual name parts (first name or last name)
             let nameParts = normalizedName.split(separator: " ").map { String($0) }
             for part in nameParts where part.count >= 3 {
-                if let employee = employees.first(where: { 
-                    $0.name.lowercased().contains(part) 
+                if let employee = employees.first(where: {
+                    $0.name.lowercased().contains(part)
                 }) {
                     if !matchedIds.contains(employee.id) {
                         matchedIds.append(employee.id)
@@ -311,12 +311,12 @@ class RecommendationService {
                 }
             }
         }
-        
+
         // If no matches found, return all employees (fallback)
         if matchedIds.isEmpty {
             matchedIds = employees.map { $0.id }
         }
-        
+
         return matchedIds
     }
 }
@@ -329,7 +329,7 @@ enum RecommendationError: Error, LocalizedError {
     case parsingError
     case apiError(String)
     case insufficientData
-    
+
     var errorDescription: String? {
         switch self {
         case .invalidURL:
@@ -354,7 +354,7 @@ struct PriorHistoryInfo {
     let hasPriorCounseling: Bool
     let hasPriorWarnings: Bool
     let notes: String?
-    
+
     init(hasPriorComplaints: Bool = false, hasPriorCounseling: Bool = false, hasPriorWarnings: Bool = false, notes: String? = nil) {
         self.hasPriorComplaints = hasPriorComplaints
         self.hasPriorCounseling = hasPriorCounseling
@@ -379,15 +379,24 @@ struct RecommendationResult: Codable {
     let primaryRecommendationId: String
     let supervisorGuidance: String
     let generatedAt: Date
-    
+
+    // Map backend field name "primaryRecommendation" to iOS property "primaryRecommendationId"
+    enum CodingKeys: String, CodingKey {
+        case recommendations
+        case employeeRecommendations
+        case primaryRecommendationId = "primaryRecommendation"
+        case supervisorGuidance
+        case generatedAt
+    }
+
     var hasRecommendations: Bool {
         !recommendations.isEmpty || !employeeRecommendations.isEmpty
     }
-    
+
     var primaryRecommendation: RecommendationOption? {
         recommendations.first { $0.id == primaryRecommendationId }
     }
-    
+
     // Custom decoder to handle backward compat (old data without employeeRecommendations)
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -397,7 +406,7 @@ struct RecommendationResult: Codable {
         supervisorGuidance = try container.decode(String.self, forKey: .supervisorGuidance)
         generatedAt = try container.decode(Date.self, forKey: .generatedAt)
     }
-    
+
     init(recommendations: [RecommendationOption], employeeRecommendations: [EmployeeRecommendationGroup] = [], primaryRecommendationId: String, supervisorGuidance: String, generatedAt: Date) {
         self.recommendations = recommendations
         self.employeeRecommendations = employeeRecommendations
@@ -413,17 +422,17 @@ enum RecommendationType: String, CaseIterable, Codable {
     case counseling = "counseling"
     case warning = "warning"
     case escalate = "escalate"
-    
+
     /// Initialize from API response string, handling various formats
     init?(fromAPI string: String) {
         let normalized = string.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        
+
         // Direct match
         if let type = RecommendationType(rawValue: normalized) {
             self = type
             return
         }
-        
+
         // Handle common variations
         switch normalized {
         case "written warning", "writtenwarning", "written_warning":
@@ -449,7 +458,7 @@ enum RecommendationType: String, CaseIterable, Codable {
             }
         }
     }
-    
+
     var displayName: String {
         switch self {
         case .coaching: return "Coaching"
@@ -458,7 +467,7 @@ enum RecommendationType: String, CaseIterable, Codable {
         case .escalate: return "Escalate to HR"
         }
     }
-    
+
     var icon: String {
         switch self {
         case .coaching: return "message.badge.fill"
@@ -467,7 +476,7 @@ enum RecommendationType: String, CaseIterable, Codable {
         case .escalate: return "arrow.up.forward.square.fill"
         }
     }
-    
+
     var color: Color {
         switch self {
         case .coaching: return .green
@@ -484,17 +493,17 @@ enum RiskLevel: String, CaseIterable, Codable {
     case moderate = "moderate"
     case high = "high"
     case critical = "critical"
-    
+
     /// Initialize from API response string, handling various formats
     init?(fromAPI string: String) {
         let normalized = string.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        
+
         // Direct match
         if let level = RiskLevel(rawValue: normalized) {
             self = level
             return
         }
-        
+
         // Handle common variations
         switch normalized {
         case "low risk", "lowrisk", "low_risk", "minimal", "minor":
@@ -520,7 +529,7 @@ enum RiskLevel: String, CaseIterable, Codable {
             }
         }
     }
-    
+
     var displayName: String {
         switch self {
         case .low: return "Low Risk"
@@ -529,7 +538,7 @@ enum RiskLevel: String, CaseIterable, Codable {
         case .critical: return "Critical Risk"
         }
     }
-    
+
     var color: Color {
         switch self {
         case .low: return .green
@@ -553,7 +562,62 @@ struct RecommendationOption: Identifiable, Codable {
     let timeframe: String
     let confidence: Double
     let targetEmployeeIds: [UUID]  // Which employees this recommendation applies to
-    
+
+    enum CodingKeys: String, CodingKey {
+        case id, type, title, description, rationale, riskLevel, riskExplanation
+        case nextSteps, timeframe, confidence, targetEmployeeIds, targetEmployeeNames
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        type = try container.decode(RecommendationType.self, forKey: .type)
+        title = try container.decode(String.self, forKey: .title)
+        description = try container.decode(String.self, forKey: .description)
+        rationale = try container.decode(String.self, forKey: .rationale)
+        riskLevel = try container.decode(RiskLevel.self, forKey: .riskLevel)
+        riskExplanation = try container.decode(String.self, forKey: .riskExplanation)
+        nextSteps = try container.decode([String].self, forKey: .nextSteps)
+        timeframe = try container.decode(String.self, forKey: .timeframe)
+        confidence = try container.decode(Double.self, forKey: .confidence)
+        // Backend sends targetEmployeeNames (strings), iOS uses targetEmployeeIds (UUIDs)
+        if let ids = try? container.decode([UUID].self, forKey: .targetEmployeeIds) {
+            targetEmployeeIds = ids
+        } else {
+            // Web-generated data has targetEmployeeNames instead — skip gracefully
+            targetEmployeeIds = []
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(type, forKey: .type)
+        try container.encode(title, forKey: .title)
+        try container.encode(description, forKey: .description)
+        try container.encode(rationale, forKey: .rationale)
+        try container.encode(riskLevel, forKey: .riskLevel)
+        try container.encode(riskExplanation, forKey: .riskExplanation)
+        try container.encode(nextSteps, forKey: .nextSteps)
+        try container.encode(timeframe, forKey: .timeframe)
+        try container.encode(confidence, forKey: .confidence)
+        try container.encode(targetEmployeeIds, forKey: .targetEmployeeIds)
+    }
+
+    init(id: String, type: RecommendationType, title: String, description: String, rationale: String, riskLevel: RiskLevel, riskExplanation: String, nextSteps: [String], timeframe: String, confidence: Double, targetEmployeeIds: [UUID]) {
+        self.id = id
+        self.type = type
+        self.title = title
+        self.description = description
+        self.rationale = rationale
+        self.riskLevel = riskLevel
+        self.riskExplanation = riskExplanation
+        self.nextSteps = nextSteps
+        self.timeframe = timeframe
+        self.confidence = confidence
+        self.targetEmployeeIds = targetEmployeeIds
+    }
+
     /// User-friendly confidence label
     var confidenceLabel: String {
         if confidence >= 0.8 {
@@ -564,7 +628,7 @@ struct RecommendationOption: Identifiable, Codable {
             return "Lower Confidence"
         }
     }
-    
+
     /// Option letter (A, B, C, D)
     var optionLetter: String {
         switch id {

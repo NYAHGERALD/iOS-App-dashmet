@@ -38,53 +38,77 @@ struct EnhancedActionGenerationView: View {
     let supervisorName: String
     let onComplete: (GeneratedDocumentResult, [CapturedSignature]) -> Void
     let onBack: () -> Void
-    
+
     // State
     @State private var currentPhase: GenerationPhase = .confirmation
     @State private var generatedResult: GeneratedDocumentResult?
     @State private var isGenerating = false
     @State private var errorMessage: String?
     @State private var showEditMode = false
-    
+
     // Customization
     @State private var customizationSettings = DocumentCustomizationSettings()
     @State private var showCustomizationSheet = false
-    
+
     // Warning Level
     @State private var selectedWarningLevel: WarningLevel?
     @State private var showWarningLevelSheet = false
-    
+
     // Escalation
     @State private var escalationConfig = EscalationConfiguration()
     @State private var showEscalationFlow = false
-    
+
     // Export
     @State private var showExportSheet = false
     @State private var exportedData: Data?
     @State private var showShareSheet = false
-    
+
     // Signatures
     @State private var capturedSignatures: [CapturedSignature] = []
     @State private var showSignatureSheet = false
-    
+
     @Environment(\.colorScheme) private var colorScheme
-    
+
+    /// Builds a per-employee document title using the recommendation's target
+    private var displayTitle: String {
+        // 1. Extract employee name from recommendation title
+        var empName = "Employee"
+        if let forRange = selectedRecommendation.title.range(of: " for ", options: .backwards) {
+            let parsed = String(selectedRecommendation.title[forRange.upperBound...]).trimmingCharacters(in: .whitespaces)
+            if !parsed.isEmpty { empName = parsed }
+        } else {
+            // 2. UUID lookup fallback
+            let names = selectedRecommendation.targetEmployeeIds.compactMap { id in
+                conflictCase.involvedEmployees.first(where: { $0.id == id })?.name
+            }
+            empName = names.isEmpty ? (conflictCase.involvedEmployees.first?.name ?? "Employee") : names.joined(separator: ", ")
+        }
+        let baseLabel: String
+        switch selectedRecommendation.type {
+        case .coaching: baseLabel = "Coaching Session Guide"
+        case .counseling: baseLabel = "Documented Counseling"
+        case .warning: baseLabel = "Warning Notice"
+        case .escalate: baseLabel = "HR Escalation Request"
+        }
+        return "\(baseLabel) for \(empName)"
+    }
+
     private var textPrimary: Color {
         colorScheme == .dark ? .white : .black
     }
-    
+
     private var textSecondary: Color {
         colorScheme == .dark ? .white.opacity(0.7) : .black.opacity(0.6)
     }
-    
+
     private var cardBackground: Color {
         colorScheme == .dark ? Color.white.opacity(0.08) : Color.white
     }
-    
+
     private var innerCardBackground: Color {
         colorScheme == .dark ? Color.white.opacity(0.05) : Color.gray.opacity(0.08)
     }
-    
+
     private var actionColor: Color {
         switch selectedRecommendation.type {
         case .coaching: return .green
@@ -93,59 +117,59 @@ struct EnhancedActionGenerationView: View {
         case .escalate: return .red
         }
     }
-    
+
     var body: some View {
         NavigationView {
             ZStack {
                 Color(UIColor.systemGroupedBackground)
                     .ignoresSafeArea()
-                
+
                 ScrollView {
                     VStack(spacing: 20) {
                         // Progress Indicator
                         progressIndicator
-                        
+
                         // Content based on phase
                         switch currentPhase {
                         case .confirmation:
                             confirmationContent
-                            
+
                         case .warningLevelSelection:
                             Text("Redirecting to warning level selection...")
                                 .onAppear {
                                     showWarningLevelSheet = true
                                 }
-                            
+
                         case .escalationFlow:
                             Text("Redirecting to escalation flow...")
                                 .onAppear {
                                     showEscalationFlow = true
                                 }
-                            
+
                         case .generating:
                             generatingContent
-                            
+
                         case .customization, .documentReview:
                             if let result = generatedResult {
                                 documentReviewContent(result)
                             }
-                            
+
                         case .signatureCapture:
                             Text("Capturing signatures...")
                                 .onAppear {
                                     showSignatureSheet = true
                                 }
-                            
+
                         case .export:
                             Text("Preparing export...")
                                 .onAppear {
                                     showExportSheet = true
                                 }
-                            
+
                         case .finalized:
                             finalizedContent
                         }
-                        
+
                         // Error display
                         if let error = errorMessage {
                             errorSection(error)
@@ -162,7 +186,7 @@ struct EnhancedActionGenerationView: View {
                         handleBack()
                     }
                 }
-                
+
                 if generatedResult != nil && currentPhase == .documentReview {
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Menu {
@@ -171,13 +195,13 @@ struct EnhancedActionGenerationView: View {
                             } label: {
                                 Label("Customize", systemImage: "slider.horizontal.3")
                             }
-                            
+
                             Button {
                                 showExportSheet = true
                             } label: {
                                 Label("Export", systemImage: "square.and.arrow.up")
                             }
-                            
+
                             Button(role: .destructive) {
                                 regenerateDocument()
                             } label: {
@@ -197,7 +221,7 @@ struct EnhancedActionGenerationView: View {
                     onConfirm: { level in
                         selectedWarningLevel = level
                         showWarningLevelSheet = false
-                        
+
                         // Log to audit trail
                         AuditTrailService.shared.logWarningLevelSelected(
                             caseId: conflictCase.id,
@@ -205,7 +229,7 @@ struct EnhancedActionGenerationView: View {
                             warningLevel: level,
                             employeeName: conflictCase.involvedEmployees.first?.name ?? "Employee"
                         )
-                        
+
                         currentPhase = .generating
                         generateDocument()
                     },
@@ -223,7 +247,7 @@ struct EnhancedActionGenerationView: View {
                     totalPages: conflictCase.documents.count * 2,
                     onSubmit: {
                         showEscalationFlow = false
-                        
+
                         // Log to audit trail
                         AuditTrailService.shared.logEscalationSubmitted(
                             caseId: conflictCase.id,
@@ -231,7 +255,7 @@ struct EnhancedActionGenerationView: View {
                             priority: escalationConfig.priority,
                             recipients: Array(escalationConfig.selectedRecipients)
                         )
-                        
+
                         currentPhase = .generating
                         generateDocument()
                     },
@@ -251,14 +275,14 @@ struct EnhancedActionGenerationView: View {
                     actionType: mapRecommendationToActionType(),
                     onApply: {
                         showCustomizationSheet = false
-                        
+
                         // Log customization
                         AuditTrailService.shared.logActionCustomized(
                             caseId: conflictCase.id,
                             caseNumber: conflictCase.caseNumber,
                             customizations: customizationSettings
                         )
-                        
+
                         // Regenerate with new settings
                         regenerateDocument()
                     },
@@ -274,7 +298,7 @@ struct EnhancedActionGenerationView: View {
                         caseNumber: conflictCase.caseNumber,
                         onExport: { format, destination, data in
                             showExportSheet = false
-                            
+
                             // Log export
                             AuditTrailService.shared.logDocumentExported(
                                 caseId: conflictCase.id,
@@ -282,7 +306,7 @@ struct EnhancedActionGenerationView: View {
                                 format: format,
                                 destination: destination
                             )
-                            
+
                             handleExport(format: format, destination: destination, data: data)
                         },
                         onCancel: {
@@ -320,7 +344,7 @@ struct EnhancedActionGenerationView: View {
             }
         }
     }
-    
+
     // MARK: - Navigation Title
     private var navigationTitle: String {
         switch currentPhase {
@@ -335,31 +359,31 @@ struct EnhancedActionGenerationView: View {
         case .finalized: return "Complete"
         }
     }
-    
+
     // MARK: - Progress Indicator
     private var progressIndicator: some View {
         let phases: [GenerationPhase] = [.confirmation, .generating, .documentReview, .signatureCapture, .finalized]
-        
+
         return HStack(spacing: 4) {
             ForEach(Array(phases.enumerated()), id: \.offset) { index, phase in
                 let isCompleted = phaseIndex(currentPhase) > phaseIndex(phase)
-                let isCurrent = phase == currentPhase || 
+                let isCurrent = phase == currentPhase ||
                     (currentPhase == .warningLevelSelection && phase == .confirmation) ||
                     (currentPhase == .escalationFlow && phase == .confirmation) ||
                     (currentPhase == .customization && phase == .documentReview)
-                
+
                 if index > 0 {
                     Rectangle()
                         .fill(isCompleted ? actionColor : Color.gray.opacity(0.3))
                         .frame(height: 2)
                         .frame(maxWidth: 30)
                 }
-                
+
                 ZStack {
                     Circle()
                         .fill(isCompleted ? actionColor : (isCurrent ? actionColor.opacity(0.2) : Color.gray.opacity(0.2)))
                         .frame(width: 24, height: 24)
-                    
+
                     if isCompleted {
                         Image(systemName: "checkmark")
                             .font(.system(size: 10, weight: .bold))
@@ -377,7 +401,7 @@ struct EnhancedActionGenerationView: View {
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
-    
+
     private func phaseIndex(_ phase: GenerationPhase) -> Int {
         switch phase {
         case .confirmation, .warningLevelSelection, .escalationFlow: return 0
@@ -388,7 +412,7 @@ struct EnhancedActionGenerationView: View {
         case .finalized: return 4
         }
     }
-    
+
     // MARK: - Confirmation Content
     private var confirmationContent: some View {
         ActionConfirmationView(
@@ -402,7 +426,7 @@ struct EnhancedActionGenerationView: View {
                     eventType: .actionConfirmed,
                     description: "Confirmed action: \(selectedRecommendation.title)"
                 )
-                
+
                 // Route to appropriate next phase
                 switch selectedRecommendation.type {
                 case .warning:
@@ -419,7 +443,7 @@ struct EnhancedActionGenerationView: View {
             }
         )
     }
-    
+
     // MARK: - Generating Content
     private var generatingContent: some View {
         VStack(spacing: 24) {
@@ -428,29 +452,29 @@ struct EnhancedActionGenerationView: View {
                 Circle()
                     .stroke(Color.gray.opacity(0.2), lineWidth: 4)
                     .frame(width: 80, height: 80)
-                
+
                 Circle()
                     .trim(from: 0, to: 0.7)
                     .stroke(actionColor, style: StrokeStyle(lineWidth: 4, lineCap: .round))
                     .frame(width: 80, height: 80)
                     .rotationEffect(.degrees(-90))
-                
+
                 Image(systemName: "doc.text.fill")
                     .font(.system(size: 28))
                     .foregroundColor(actionColor)
             }
-            
+
             VStack(spacing: 8) {
                 Text("Generating Document...")
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundColor(textPrimary)
-                
+
                 Text("Creating your \(selectedRecommendation.type.displayName.lowercased()) document")
                     .font(.system(size: 14))
                     .foregroundColor(textSecondary)
                     .multilineTextAlignment(.center)
             }
-            
+
             // Generation steps
             VStack(alignment: .leading, spacing: 8) {
                 generatingItem("Analyzing case details", completed: true)
@@ -466,7 +490,7 @@ struct EnhancedActionGenerationView: View {
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
-    
+
     private func generatingItem(_ text: String, completed: Bool) -> some View {
         HStack(spacing: 12) {
             if completed {
@@ -477,13 +501,13 @@ struct EnhancedActionGenerationView: View {
                 ProgressView()
                     .scaleEffect(0.8)
             }
-            
+
             Text(text)
                 .font(.system(size: 13))
                 .foregroundColor(completed ? textSecondary : textPrimary)
         }
     }
-    
+
     // MARK: - Document Review Content
     private func documentReviewContent(_ result: GeneratedDocumentResult) -> some View {
         VStack(spacing: 16) {
@@ -492,35 +516,35 @@ struct EnhancedActionGenerationView: View {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 24))
                     .foregroundColor(.green)
-                
+
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Document Generated")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(textPrimary)
-                    
+
                     Text("Review and edit as needed")
                         .font(.system(size: 12))
                         .foregroundColor(textSecondary)
                 }
-                
+
                 Spacer()
             }
             .padding()
             .background(Color.green.opacity(0.1))
             .clipShape(RoundedRectangle(cornerRadius: 12))
-            
+
             // Document Title
-            Text(result.document.title)
+            Text(displayTitle)
                 .font(.system(size: 18, weight: .bold))
                 .foregroundColor(textPrimary)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            
+
             // Document content placeholder
             documentContentPlaceholder(result)
-            
+
             // Action Toolbar
             actionToolbar
-            
+
             // Continue Button
             Button {
                 if requiresSignatures {
@@ -545,7 +569,7 @@ struct EnhancedActionGenerationView: View {
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
-    
+
     private func documentContentPlaceholder(_ result: GeneratedDocumentResult) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             switch result.document {
@@ -555,12 +579,12 @@ struct EnhancedActionGenerationView: View {
                 if !doc.talkingPoints.isEmpty {
                     documentListSection(title: "Talking Points", items: doc.talkingPoints)
                 }
-                
+
             case .counseling(let doc):
                 documentSection(title: "Incident Summary", content: doc.incidentSummary)
                 documentListSection(title: "Expectations", items: doc.expectations)
                 documentSection(title: "Consequences", content: doc.consequences)
-                
+
             case .warning(let doc):
                 HStack {
                     Text(doc.warningLevel)
@@ -574,7 +598,7 @@ struct EnhancedActionGenerationView: View {
                 }
                 documentSection(title: "Description", content: doc.describeInDetail)
                 documentListSection(title: "Corrective Action", items: doc.requiredCorrectiveAction)
-                
+
             case .escalation(let doc):
                 HStack {
                     Text("URGENCY: \(doc.urgencyLevel)")
@@ -594,7 +618,7 @@ struct EnhancedActionGenerationView: View {
         .background(innerCardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
-    
+
     private func documentSection(title: String, content: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
@@ -606,7 +630,7 @@ struct EnhancedActionGenerationView: View {
                 .lineLimit(3)
         }
     }
-    
+
     private func documentListSection(title: String, items: [String]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
@@ -631,23 +655,23 @@ struct EnhancedActionGenerationView: View {
             }
         }
     }
-    
+
     private var actionToolbar: some View {
         HStack(spacing: 16) {
             toolbarButton(icon: "slider.horizontal.3", label: "Customize") {
                 showCustomizationSheet = true
             }
-            
+
             toolbarButton(icon: "square.and.arrow.up", label: "Export") {
                 showExportSheet = true
             }
-            
+
             toolbarButton(icon: "arrow.clockwise", label: "Regenerate") {
                 regenerateDocument()
             }
         }
     }
-    
+
     private func toolbarButton(icon: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 4) {
@@ -662,14 +686,14 @@ struct EnhancedActionGenerationView: View {
             .padding(.vertical, 8)
         }
     }
-    
+
     private var requiresSignatures: Bool {
         switch selectedRecommendation.type {
         case .coaching, .counseling, .warning: return true
         case .escalate: return false
         }
     }
-    
+
     // MARK: - Error Section
     private func errorSection(_ error: String) -> some View {
         VStack(spacing: 16) {
@@ -677,21 +701,21 @@ struct EnhancedActionGenerationView: View {
                 Circle()
                     .fill(Color.red.opacity(0.15))
                     .frame(width: 64, height: 64)
-                
+
                 Image(systemName: "exclamationmark.circle.fill")
                     .font(.system(size: 28))
                     .foregroundColor(.red)
             }
-            
+
             Text("Generation Failed")
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundColor(textPrimary)
-            
+
             Text(error)
                 .font(.system(size: 14))
                 .foregroundColor(textSecondary)
                 .multilineTextAlignment(.center)
-            
+
             Button {
                 errorMessage = nil
                 generateDocument()
@@ -709,7 +733,7 @@ struct EnhancedActionGenerationView: View {
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
-    
+
     // MARK: - Finalized Content
     private var finalizedContent: some View {
         VStack(spacing: 24) {
@@ -718,27 +742,27 @@ struct EnhancedActionGenerationView: View {
                 Circle()
                     .fill(Color.green.opacity(0.15))
                     .frame(width: 100, height: 100)
-                
+
                 Image(systemName: "checkmark.seal.fill")
                     .font(.system(size: 48))
                     .foregroundColor(.green)
             }
-            
+
             VStack(spacing: 8) {
                 Text("Document Finalized")
                     .font(.system(size: 20, weight: .bold))
                     .foregroundColor(textPrimary)
-                
+
                 Text("Your \(selectedRecommendation.type.displayName.lowercased()) document has been created successfully.")
                     .font(.system(size: 14))
                     .foregroundColor(textSecondary)
                     .multilineTextAlignment(.center)
             }
-            
+
             // Summary Card
             if let result = generatedResult {
                 VStack(alignment: .leading, spacing: 12) {
-                    summaryRow("Document", result.document.title)
+                    summaryRow("Document", displayTitle)
                     summaryRow("Case", conflictCase.caseNumber)
                     summaryRow("Action Type", result.actionType.displayName)
                     summaryRow("Signatures", "\(capturedSignatures.count) captured")
@@ -748,7 +772,7 @@ struct EnhancedActionGenerationView: View {
                 .background(innerCardBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             }
-            
+
             // Action Buttons
             VStack(spacing: 12) {
                 Button {
@@ -765,7 +789,7 @@ struct EnhancedActionGenerationView: View {
                     .background(Color.blue)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
-                
+
                 Button {
                     // Log finalization
                     if let result = generatedResult {
@@ -776,7 +800,7 @@ struct EnhancedActionGenerationView: View {
                             documentCount: 1
                         )
                     }
-                    
+
                     if let result = generatedResult {
                         onComplete(result, capturedSignatures)
                     }
@@ -798,7 +822,7 @@ struct EnhancedActionGenerationView: View {
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
-    
+
     private func summaryRow(_ label: String, _ value: String) -> some View {
         HStack {
             Text(label)
@@ -810,9 +834,9 @@ struct EnhancedActionGenerationView: View {
                 .foregroundColor(textPrimary)
         }
     }
-    
+
     // MARK: - Helper Methods
-    
+
     private func handleBack() {
         switch currentPhase {
         case .confirmation:
@@ -827,7 +851,7 @@ struct EnhancedActionGenerationView: View {
             onBack()
         }
     }
-    
+
     private func mapRecommendationToActionType() -> ActionType {
         switch selectedRecommendation.type {
         case .coaching: return .coaching
@@ -836,35 +860,41 @@ struct EnhancedActionGenerationView: View {
         case .escalate: return .escalate
         }
     }
-    
+
     private func generateDocument() {
         // Get complaints
         let complaintA = conflictCase.documents.first { $0.type == .complaintA }
         let complaintB = conflictCase.documents.first { $0.type == .complaintB }
-        
+
         guard let docA = complaintA, let docB = complaintB else {
             errorMessage = "Missing complaint documents"
             return
         }
-        
+
         // Get employees
         let employees = conflictCase.involvedEmployees.filter { $0.isComplainant }
         guard employees.count >= 2 else {
             errorMessage = "Missing employee information"
             return
         }
-        
+
         let actionType = mapRecommendationToActionType()
-        
+
         isGenerating = true
         errorMessage = nil
         currentPhase = .generating
-        
-        // Convert targetEmployeeIds to names
-        let targetNames = selectedRecommendation.targetEmployeeIds.compactMap { id in
+
+        // Convert targetEmployeeIds to names, fallback to title-parsed name
+        var targetNames = selectedRecommendation.targetEmployeeIds.compactMap { id in
             conflictCase.involvedEmployees.first(where: { $0.id == id })?.name
         }
-        
+        if targetNames.isEmpty {
+            if let forRange = selectedRecommendation.title.range(of: " for ", options: .backwards) {
+                let name = String(selectedRecommendation.title[forRange.upperBound...]).trimmingCharacters(in: .whitespaces)
+                if !name.isEmpty { targetNames = [name] }
+            }
+        }
+
         Task {
             do {
                 let result = try await ActionGenerationService.shared.generateDocument(
@@ -880,18 +910,18 @@ struct EnhancedActionGenerationView: View {
                     recommendationRationale: selectedRecommendation.rationale,
                     supervisorName: supervisorName
                 )
-                
+
                 await MainActor.run {
                     self.generatedResult = result
                     self.isGenerating = false
                     self.currentPhase = .documentReview
-                    
+
                     // Log document generated
                     AuditTrailService.shared.logDocumentGenerated(
                         caseId: conflictCase.id,
                         caseNumber: conflictCase.caseNumber,
                         actionType: actionType,
-                        documentTitle: result.document.title
+                        documentTitle: displayTitle
                     )
                 }
             } catch {
@@ -902,10 +932,10 @@ struct EnhancedActionGenerationView: View {
             }
         }
     }
-    
+
     private func regenerateDocument() {
         generatedResult = nil
-        
+
         // Log regeneration
         AuditTrailService.shared.logEvent(
             caseId: conflictCase.id,
@@ -913,13 +943,13 @@ struct EnhancedActionGenerationView: View {
             eventType: .actionRegenerated,
             description: "Document regeneration requested"
         )
-        
+
         generateDocument()
     }
-    
+
     private func handleExport(format: ExportFormat, destination: ExportDestination, data: Data) {
         exportedData = data
-        
+
         switch destination {
         case .download:
             // Save to documents
@@ -932,14 +962,14 @@ struct EnhancedActionGenerationView: View {
                     print("Failed to save: \(error)")
                 }
             }
-            
+
         case .share:
             showShareSheet = true
-            
+
         case .email:
             // Would integrate with email composer
             showShareSheet = true
-            
+
         case .saveToCase:
             // Save to case documents
             print("Saved to case")
