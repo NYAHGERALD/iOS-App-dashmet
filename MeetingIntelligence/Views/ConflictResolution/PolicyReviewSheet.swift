@@ -14,20 +14,20 @@ struct PolicyReviewSheet: View {
     let conflictCase: ConflictCase
     let analysisResult: AIComparisonResult?
     let onAddSections: ([PolicyMatchResult]) -> Void
-    
+
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
-    
+
     @State private var searchText = ""
     @State private var selectedIds: Set<UUID> = []
-    
+
     // AI validation states
     @State private var isValidating = false
     @State private var validationStep = 0
     @State private var validationResults: [PolicyMatchResult]?
     @State private var showResults = false
     @State private var validationError: String?
-    
+
     private let validationSteps = [
         "Reading selected sections...",
         "Analyzing case evidence...",
@@ -35,18 +35,18 @@ struct PolicyReviewSheet: View {
         "Evaluating relevance...",
         "Generating assessment..."
     ]
-    
+
     private var matchedSectionIds: Set<UUID> {
         Set(existingMatches.map { $0.sectionId })
     }
-    
+
     private func matchLevel(for section: PolicySection) -> PolicyMatchResult.ConfidenceLevel? {
         if let match = existingMatches.first(where: { $0.sectionId == section.id || $0.sectionNumber == section.sectionNumber }) {
             return match.confidenceLevel
         }
         return nil
     }
-    
+
     private var filteredSections: [PolicySection] {
         let sections = policy.sections
         if searchText.isEmpty { return sections }
@@ -61,16 +61,16 @@ struct PolicyReviewSheet: View {
             ($0.fourthProgression ?? "").lowercased().contains(q)
         }
     }
-    
+
     private var selectableSections: [PolicySection] {
         filteredSections.filter { !isAlreadyMatched($0) }
     }
-    
+
     private func isAlreadyMatched(_ section: PolicySection) -> Bool {
         matchedSectionIds.contains(section.id) ||
         existingMatches.contains(where: { $0.sectionNumber == section.sectionNumber })
     }
-    
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -78,7 +78,7 @@ struct PolicyReviewSheet: View {
                 VStack(spacing: 0) {
                     // Search bar
                     searchBar
-                    
+
                     // Table
                     if isValidating {
                         validatingView
@@ -87,7 +87,7 @@ struct PolicyReviewSheet: View {
                     } else {
                         sectionsList
                     }
-                    
+
                     // Footer
                     if !isValidating && !showResults {
                         footerBar
@@ -130,9 +130,9 @@ struct PolicyReviewSheet: View {
             }
         }
     }
-    
+
     // MARK: - Search Bar
-    
+
     private var searchBar: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
@@ -147,108 +147,165 @@ struct PolicyReviewSheet: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
     }
-    
+
     // MARK: - Sections List
-    
+
     private var sectionsList: some View {
-        List {
-            ForEach(filteredSections) { section in
-                let matched = isAlreadyMatched(section)
-                let level = matchLevel(for: section)
-                let isSelected = selectedIds.contains(section.id)
-                
-                Button {
-                    if !matched {
-                        if isSelected {
-                            selectedIds.remove(section.id)
-                        } else {
-                            selectedIds.insert(section.id)
+        ScrollView {
+            LazyVStack(spacing: 10) {
+                ForEach(filteredSections) { section in
+                    let matched = isAlreadyMatched(section)
+                    let level = matchLevel(for: section)
+                    let isSelected = selectedIds.contains(section.id)
+
+                    Button {
+                        if !matched {
+                            if isSelected {
+                                selectedIds.remove(section.id)
+                            } else {
+                                selectedIds.insert(section.id)
+                            }
                         }
+                    } label: {
+                        sectionCard(section: section, matched: matched, level: level, isSelected: isSelected)
                     }
-                } label: {
-                    HStack(spacing: 12) {
-                        // Checkbox or matched indicator
-                        if matched {
-                            // No checkbox for already-matched
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 4)
-                                    .fill(matchedBadgeColor(level).opacity(0.2))
-                                    .frame(width: 22, height: 22)
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 10, weight: .bold))
-                                    .foregroundColor(matchedBadgeColor(level))
-                            }
-                        } else {
-                            Image(systemName: isSelected ? "checkmark.square.fill" : "square")
-                                .font(.system(size: 20))
-                                .foregroundColor(isSelected ? .blue : .gray.opacity(0.4))
-                        }
-                        
-                        // Section number + badge
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 6) {
-                                Text(section.sectionNumber)
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundColor(matched && level == .low ? .gray : .primary)
-                                
-                                if matched {
-                                    Text(matchedBadgeLabel(level))
-                                        .font(.system(size: 9, weight: .bold))
-                                        .foregroundColor(matchedBadgeColor(level))
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(matchedBadgeColor(level).opacity(0.15))
-                                        .clipShape(Capsule())
-                                }
-                            }
-                            
-                            Text(section.title)
-                                .font(.system(size: 11))
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(matched)
+                    .opacity(matched && level == .low ? 0.6 : 1.0)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+        }
+    }
+
+    private func sectionCard(section: PolicySection, matched: Bool, level: PolicyMatchResult.ConfidenceLevel?, isSelected: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Top row: checkbox + section number + category badge + matched badge
+            HStack(spacing: 10) {
+                // Checkbox or matched indicator
+                if matched {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(matchedBadgeColor(level).opacity(0.2))
+                            .frame(width: 24, height: 24)
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(matchedBadgeColor(level))
+                    }
+                } else {
+                    Image(systemName: isSelected ? "checkmark.square.fill" : "square")
+                        .font(.system(size: 22))
+                        .foregroundColor(isSelected ? .blue : .gray.opacity(0.4))
+                }
+
+                Text("Section \(section.sectionNumber)")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundColor(matched && level == .low ? .gray : .primary)
+
+                // Category badge
+                Text(section.title)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.purple)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.purple.opacity(0.1))
+                    .clipShape(Capsule())
+                    .lineLimit(1)
+
+                Spacer()
+
+                if matched {
+                    Text(matchedBadgeLabel(level))
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(matchedBadgeColor(level))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(matchedBadgeColor(level).opacity(0.15))
+                        .clipShape(Capsule())
+                }
+            }
+
+            // Policy content
+            Text(section.content)
+                .font(.system(size: 13))
+                .foregroundColor(matched && level == .low ? .gray : .primary)
+                .lineLimit(3)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // Progressive discipline grid
+            if section.hasProgression {
+                let progressions = progressionItems(for: section)
+
+                LazyVGrid(columns: [
+                    GridItem(.flexible(), spacing: 6),
+                    GridItem(.flexible(), spacing: 6)
+                ], spacing: 6) {
+                    ForEach(progressions, id: \.label) { item in
+                        HStack(spacing: 4) {
+                            Text(item.label)
+                                .font(.system(size: 10, weight: .semibold))
                                 .foregroundColor(.secondary)
+
+                            Text(item.value)
+                                .font(.system(size: 10))
+                                .foregroundColor(.primary)
                                 .lineLimit(1)
                         }
-                        .frame(width: 80, alignment: .leading)
-                        
-                        // Policy content
-                        Text(section.content)
-                            .font(.system(size: 13))
-                            .foregroundColor(matched && level == .low ? .gray : .primary)
-                            .lineLimit(2)
-                        
-                        Spacer()
-                        
-                        // 1st violation
-                        Text(section.firstProgression ?? "—")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                            .frame(width: 70, alignment: .leading)
-                            .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(Color(.systemGray6))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
                 }
-                .listRowBackground(
-                    matched
-                        ? matchedRowColor(level)
-                        : isSelected
-                        ? Color.blue.opacity(0.08)
-                        : Color.clear
-                )
-                .disabled(matched)
-                .opacity(matched && level == .low ? 0.6 : 1.0)
             }
         }
-        .listStyle(.plain)
+        .padding(12)
+        .background(
+            matched
+                ? matchedRowColor(level)
+                : isSelected
+                ? Color.blue.opacity(0.06)
+                : Color(.systemBackground)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(
+                    isSelected && !matched
+                        ? Color.blue.opacity(0.4)
+                        : Color(.systemGray4).opacity(0.5),
+                    lineWidth: isSelected && !matched ? 1.5 : 0.5
+                )
+        )
     }
-    
+
+    private struct ProgressionItem {
+        let label: String
+        let value: String
+    }
+
+    private func progressionItems(for section: PolicySection) -> [ProgressionItem] {
+        var items: [ProgressionItem] = []
+        if let p = section.firstProgression, !p.isEmpty { items.append(ProgressionItem(label: "1st:", value: p)) }
+        if let p = section.secondProgression, !p.isEmpty { items.append(ProgressionItem(label: "2nd:", value: p)) }
+        if let p = section.thirdProgression, !p.isEmpty { items.append(ProgressionItem(label: "3rd:", value: p)) }
+        if let p = section.fourthProgression, !p.isEmpty { items.append(ProgressionItem(label: "4th:", value: p)) }
+        return items
+    }
+
     // MARK: - Footer
-    
+
     private var footerBar: some View {
         HStack {
             Text("\(filteredSections.count) sections • \(selectedIds.count) selected")
                 .font(.system(size: 12))
                 .foregroundColor(.secondary)
-            
+
             Spacer()
-            
+
             if !selectedIds.isEmpty {
                 Button {
                     handleAddSelected()
@@ -274,40 +331,40 @@ struct PolicyReviewSheet: View {
             Divider()
         }
     }
-    
+
     // MARK: - AI Validation Loading
-    
+
     private var validatingView: some View {
         VStack(spacing: 32) {
             Spacer()
-            
+
             // Progress ring
             ZStack {
                 Circle()
                     .stroke(Color.purple.opacity(0.2), lineWidth: 5)
                     .frame(width: 90, height: 90)
-                
+
                 Circle()
                     .trim(from: 0, to: CGFloat(validationStep + 1) / CGFloat(validationSteps.count))
                     .stroke(Color.purple, style: StrokeStyle(lineWidth: 5, lineCap: .round))
                     .frame(width: 90, height: 90)
                     .rotationEffect(.degrees(-90))
                     .animation(.easeInOut(duration: 0.8), value: validationStep)
-                
+
                 Image(systemName: "doc.text.magnifyingglass")
                     .font(.system(size: 28))
                     .foregroundColor(.purple)
             }
-            
+
             VStack(spacing: 8) {
                 Text("Analyzing Relevance")
                     .font(.system(size: 18, weight: .bold))
-                
+
                 Text("Checking \(selectedIds.count) section\(selectedIds.count != 1 ? "s" : "") against case evidence")
                     .font(.system(size: 14))
                     .foregroundColor(.secondary)
             }
-            
+
             // Step checklist
             VStack(alignment: .leading, spacing: 12) {
                 ForEach(Array(validationSteps.enumerated()), id: \.offset) { index, step in
@@ -324,7 +381,7 @@ struct PolicyReviewSheet: View {
                                 .stroke(Color.gray.opacity(0.3), lineWidth: 2)
                                 .frame(width: 18, height: 18)
                         }
-                        
+
                         Text(step)
                             .font(.system(size: 14, weight: index <= validationStep ? .medium : .regular))
                             .foregroundColor(index <= validationStep ? .primary : .secondary)
@@ -332,14 +389,14 @@ struct PolicyReviewSheet: View {
                 }
             }
             .frame(width: 260, alignment: .leading)
-            
+
             Spacer()
         }
         .padding()
     }
-    
+
     // MARK: - Results View
-    
+
     private func resultsView(_ results: [PolicyMatchResult]) -> some View {
         VStack(spacing: 0) {
             // Results header
@@ -352,7 +409,7 @@ struct PolicyReviewSheet: View {
                         .font(.system(size: 18))
                         .foregroundColor(.purple)
                 }
-                
+
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Relevance Analysis Complete")
                         .font(.system(size: 15, weight: .bold))
@@ -360,12 +417,12 @@ struct PolicyReviewSheet: View {
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
                 }
-                
+
                 Spacer()
             }
             .padding(16)
             .background(Color(.systemGray6))
-            
+
             // Results list
             ScrollView {
                 LazyVStack(spacing: 12) {
@@ -375,18 +432,18 @@ struct PolicyReviewSheet: View {
                 }
                 .padding(16)
             }
-            
+
             // Results footer
             resultsFooter(results)
         }
     }
-    
+
     private func resultCard(_ match: PolicyMatchResult) -> some View {
         let conf = match.matchConfidence
         let isRelevant = conf >= 0.5
         let level = conf >= 0.8 ? "High Relevance" : conf >= 0.65 ? "Moderate Relevance" : conf >= 0.5 ? "Low Relevance" : "Not Relevant"
         let badgeColor: Color = conf >= 0.8 ? .green : conf >= 0.65 ? .orange : conf >= 0.5 ? .yellow : .red
-        
+
         return VStack(alignment: .leading, spacing: 10) {
             // Header row
             HStack {
@@ -398,9 +455,9 @@ struct PolicyReviewSheet: View {
                 Text("Section \(match.sectionNumber)")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(.secondary)
-                
+
                 Spacer()
-                
+
                 Text(level)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(badgeColor)
@@ -408,23 +465,23 @@ struct PolicyReviewSheet: View {
                     .padding(.vertical, 4)
                     .background(badgeColor.opacity(0.15))
                     .clipShape(Capsule())
-                
+
                 Text("\(Int(conf * 100))%")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundColor(isRelevant ? .green : .red)
             }
-            
+
             // Title
             Text(match.sectionTitle)
                 .font(.system(size: 14, weight: .semibold))
                 .lineLimit(2)
-            
+
             // Explanation
             Text(match.relevanceExplanation)
                 .font(.system(size: 13))
                 .foregroundColor(.secondary)
                 .lineSpacing(3)
-            
+
             // Key phrases
             if !match.keyPhrases.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -441,7 +498,7 @@ struct PolicyReviewSheet: View {
                     }
                 }
             }
-            
+
             // Not relevant warning
             if !isRelevant {
                 HStack(spacing: 6) {
@@ -466,9 +523,9 @@ struct PolicyReviewSheet: View {
                 .stroke(!isRelevant ? Color.red.opacity(0.3) : Color.clear, lineWidth: 1)
         )
     }
-    
+
     private func resultsFooter(_ results: [PolicyMatchResult]) -> some View {
-        HStack {
+        VStack(spacing: 12) {
             if results.contains(where: { $0.matchConfidence < 0.5 }) {
                 HStack(spacing: 4) {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -478,11 +535,12 @@ struct PolicyReviewSheet: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(.orange)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            
-            Spacer()
-            
+
             HStack(spacing: 10) {
+                Spacer()
+
                 Button {
                     showResults = false
                     validationResults = nil
@@ -495,7 +553,7 @@ struct PolicyReviewSheet: View {
                         .background(Color(.systemGray5))
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
-                
+
                 Button {
                     if let results = validationResults {
                         onAddSections(results)
@@ -505,7 +563,7 @@ struct PolicyReviewSheet: View {
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 13))
-                        Text("Accept & Add All")
+                        Text("Accept")
                             .font(.system(size: 14, weight: .bold))
                     }
                     .foregroundColor(.white)
@@ -522,22 +580,22 @@ struct PolicyReviewSheet: View {
             Divider()
         }
     }
-    
+
     // MARK: - Actions
-    
+
     private func handleAddSelected() {
         guard !selectedIds.isEmpty else { return }
-        
+
         let selectedSections = policy.sections.filter { selectedIds.contains($0.id) }
         guard !selectedSections.isEmpty else { return }
-        
+
         // Start AI validation
         isValidating = true
         validationStep = 0
         showResults = false
         validationResults = nil
         validationError = nil
-        
+
         // Animate steps
         let stepTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { timer in
             if validationStep < validationSteps.count - 1 {
@@ -546,18 +604,18 @@ struct PolicyReviewSheet: View {
                 timer.invalidate()
             }
         }
-        
+
         // Run AI analysis
         Task {
             do {
                 let complaintA = conflictCase.documents.first { $0.type == .complaintA }
                 let complaintB = conflictCase.documents.first { $0.type == .complaintB }
                 let employees = conflictCase.involvedEmployees.filter { $0.isComplainant }
-                
+
                 guard let docA = complaintA, let docB = complaintB, employees.count >= 2 else {
                     throw NSError(domain: "", code: 0, userInfo: [NSLocalizedDescriptionKey: "Missing complaint documents or employees"])
                 }
-                
+
                 let witnessStatements: [WitnessStatementInput] = conflictCase.documents
                     .filter { $0.type == .witnessStatement && (!$0.cleanedText.isEmpty || !$0.originalText.isEmpty) }
                     .compactMap { doc in
@@ -568,7 +626,7 @@ struct PolicyReviewSheet: View {
                         }
                         return nil
                     }
-                
+
                 let result = try await PolicyMatchingService.shared.matchPolicies(
                     conflictCase: conflictCase,
                     complaintA: docA,
@@ -579,17 +637,17 @@ struct PolicyReviewSheet: View {
                     witnessStatements: witnessStatements,
                     policySections: selectedSections
                 )
-                
+
                 await MainActor.run {
                     stepTimer.invalidate()
-                    
+
                     // Filter to only selected sections
                     let selectedSectionIds = Set(selectedSections.map { $0.id })
                     let selectedSectionNumbers = Set(selectedSections.map { $0.sectionNumber })
                     var aiMatches = result.matches.filter {
                         selectedSectionIds.contains($0.sectionId) || selectedSectionNumbers.contains($0.sectionNumber)
                     }
-                    
+
                     // Map sectionTitle to content
                     aiMatches = aiMatches.map { m in
                         let content = selectedSections.first(where: { $0.id == m.sectionId })?.content ?? m.sectionTitle
@@ -603,7 +661,7 @@ struct PolicyReviewSheet: View {
                             keyPhrases: m.keyPhrases
                         )
                     }
-                    
+
                     // Add fallback entries for sections AI didn't return
                     let returnedIds = Set(aiMatches.map { $0.sectionId })
                     let returnedNumbers = Set(aiMatches.map { $0.sectionNumber })
@@ -619,7 +677,7 @@ struct PolicyReviewSheet: View {
                             ))
                         }
                     }
-                    
+
                     // Fast-forward remaining steps
                     fastForwardSteps {
                         validationResults = aiMatches
@@ -630,7 +688,7 @@ struct PolicyReviewSheet: View {
             } catch {
                 await MainActor.run {
                     stepTimer.invalidate()
-                    
+
                     // Fallback entries
                     let fallback = selectedSections.map { section in
                         PolicyMatchResult(
@@ -642,7 +700,7 @@ struct PolicyReviewSheet: View {
                             keyPhrases: []
                         )
                     }
-                    
+
                     fastForwardSteps {
                         validationResults = fallback
                         isValidating = false
@@ -652,7 +710,7 @@ struct PolicyReviewSheet: View {
             }
         }
     }
-    
+
     private func fastForwardSteps(completion: @escaping () -> Void) {
         func advance(step: Int) {
             if step < validationSteps.count {
@@ -668,9 +726,9 @@ struct PolicyReviewSheet: View {
         }
         advance(step: validationStep + 1)
     }
-    
+
     // MARK: - Helpers
-    
+
     private func matchedBadgeColor(_ level: PolicyMatchResult.ConfidenceLevel?) -> Color {
         switch level {
         case .high: return .green
@@ -678,7 +736,7 @@ struct PolicyReviewSheet: View {
         case .low, .none: return .gray
         }
     }
-    
+
     private func matchedBadgeLabel(_ level: PolicyMatchResult.ConfidenceLevel?) -> String {
         switch level {
         case .high: return "HIGH"
@@ -687,7 +745,7 @@ struct PolicyReviewSheet: View {
         case .none: return "MATCHED"
         }
     }
-    
+
     private func matchedRowColor(_ level: PolicyMatchResult.ConfidenceLevel?) -> Color {
         switch level {
         case .high: return Color.green.opacity(0.06)

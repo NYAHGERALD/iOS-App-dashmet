@@ -17,7 +17,7 @@ enum ReviewStatus: String, Codable {
     case changesRequested = "CHANGES_REQUESTED"
     case approved = "APPROVED"
     case rejected = "REJECTED"
-    
+
     var displayName: String {
         switch self {
         case .pending: return "Pending Review"
@@ -27,7 +27,7 @@ enum ReviewStatus: String, Codable {
         case .rejected: return "Rejected"
         }
     }
-    
+
     var color: Color {
         switch self {
         case .pending: return .gray
@@ -37,7 +37,7 @@ enum ReviewStatus: String, Codable {
         case .rejected: return .red
         }
     }
-    
+
     var icon: String {
         switch self {
         case .pending: return "clock"
@@ -58,7 +58,7 @@ struct ReviewComment: Identifiable, Codable {
     let createdAt: Date
     let createdBy: String
     var isResolved: Bool
-    
+
     init(section: String, comment: String, createdBy: String) {
         self.id = UUID()
         self.databaseId = nil
@@ -68,7 +68,7 @@ struct ReviewComment: Identifiable, Codable {
         self.createdBy = createdBy
         self.isResolved = false
     }
-    
+
     // Full initializer for database responses
     init(id: UUID = UUID(), databaseId: String?, section: String, comment: String, createdAt: Date, createdBy: String, isResolved: Bool) {
         self.id = id
@@ -88,7 +88,7 @@ struct DocumentSection: Identifiable {
     var content: String
     var isEditable: Bool
     var hasChanges: Bool
-    
+
     init(id: String, title: String, content: String, isEditable: Bool = true) {
         self.id = id
         self.title = title
@@ -108,7 +108,7 @@ struct SupervisorReviewView: View {
     let onRequestChanges: ([ReviewComment]) -> Void
     let onReject: (String) -> Void
     let onBack: () -> Void
-    
+
     @State private var reviewStatus: ReviewStatus = .inReview
     @State private var documentSections: [DocumentSection] = []
     @State private var comments: [ReviewComment] = []
@@ -123,55 +123,64 @@ struct SupervisorReviewView: View {
     @State private var newComment = ""
     @State private var rejectReason = ""
     @State private var approvalNotes = ""
-    
+
     @Environment(\.colorScheme) private var colorScheme
-    
+
     private var textPrimary: Color {
         colorScheme == .dark ? .white : .black
     }
-    
+
     private var textSecondary: Color {
         colorScheme == .dark ? .white.opacity(0.7) : .black.opacity(0.6)
     }
-    
+
     private var cardBackground: Color {
         colorScheme == .dark ? Color.white.opacity(0.08) : Color.white
     }
-    
+
     private var innerCardBackground: Color {
         colorScheme == .dark ? Color.white.opacity(0.05) : Color.gray.opacity(0.08)
     }
-    
+
     var body: some View {
         NavigationView {
             ZStack {
                 Color(UIColor.systemGroupedBackground)
                     .ignoresSafeArea()
-                
+
                 ScrollView {
                     VStack(spacing: 20) {
-                        // Review Status Header
-                        reviewStatusHeader
-                        
-                        // Document Info Card
-                        documentInfoCard
-                        
+                        // Combined Review Info Card
+                        VStack(spacing: 0) {
+                            reviewStatusHeader
+
+                            Divider()
+                                .padding(.horizontal)
+
+                            documentInfoCard
+
+                            Divider()
+                                .padding(.horizontal)
+
+                            quickActionsBar
+                                .padding(.vertical, 8)
+                        }
+                        .background(cardBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+
                         // Employee Selector (only show if AI recommended multiple employees for this action)
                         if targetedEmployees.count > 1 {
                             employeeSelector
                         }
-                        
-                        // Quick Actions
-                        quickActionsBar
-                        
+
                         // Document Sections
                         documentSectionsView
-                        
+
                         // Comments Section
                         if !comments.isEmpty {
                             commentsSection
                         }
-                        
+
                         // Action Buttons
                         actionButtons
                     }
@@ -186,7 +195,7 @@ struct SupervisorReviewView: View {
                         onBack()
                     }
                 }
-                
+
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
                         Button {
@@ -194,15 +203,15 @@ struct SupervisorReviewView: View {
                         } label: {
                             Label("Edit History", systemImage: "clock.arrow.circlepath")
                         }
-                        
+
                         Button {
                             showCommentSheet = true
                         } label: {
                             Label("Add Comment", systemImage: "text.bubble")
                         }
-                        
+
                         Divider()
-                        
+
                         Button(role: .destructive) {
                             showRejectSheet = true
                         } label: {
@@ -217,6 +226,8 @@ struct SupervisorReviewView: View {
                 loadDocumentSections()
                 logReviewStarted()
                 loadCommentsFromDatabase()
+                // Auto-select the correct employee tab based on document title
+                autoSelectEmployeeTab()
             }
             .fullScreenCover(item: $selectedSection) { section in
                 DocumentSectionEditorSheet(
@@ -244,7 +255,7 @@ struct SupervisorReviewView: View {
             }
             .fullScreenCover(isPresented: $showApprovalSheet) {
                 ApprovalConfirmationSheet(
-                    documentTitle: generatedResult.document.title,
+                    documentTitle: displayTitle,
                     editCount: edits.count,
                     notes: $approvalNotes,
                     onApprove: {
@@ -291,7 +302,7 @@ struct SupervisorReviewView: View {
             }
         }
     }
-    
+
     // MARK: - Review Status Header
     private var reviewStatusHeader: some View {
         HStack(spacing: 12) {
@@ -299,24 +310,24 @@ struct SupervisorReviewView: View {
                 Circle()
                     .fill(reviewStatus.color.opacity(0.15))
                     .frame(width: 44, height: 44)
-                
+
                 Image(systemName: reviewStatus.icon)
                     .font(.system(size: 20))
                     .foregroundColor(reviewStatus.color)
             }
-            
+
             VStack(alignment: .leading, spacing: 4) {
                 Text(reviewStatus.displayName)
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(textPrimary)
-                
+
                 Text("Last updated: \(Date().formatted(date: .abbreviated, time: .shortened))")
                     .font(.system(size: 12))
                     .foregroundColor(textSecondary)
             }
-            
+
             Spacer()
-            
+
             if !edits.isEmpty {
                 VStack(alignment: .trailing, spacing: 2) {
                     Text("\(edits.count)")
@@ -329,10 +340,8 @@ struct SupervisorReviewView: View {
             }
         }
         .padding()
-        .background(cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
-    
+
     // MARK: - Document Info Card
     private var documentInfoCard: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -340,24 +349,24 @@ struct SupervisorReviewView: View {
                 Image(systemName: documentIcon)
                     .font(.system(size: 24))
                     .foregroundColor(documentColor)
-                
+
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(generatedResult.document.title)
+                    Text(displayTitle)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(textPrimary)
-                    
+
                     Text("Generated \(generatedResult.generatedAt.formatted())")
                         .font(.system(size: 12))
                         .foregroundColor(textSecondary)
                 }
-                
+
                 Spacer()
-                
+
                 actionTypeBadge
             }
-            
+
             Divider()
-            
+
             // Case reference
             HStack {
                 Label(conflictCase.caseNumber, systemImage: "folder")
@@ -368,10 +377,8 @@ struct SupervisorReviewView: View {
             .foregroundColor(textSecondary)
         }
         .padding()
-        .background(cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
-    
+
     private var documentIcon: String {
         switch generatedResult.actionType {
         case .coaching: return "person.2.fill"
@@ -380,7 +387,7 @@ struct SupervisorReviewView: View {
         case .escalate: return "arrow.up.circle.fill"
         }
     }
-    
+
     private var documentColor: Color {
         switch generatedResult.actionType {
         case .coaching: return .green
@@ -389,7 +396,7 @@ struct SupervisorReviewView: View {
         case .escalate: return .red
         }
     }
-    
+
     private var actionTypeBadge: some View {
         Text(generatedResult.actionType.displayName)
             .font(.system(size: 11, weight: .medium))
@@ -399,7 +406,7 @@ struct SupervisorReviewView: View {
             .background(documentColor)
             .clipShape(Capsule())
     }
-    
+
     // MARK: - Quick Actions Bar
     private var quickActionsBar: some View {
         HStack(spacing: 12) {
@@ -409,21 +416,21 @@ struct SupervisorReviewView: View {
                     selectedSection = firstEditable
                 }
             }
-            
+
             quickActionButton(icon: "text.bubble", label: "Comment", color: .orange) {
                 showCommentSheet = true
             }
-            
+
             quickActionButton(icon: "eye", label: "Preview", color: .purple) {
                 showPreview = true
             }
-            
+
             quickActionButton(icon: "clock.arrow.circlepath", label: "History", color: .gray) {
                 showEditHistory = true
             }
         }
     }
-    
+
     private func quickActionButton(icon: String, label: String, color: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 6) {
@@ -431,12 +438,12 @@ struct SupervisorReviewView: View {
                     Circle()
                         .fill(color.opacity(0.15))
                         .frame(width: 44, height: 44)
-                    
+
                     Image(systemName: icon)
                         .font(.system(size: 18))
                         .foregroundColor(color)
                 }
-                
+
                 Text(label)
                     .font(.system(size: 11))
                     .foregroundColor(textSecondary)
@@ -444,7 +451,42 @@ struct SupervisorReviewView: View {
             .frame(maxWidth: .infinity)
         }
     }
-    
+
+    // MARK: - Per-Employee Display Title
+    /// Generates a document title for the currently selected employee instead of showing all names.
+    /// Prefers parsing from the generated document title (reliable source from backend),
+    /// then falls back to selected employee tab.
+    private var displayTitle: String {
+        // 1. Parse employee name from the generated document title (backend source of truth)
+        if let forRange = generatedResult.document.title.range(of: " for ", options: .backwards) {
+            let name = String(generatedResult.document.title[forRange.upperBound...]).trimmingCharacters(in: .whitespaces)
+            if !name.isEmpty {
+                let baseLabel: String
+                switch generatedResult.actionType {
+                case .coaching: baseLabel = "Coaching Session Guide"
+                case .counseling: baseLabel = "Documented Counseling"
+                case .warning: baseLabel = "Warning Notice"
+                case .escalate: baseLabel = "HR Escalation Request"
+                }
+                return "\(baseLabel) for \(name)"
+            }
+        }
+        // 2. Fall back to selected employee tab
+        let employees = targetedEmployees
+        if !employees.isEmpty {
+            let emp = selectedEmployeeIndex < employees.count ? employees[selectedEmployeeIndex] : employees[0]
+            let baseLabel: String
+            switch generatedResult.actionType {
+            case .coaching: baseLabel = "Coaching Session Guide"
+            case .counseling: baseLabel = "Documented Counseling"
+            case .warning: baseLabel = "Warning Notice"
+            case .escalate: baseLabel = "HR Escalation Request"
+            }
+            return "\(baseLabel) for \(emp.name)"
+        }
+        return generatedResult.document.title
+    }
+
     // MARK: - Document Type Info
     private var documentTypeInfo: (title: String, helperText: String, color: Color) {
         switch generatedResult.document {
@@ -458,25 +500,25 @@ struct SupervisorReviewView: View {
             return ("Generate Escalation Document For:", "Tap to switch between employees to generate individual escalation reports", .red)
         }
     }
-    
+
     // MARK: - Targeted Employees (filtered by AI recommendation)
     /// Returns only the employees that the AI recommended for this action
     /// If targetEmployeeIds is empty, falls back to all complainants
     private var targetedEmployees: [InvolvedEmployee] {
         let allComplainants = conflictCase.involvedEmployees.filter { $0.isComplainant }
-        
+
         // If no specific targets, return all complainants
         guard !targetEmployeeIds.isEmpty else {
             return allComplainants
         }
-        
+
         // Filter to only the targeted employees
         let filtered = allComplainants.filter { targetEmployeeIds.contains($0.id) }
-        
+
         // If filtering resulted in empty (shouldn't happen), fall back to all
         return filtered.isEmpty ? allComplainants : filtered
     }
-    
+
     // MARK: - Employee Selector (for document types with multiple targeted employees)
     private var employeeSelector: some View {
         let employees = targetedEmployees
@@ -486,18 +528,18 @@ struct SupervisorReviewView: View {
                 Image(systemName: "person.2.fill")
                     .font(.system(size: 14))
                     .foregroundColor(docInfo.color)
-                
+
                 Text(docInfo.title)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(textPrimary)
-                
+
                 Spacer()
-                
+
                 Text("\(selectedEmployeeIndex + 1) of \(employees.count)")
                     .font(.system(size: 12))
                     .foregroundColor(textSecondary)
             }
-            
+
             // Employee tabs
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
@@ -509,7 +551,7 @@ struct SupervisorReviewView: View {
                                 Text(employee.name)
                                     .font(.system(size: 13, weight: .medium))
                                     .foregroundColor(selectedEmployeeIndex == index ? .white : textPrimary)
-                                
+
                                 Text(employee.employeeId ?? "No File #")
                                     .font(.system(size: 10))
                                     .foregroundColor(selectedEmployeeIndex == index ? .white.opacity(0.8) : textSecondary)
@@ -522,7 +564,7 @@ struct SupervisorReviewView: View {
                     }
                 }
             }
-            
+
             Text(docInfo.helperText)
                 .font(.system(size: 11))
                 .foregroundColor(textSecondary)
@@ -532,7 +574,7 @@ struct SupervisorReviewView: View {
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 14))
     }
-    
+
     // MARK: - Document Sections View
     private var documentSectionsView: some View {
         VStack(spacing: 12) {
@@ -540,9 +582,9 @@ struct SupervisorReviewView: View {
                 Text("Document Sections")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(textPrimary)
-                
+
                 Spacer()
-                
+
                 if documentSections.contains(where: { $0.hasChanges }) {
                     Text("Modified")
                         .font(.system(size: 11, weight: .medium))
@@ -553,7 +595,7 @@ struct SupervisorReviewView: View {
                         .clipShape(Capsule())
                 }
             }
-            
+
             ForEach(documentSections) { section in
                 documentSectionCard(section)
             }
@@ -562,22 +604,22 @@ struct SupervisorReviewView: View {
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
-    
+
     private func documentSectionCard(_ section: DocumentSection) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(section.title)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(textPrimary)
-                
+
                 if section.hasChanges {
                     Image(systemName: "pencil.circle.fill")
                         .font(.system(size: 12))
                         .foregroundColor(.orange)
                 }
-                
+
                 Spacer()
-                
+
                 if section.isEditable {
                     Button {
                         selectedSection = section
@@ -588,12 +630,12 @@ struct SupervisorReviewView: View {
                     }
                 }
             }
-            
+
             Text(section.content)
                 .font(.system(size: 13))
                 .foregroundColor(textSecondary)
                 .lineLimit(3)
-            
+
             // Section comments
             let sectionComments = comments.filter { $0.section == section.id && !$0.isResolved }
             if !sectionComments.isEmpty {
@@ -611,7 +653,7 @@ struct SupervisorReviewView: View {
         .background(innerCardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
-    
+
     // MARK: - Comments Section
     private var commentsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -619,14 +661,14 @@ struct SupervisorReviewView: View {
                 Text("Review Comments")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(textPrimary)
-                
+
                 Spacer()
-                
+
                 Text("\(comments.filter { !$0.isResolved }.count) open")
                     .font(.system(size: 12))
                     .foregroundColor(.orange)
             }
-            
+
             ForEach(comments) { comment in
                 commentCard(comment)
             }
@@ -635,36 +677,36 @@ struct SupervisorReviewView: View {
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
-    
+
     private func commentCard(_ comment: ReviewComment) -> some View {
         HStack(alignment: .top, spacing: 12) {
             ZStack {
                 Circle()
                     .fill(comment.isResolved ? Color.green.opacity(0.15) : Color.orange.opacity(0.15))
                     .frame(width: 32, height: 32)
-                
+
                 Image(systemName: comment.isResolved ? "checkmark" : "text.bubble")
                     .font(.system(size: 12))
                     .foregroundColor(comment.isResolved ? .green : .orange)
             }
-            
+
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text(comment.section)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(textSecondary)
-                    
+
                     Spacer()
-                    
+
                     Text(comment.createdAt.formatted(date: .abbreviated, time: .shortened))
                         .font(.system(size: 10))
                         .foregroundColor(textSecondary)
                 }
-                
+
                 Text(comment.comment)
                     .font(.system(size: 13))
                     .foregroundColor(textPrimary)
-                
+
                 if !comment.isResolved {
                     Button {
                         resolveComment(comment)
@@ -680,7 +722,7 @@ struct SupervisorReviewView: View {
         .background(innerCardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
-    
+
     // MARK: - Action Buttons
     private var actionButtons: some View {
         VStack(spacing: 12) {
@@ -702,7 +744,7 @@ struct SupervisorReviewView: View {
                 }
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            
+
             // Request changes button
             if !comments.isEmpty {
                 Button {
@@ -722,9 +764,9 @@ struct SupervisorReviewView: View {
             }
         }
     }
-    
+
     // MARK: - Helper Methods
-    
+
     private func loadDocumentSections() {
         switch generatedResult.document {
         case .coaching(let doc):
@@ -735,7 +777,7 @@ struct SupervisorReviewView: View {
                 DocumentSection(id: "questions", title: "Questions to Ask", content: doc.questionsToAsk.joined(separator: "\n• ")),
                 DocumentSection(id: "followup", title: "Follow-Up Plan", content: doc.followUpPlan.timeline)
             ]
-            
+
         case .counseling(let doc):
             documentSections = [
                 DocumentSection(id: "summary", title: "Incident Summary", content: doc.incidentSummary),
@@ -743,7 +785,7 @@ struct SupervisorReviewView: View {
                 DocumentSection(id: "consequences", title: "Consequences", content: doc.consequences),
                 DocumentSection(id: "acknowledgment", title: "Acknowledgment Statement", content: doc.acknowledgmentSection)
             ]
-            
+
         case .warning(let doc):
             documentSections = [
                 DocumentSection(id: "level", title: "Warning Level", content: doc.warningLevel, isEditable: false),
@@ -753,7 +795,7 @@ struct SupervisorReviewView: View {
                 DocumentSection(id: "corrective", title: "Corrective Action Required", content: doc.requiredCorrectiveAction.joined(separator: "\n• ")),
                 DocumentSection(id: "consequences", title: "Future Consequences", content: doc.consequencesOfNotPerforming)
             ]
-            
+
         case .escalation(let doc):
             // Format the incident date nicely
             let formattedDate: String = {
@@ -782,12 +824,12 @@ struct SupervisorReviewView: View {
             ]
         }
     }
-    
+
     private func saveEdit(for section: DocumentSection, newContent: String) {
         guard let index = documentSections.firstIndex(where: { $0.id == section.id }) else { return }
-        
+
         let originalContent = documentSections[index].content
-        
+
         // Get the backend ID for database operations
         guard let backendId = conflictCase.backendId, !backendId.isEmpty else {
             print("❌ Cannot save edit to database: Case has no backendId (not synced to server)")
@@ -804,7 +846,7 @@ struct SupervisorReviewView: View {
             documentSections[index].hasChanges = true
             return
         }
-        
+
         // Save edit to database using backendId
         Task {
             do {
@@ -816,10 +858,10 @@ struct SupervisorReviewView: View {
                     newContent: newContent,
                     editedBy: "Supervisor" // Would use actual user name
                 )
-                
+
                 await MainActor.run {
                     edits.append(edit)
-                    
+
                     // Update section
                     documentSections[index].content = newContent
                     documentSections[index].hasChanges = true
@@ -841,7 +883,7 @@ struct SupervisorReviewView: View {
                 }
             }
         }
-        
+
         // Log edit to audit trail
         AuditTrailService.shared.logDocumentEdited(
             caseId: conflictCase.id,
@@ -851,14 +893,14 @@ struct SupervisorReviewView: View {
             newContent: newContent
         )
     }
-    
+
     private func addComment(section: String, comment: String) {
         // Get the backend ID for database operations
         guard let backendId = conflictCase.backendId, !backendId.isEmpty else {
             print("❌ Cannot save comment to database: Case has no backendId (not synced to server)")
             return // NO LOCAL FALLBACK - DB only
         }
-        
+
         // Save comment to database
         Task {
             do {
@@ -868,7 +910,7 @@ struct SupervisorReviewView: View {
                     comment: comment,
                     createdBy: "Supervisor"
                 )
-                
+
                 await MainActor.run {
                     comments.append(savedComment)
                     reviewStatus = .changesRequested
@@ -879,19 +921,19 @@ struct SupervisorReviewView: View {
             }
         }
     }
-    
+
     private func resolveComment(_ comment: ReviewComment) {
         // Get the backend ID for database operations
         guard let backendId = conflictCase.backendId, !backendId.isEmpty else {
             print("❌ Cannot resolve comment in database: Case has no backendId")
             return // NO LOCAL FALLBACK - DB only
         }
-        
+
         guard let commentDbId = comment.databaseId else {
             print("❌ Cannot resolve comment: No database ID")
             return
         }
-        
+
         // Resolve comment in database
         Task {
             do {
@@ -899,7 +941,7 @@ struct SupervisorReviewView: View {
                     caseId: backendId,
                     commentId: commentDbId
                 )
-                
+
                 await MainActor.run {
                     if let index = comments.firstIndex(where: { $0.id == comment.id }) {
                         comments[index].isResolved = true
@@ -911,13 +953,13 @@ struct SupervisorReviewView: View {
             }
         }
     }
-    
+
     private func loadCommentsFromDatabase() {
         guard let backendId = conflictCase.backendId, !backendId.isEmpty else {
             print("⚠️ Cannot load comments: Case has no backendId")
             return
         }
-        
+
         Task {
             do {
                 let loadedComments = try await CommentTrackingService.shared.getComments(for: backendId)
@@ -933,10 +975,10 @@ struct SupervisorReviewView: View {
             }
         }
     }
-    
+
     private func approveDocument() {
         reviewStatus = .approved
-        
+
         // Log approval
         AuditTrailService.shared.logEvent(
             caseId: conflictCase.id,
@@ -944,13 +986,13 @@ struct SupervisorReviewView: View {
             eventType: .supervisorReviewCompleted,
             description: "Document approved with \(edits.count) edits"
         )
-        
+
         onApprove(generatedResult, edits)
     }
-    
+
     private func rejectDocument() {
         reviewStatus = .rejected
-        
+
         // Log rejection
         AuditTrailService.shared.logEvent(
             caseId: conflictCase.id,
@@ -958,17 +1000,30 @@ struct SupervisorReviewView: View {
             eventType: .supervisorReviewCompleted,
             description: "Document rejected: \(rejectReason)"
         )
-        
+
         onReject(rejectReason)
     }
-    
+
     private func logReviewStarted() {
         AuditTrailService.shared.logEvent(
             caseId: conflictCase.id,
             caseNumber: conflictCase.caseNumber,
             eventType: .supervisorReviewStarted,
-            description: "Supervisor review started for \(generatedResult.document.title)"
+            description: "Supervisor review started for \(displayTitle)"
         )
+    }
+
+    /// Sets selectedEmployeeIndex to match the employee from the generated document title
+    private func autoSelectEmployeeTab() {
+        // Parse employee name from document title
+        guard let forRange = generatedResult.document.title.range(of: " for ", options: .backwards) else { return }
+        let docEmpName = String(generatedResult.document.title[forRange.upperBound...]).trimmingCharacters(in: .whitespaces)
+        guard !docEmpName.isEmpty else { return }
+
+        let employees = targetedEmployees
+        if let matchIndex = employees.firstIndex(where: { $0.name.lowercased() == docEmpName.lowercased() }) {
+            selectedEmployeeIndex = matchIndex
+        }
     }
 }
 
@@ -981,7 +1036,7 @@ struct DocumentEdit: Identifiable, Codable {
     let newContent: String
     let editedAt: Date
     let editedBy: String
-    
+
     // Initializer for new edits (generates UUID)
     init(sectionId: String, sectionTitle: String, originalContent: String, newContent: String, editedBy: String) {
         self.id = UUID()
@@ -992,7 +1047,7 @@ struct DocumentEdit: Identifiable, Codable {
         self.editedAt = Date()
         self.editedBy = editedBy
     }
-    
+
     // Initializer for loading from database (uses existing UUID)
     init(id: UUID, sectionId: String, sectionTitle: String, originalContent: String, newContent: String, editedBy: String, editedAt: Date) {
         self.id = id
@@ -1013,7 +1068,7 @@ struct ReviewDocumentPreviewSheet: View {
     let targetEmployeeIds: [UUID]  // Which employees the AI recommended
     let employeeIndex: Int  // Which employee's document to show
     let onDismiss: () -> Void
-    
+
     @State private var companyLogo: UIImage? = nil
     @State private var showImagePicker = false
     @State private var isUploadingLogo = false
@@ -1023,43 +1078,43 @@ struct ReviewDocumentPreviewSheet: View {
     @State private var isExporting = false
     @State private var exportError: String? = nil
     @State private var showExportErrorAlert = false
-    
+
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    
+
     // Dynamic font sizes based on device
     private var titleFontSize: CGFloat {
         horizontalSizeClass == .regular ? 18 : 14
     }
-    
+
     private var bodyFontSize: CGFloat {
         horizontalSizeClass == .regular ? 12 : 9
     }
-    
+
     private var smallFontSize: CGFloat {
         horizontalSizeClass == .regular ? 10 : 8
     }
-    
+
     private var labelFontSize: CGFloat {
         horizontalSizeClass == .regular ? 11 : 9
     }
-    
+
     private var logoHeight: CGFloat {
         horizontalSizeClass == .regular ? 80 : 60
     }
-    
+
     private var contentPadding: CGFloat {
         horizontalSizeClass == .regular ? 16 : 8
     }
-    
+
     private var borderColor: Color {
         colorScheme == .dark ? Color.white.opacity(0.3) : Color.black
     }
-    
+
     private var backgroundColor: Color {
         colorScheme == .dark ? Color(UIColor.systemBackground) : .white
     }
-    
+
     // Get targeted employees (filtered by AI recommendation)
     private var targetedEmployees: [InvolvedEmployee] {
         let allComplainants = conflictCase.involvedEmployees.filter { $0.isComplainant }
@@ -1067,24 +1122,24 @@ struct ReviewDocumentPreviewSheet: View {
         let filtered = allComplainants.filter { targetEmployeeIds.contains($0.id) }
         return filtered.isEmpty ? allComplainants : filtered
     }
-    
+
     // Get current employee for this document
     private var currentEmployee: InvolvedEmployee? {
         let employees = targetedEmployees
         guard employeeIndex < employees.count else { return employees.first }
         return employees[employeeIndex]
     }
-    
+
     // Get employee name from case
     private var employeeName: String {
         currentEmployee?.name ?? "_______________"
     }
-    
+
     // Get employee title/position
     private var employeeTitle: String {
         currentEmployee?.role.isEmpty == false ? currentEmployee!.role : "N/A"
     }
-    
+
     // Get employee file number (NOT case number)
     private var employeeFileNo: String {
         if let fileNo = currentEmployee?.employeeId, !fileNo.isEmpty {
@@ -1092,7 +1147,7 @@ struct ReviewDocumentPreviewSheet: View {
         }
         return "N/A"
     }
-    
+
     // Get warning level from document
     private var warningLevel: String {
         if case .warning(let doc) = document.document {
@@ -1100,32 +1155,32 @@ struct ReviewDocumentPreviewSheet: View {
         }
         return "First Written Warning"
     }
-    
+
     // Get description content
     private var descriptionContent: String {
         sections.first(where: { $0.id == "description" })?.content ?? ""
     }
-    
+
     // Get policy violated content
     private var policyViolatedContent: String {
         sections.first(where: { $0.id == "policy" })?.content ?? ""
     }
-    
+
     // Get corrective action content
     private var correctiveActionContent: String {
         sections.first(where: { $0.id == "corrective" })?.content ?? ""
     }
-    
+
     // Get consequences content
     private var consequencesContent: String {
         sections.first(where: { $0.id == "consequences" })?.content ?? ""
     }
-    
+
     // Get conduct deficiency content
     private var conductDeficiencyContent: String {
         sections.first(where: { $0.id == "deficiency" })?.content ?? ""
     }
-    
+
     var body: some View {
         NavigationView {
             GeometryReader { geometry in
@@ -1157,7 +1212,7 @@ struct ReviewDocumentPreviewSheet: View {
                         onDismiss()
                     }
                 }
-                
+
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
                         Button {
@@ -1165,18 +1220,11 @@ struct ReviewDocumentPreviewSheet: View {
                         } label: {
                             Label("Add Company Logo", systemImage: "photo.badge.plus")
                         }
-                        
+
                         Button {
-                            exportToPDF()
+                            exportToDocx()
                         } label: {
-                            Label("Export PDF", systemImage: "doc.fill")
-                        }
-                        .disabled(isExporting)
-                        
-                        Button {
-                            printDocument()
-                        } label: {
-                            Label("Print", systemImage: "printer")
+                            Label("Export Doc", systemImage: "doc.richtext")
                         }
                         .disabled(isExporting)
                     } label: {
@@ -1232,18 +1280,18 @@ struct ReviewDocumentPreviewSheet: View {
                 // Don't re-upload if we just loaded from URL
                 guard !isUploadingLogo else { return }
                 isUploadingLogo = true
-                
+
                 Task {
                     do {
                         let userId = Auth.auth().currentUser?.uid ?? conflictCase.createdBy
-                        
+
                         // Upload to Firebase Storage
                         let downloadUrl = try await FirebaseStorageService.shared.uploadCompanyLogo(
                             logo,
                             caseNumber: conflictCase.caseNumber,
                             userId: userId
                         )
-                        
+
                         // Save URL to backend via API
                         if let backendId = conflictCase.backendId {
                             let _ = try await ConflictCaseService.shared.updateCase(
@@ -1252,19 +1300,19 @@ struct ReviewDocumentPreviewSheet: View {
                                 userId: userId
                             )
                         }
-                        
+
                         // Update local case model
                         if let idx = ConflictResolutionManager.shared.cases.firstIndex(where: { $0.id == conflictCase.id }) {
                             await MainActor.run {
                                 ConflictResolutionManager.shared.cases[idx].companyLogoUrl = downloadUrl
                             }
                         }
-                        
+
                         print("✅ Company logo saved to Firebase and database")
                     } catch {
                         print("⚠️ Failed to save company logo: \(error.localizedDescription)")
                     }
-                    
+
                     await MainActor.run {
                         isUploadingLogo = false
                     }
@@ -1272,37 +1320,37 @@ struct ReviewDocumentPreviewSheet: View {
             }
         }
     }
-    
+
     // MARK: - Warning Notice Template
     private var warningNoticeTemplate: some View {
         VStack(spacing: 0) {
             // Company Logo Section
             companyLogoSection
-            
+
             // Title Section
             titleSection
-            
+
             // Intention Statement
             intentionStatement
-            
+
             // Date Line
             dateLine
-            
+
             // Warning Type Selection
             warningTypeRow
-            
+
             // Employee Info Table
             employeeInfoTable
-            
+
             // Company Rules Violated
             companyRulesSection
-            
+
             // Description Section
             descriptionSection
-            
+
             // Signature Section
             signatureSection
-            
+
             // Certification Statement
             certificationStatement
         }
@@ -1312,7 +1360,7 @@ struct ReviewDocumentPreviewSheet: View {
                 .stroke(borderColor, lineWidth: 1)
         )
     }
-    
+
     // MARK: - Company Logo Section
     private var companyLogoSection: some View {
         VStack(spacing: 8) {
@@ -1341,7 +1389,7 @@ struct ReviewDocumentPreviewSheet: View {
         .padding(.vertical, contentPadding)
         .border(borderColor, width: 0.5)
     }
-    
+
     // MARK: - Title Section
     private var titleSection: some View {
         VStack(spacing: 2) {
@@ -1353,14 +1401,14 @@ struct ReviewDocumentPreviewSheet: View {
         .padding(.vertical, contentPadding)
         .border(borderColor, width: 0.5)
     }
-    
+
     // MARK: - Intention Statement
     private var intentionStatement: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("The intention of this action is to enable the employee to understand what is expected. Therefore, it is meant to be a pro-active step to clarify a situation and avoid further occurrences.")
                 .font(.system(size: smallFontSize))
                 .foregroundColor(.primary)
-            
+
             Text("La intención de esta acción disciplinaria es hacerle entender al empleado lo que se espera de el/ella. Esta acción es un paso pro-activo para clarificar situaciones y evitar ocurrencias futuras.")
                 .font(.system(size: smallFontSize))
                 .italic()
@@ -1371,7 +1419,7 @@ struct ReviewDocumentPreviewSheet: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .border(borderColor, width: 0.5)
     }
-    
+
     // MARK: - Date Line
     private var dateLine: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -1381,28 +1429,28 @@ struct ReviewDocumentPreviewSheet: View {
                 Text(Date().formatted(date: .numeric, time: .omitted))
                     .font(.system(size: labelFontSize))
                     .underline()
-                
+
                 Text("Day of the Week:")
                     .font(.system(size: labelFontSize, weight: .medium))
                     .padding(.leading, horizontalSizeClass == .regular ? 12 : 8)
                 Text(dayOfWeek(Date()))
                     .font(.system(size: labelFontSize))
                     .underline()
-                
+
                 Text("Date of the Incident:")
                     .font(.system(size: labelFontSize, weight: .medium))
                     .padding(.leading, horizontalSizeClass == .regular ? 12 : 8)
                 Text(conflictCase.incidentDate.formatted(date: .numeric, time: .omitted))
                     .font(.system(size: labelFontSize))
                     .underline()
-                
+
                 Text("Day of the Week:")
                     .font(.system(size: labelFontSize, weight: .medium))
                     .padding(.leading, horizontalSizeClass == .regular ? 12 : 8)
                 Text(dayOfWeek(conflictCase.incidentDate))
                     .font(.system(size: labelFontSize))
                     .underline()
-                
+
                 Spacer()
             }
         }
@@ -1410,7 +1458,7 @@ struct ReviewDocumentPreviewSheet: View {
         .padding(.vertical, contentPadding / 2)
         .border(borderColor, width: 0.5)
     }
-    
+
     // MARK: - Warning Type Row
     private var warningTypeRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -1427,26 +1475,26 @@ struct ReviewDocumentPreviewSheet: View {
         .padding(.vertical, contentPadding / 2)
         .border(borderColor, width: 0.5)
     }
-    
+
     private func warningTypeCheckbox(type: WarningType, label: String, marked: Bool = false) -> some View {
         HStack(spacing: 4) {
             ZStack {
                 Rectangle()
                     .stroke(borderColor, lineWidth: 1)
                     .frame(width: horizontalSizeClass == .regular ? 16 : 12, height: horizontalSizeClass == .regular ? 16 : 12)
-                
+
                 if marked || warningType == type {
                     Text("X")
                         .font(.system(size: horizontalSizeClass == .regular ? 12 : 10, weight: .bold))
                 }
             }
-            
+
             Text(label)
                 .font(.system(size: labelFontSize, weight: type == .written ? .bold : .regular))
                 .underline(type == .suspension)
         }
     }
-    
+
     // MARK: - Employee Info Table
     private var employeeInfoTable: some View {
         VStack(spacing: 0) {
@@ -1463,16 +1511,16 @@ struct ReviewDocumentPreviewSheet: View {
                 .padding(contentPadding / 2)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .border(borderColor, width: 0.5)
-                
+
                 // Prior Warnings cell
                 VStack(alignment: .leading, spacing: 2) {
                     HStack {
                         Text("Prior Warnings:")
                             .font(.system(size: labelFontSize))
                             .foregroundColor(.secondary)
-                        
+
                         Spacer()
-                        
+
                         VStack(alignment: .trailing, spacing: 1) {
                             HStack(spacing: 4) {
                                 Text("Date:")
@@ -1497,7 +1545,7 @@ struct ReviewDocumentPreviewSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .border(borderColor, width: 0.5)
             }
-            
+
             // Row 2: Title, Department, File No
             HStack(spacing: 0) {
                 // Title cell
@@ -1511,7 +1559,7 @@ struct ReviewDocumentPreviewSheet: View {
                 .padding(contentPadding / 2)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .border(borderColor, width: 0.5)
-                
+
                 // Department cell
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Department:")
@@ -1523,7 +1571,7 @@ struct ReviewDocumentPreviewSheet: View {
                 .padding(contentPadding / 2)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .border(borderColor, width: 0.5)
-                
+
                 // File No cell (Employee's file number, NOT case number)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("File No.")
@@ -1538,7 +1586,7 @@ struct ReviewDocumentPreviewSheet: View {
             }
         }
     }
-    
+
     // MARK: - Company Rules Section
     private var companyRulesSection: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1549,7 +1597,7 @@ struct ReviewDocumentPreviewSheet: View {
                 Text("Company rules violated")
                     .font(.system(size: bodyFontSize, weight: .bold))
             }
-            
+
             Text(policyViolatedContent.isEmpty ? "• ________________________________" : policyViolatedContent)
                 .font(.system(size: labelFontSize))
                 .foregroundColor(.primary)
@@ -1559,7 +1607,7 @@ struct ReviewDocumentPreviewSheet: View {
         .frame(minHeight: horizontalSizeClass == .regular ? 80 : 60)
         .border(borderColor, width: 0.5)
     }
-    
+
     // MARK: - Description Section
     private var descriptionSection: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1572,7 +1620,7 @@ struct ReviewDocumentPreviewSheet: View {
                     Text("Describe in detail what happened")
                         .font(.system(size: bodyFontSize, weight: .bold))
                 }
-                
+
                 Text(descriptionContent.isEmpty ? " " : descriptionContent)
                     .font(.system(size: labelFontSize))
                     .foregroundColor(.primary)
@@ -1582,7 +1630,7 @@ struct ReviewDocumentPreviewSheet: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(minHeight: horizontalSizeClass == .regular ? 100 : 80)
             .border(borderColor, width: 0.5)
-            
+
             // Conduct Deficiency section populated from AI analysis
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
@@ -1592,7 +1640,7 @@ struct ReviewDocumentPreviewSheet: View {
                     Text("Conduct Deficiency:")
                         .font(.system(size: bodyFontSize, weight: .bold))
                 }
-                
+
                 Text(conductDeficiencyContent.isEmpty ? "________________________________" : conductDeficiencyContent)
                     .font(.system(size: labelFontSize))
                     .foregroundColor(.primary)
@@ -1602,7 +1650,7 @@ struct ReviewDocumentPreviewSheet: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(minHeight: horizontalSizeClass == .regular ? 60 : 40)
             .border(borderColor, width: 0.5)
-            
+
             // Required Corrective Action
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
@@ -1612,7 +1660,7 @@ struct ReviewDocumentPreviewSheet: View {
                     Text("Required Corrective Action:")
                         .font(.system(size: bodyFontSize, weight: .bold))
                 }
-                
+
                 Text(correctiveActionContent.isEmpty ? " " : correctiveActionContent)
                     .font(.system(size: labelFontSize))
                     .foregroundColor(.primary)
@@ -1622,7 +1670,7 @@ struct ReviewDocumentPreviewSheet: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(minHeight: horizontalSizeClass == .regular ? 80 : 60)
             .border(borderColor, width: 0.5)
-            
+
             // Consequences of not performing
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
@@ -1632,7 +1680,7 @@ struct ReviewDocumentPreviewSheet: View {
                     Text("Consequences of not performing:")
                         .font(.system(size: bodyFontSize, weight: .bold))
                 }
-                
+
                 Text(consequencesContent.isEmpty ? " " : consequencesContent)
                     .font(.system(size: labelFontSize))
                     .foregroundColor(.primary)
@@ -1644,7 +1692,7 @@ struct ReviewDocumentPreviewSheet: View {
             .border(borderColor, width: 0.5)
         }
     }
-    
+
     // MARK: - Signature Section
     private var signatureSection: some View {
         VStack(spacing: 0) {
@@ -1655,7 +1703,7 @@ struct ReviewDocumentPreviewSheet: View {
                 signatureCell(label: "Manager")
                 signatureCell(label: "Date")
             }
-            
+
             // Row 2: HR and Employee
             HStack(spacing: 0) {
                 signatureCell(label: "H.R. Department")
@@ -1665,7 +1713,7 @@ struct ReviewDocumentPreviewSheet: View {
             }
         }
     }
-    
+
     private func signatureCell(label: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Spacer()
@@ -1684,14 +1732,14 @@ struct ReviewDocumentPreviewSheet: View {
         .frame(height: horizontalSizeClass == .regular ? 80 : 60)
         .border(borderColor, width: 0.5)
     }
-    
+
     // MARK: - Certification Statement
     private var certificationStatement: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("I, the undersigned, hereby certify that the situation has been explained to me. I understand the consequences if the infraction is not remedied. I certify that I have received a copy of this notice.")
                 .font(.system(size: smallFontSize, weight: .bold))
                 .foregroundColor(.primary)
-            
+
             Text("Yo doy a conocer que se me ha explicado la situación presente. Yo entiendo las consecuencias futuras si no cumplo con las reglas. Yo certifico que he recibido una copia de este documento siempre y cuando lo firme.")
                 .font(.system(size: smallFontSize))
                 .italic()
@@ -1701,64 +1749,64 @@ struct ReviewDocumentPreviewSheet: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .border(borderColor, width: 0.5)
     }
-    
+
     // MARK: - =====================================================
     // MARK: COACHING SESSION TEMPLATE
     // MARK: - =====================================================
-    
+
     // Get coaching-specific content
     private var coachingOverview: String {
         sections.first(where: { $0.id == "overview" })?.content ?? ""
     }
-    
+
     private var coachingOutline: String {
         sections.first(where: { $0.id == "outline" })?.content ?? ""
     }
-    
+
     private var coachingTalkingPoints: String {
         sections.first(where: { $0.id == "talking_points" })?.content ?? ""
     }
-    
+
     private var coachingQuestions: String {
         sections.first(where: { $0.id == "questions" })?.content ?? ""
     }
-    
+
     private var coachingFollowUp: String {
         sections.first(where: { $0.id == "followup" })?.content ?? ""
     }
-    
+
     private var coachingSessionTemplate: some View {
         VStack(spacing: 0) {
             // Company Logo Section
             companyLogoSection
-            
+
             // Title Section
             coachingTitleSection
-            
+
             // Session Information
             coachingInfoSection
-            
+
             // Employee Info
             coachingEmployeeInfo
-            
+
             // Overview Section
             coachingOverviewSection
-            
+
             // Discussion Outline
             coachingDiscussionOutlineSection
-            
+
             // Talking Points
             coachingTalkingPointsSection
-            
+
             // Questions to Ask
             coachingQuestionsSection
-            
+
             // Follow-Up Plan
             coachingFollowUpSection
-            
+
             // Notes Section
             coachingNotesSection
-            
+
             // Signature Section
             coachingSignatureSection
         }
@@ -1768,7 +1816,7 @@ struct ReviewDocumentPreviewSheet: View {
                 .stroke(borderColor, lineWidth: 1)
         )
     }
-    
+
     private var coachingTitleSection: some View {
         VStack(spacing: 2) {
             Text("COACHING SESSION GUIDE")
@@ -1784,13 +1832,13 @@ struct ReviewDocumentPreviewSheet: View {
         .background(Color.green.opacity(0.1))
         .border(borderColor, width: 0.5)
     }
-    
+
     private var coachingInfoSection: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("This coaching session is designed to address workplace behavior and set clear expectations. The goal is to support employee growth through constructive dialogue.")
                 .font(.system(size: 8))
                 .foregroundColor(.primary)
-            
+
             Text("Esta sesión de coaching está diseñada para abordar el comportamiento laboral y establecer expectativas claras. El objetivo es apoyar el crecimiento del empleado a través de un diálogo constructivo.")
                 .font(.system(size: 8))
                 .italic()
@@ -1801,7 +1849,7 @@ struct ReviewDocumentPreviewSheet: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .border(borderColor, width: 0.5)
     }
-    
+
     private var coachingEmployeeInfo: some View {
         VStack(spacing: 0) {
             // Row 1: Session Info
@@ -1811,9 +1859,9 @@ struct ReviewDocumentPreviewSheet: View {
                 Text(Date().formatted(date: .numeric, time: .omitted))
                     .font(.system(size: 9))
                     .underline()
-                
+
                 Spacer()
-                
+
                 Text("Case Reference:")
                     .font(.system(size: 9, weight: .medium))
                 Text(conflictCase.caseNumber)
@@ -1823,7 +1871,7 @@ struct ReviewDocumentPreviewSheet: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .border(borderColor, width: 0.5)
-            
+
             // Row 2: Employee Details
             HStack(spacing: 0) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -1836,7 +1884,7 @@ struct ReviewDocumentPreviewSheet: View {
                 .padding(6)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .border(borderColor, width: 0.5)
-                
+
                 VStack(alignment: .leading, spacing: 2) {
                     Text("File No.:")
                         .font(.system(size: 9))
@@ -1847,7 +1895,7 @@ struct ReviewDocumentPreviewSheet: View {
                 .padding(6)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .border(borderColor, width: 0.5)
-                
+
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Position:")
                         .font(.system(size: 9))
@@ -1858,7 +1906,7 @@ struct ReviewDocumentPreviewSheet: View {
                 .padding(6)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .border(borderColor, width: 0.5)
-                
+
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Department:")
                         .font(.system(size: 9))
@@ -1872,7 +1920,7 @@ struct ReviewDocumentPreviewSheet: View {
             }
         }
     }
-    
+
     private var coachingOverviewSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -1882,7 +1930,7 @@ struct ReviewDocumentPreviewSheet: View {
                 Text("Session Overview")
                     .font(.system(size: 10, weight: .bold))
             }
-            
+
             Text(coachingOverview.isEmpty ? "Overview will be generated..." : coachingOverview)
                 .font(.system(size: 9))
                 .foregroundColor(.primary)
@@ -1893,7 +1941,7 @@ struct ReviewDocumentPreviewSheet: View {
         .frame(minHeight: 60)
         .border(borderColor, width: 0.5)
     }
-    
+
     private var coachingDiscussionOutlineSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -1903,7 +1951,7 @@ struct ReviewDocumentPreviewSheet: View {
                 Text("Discussion Outline")
                     .font(.system(size: 10, weight: .bold))
             }
-            
+
             Text(coachingOutline.isEmpty ? "Begin discussion by..." : coachingOutline)
                 .font(.system(size: 9))
                 .foregroundColor(.primary)
@@ -1914,7 +1962,7 @@ struct ReviewDocumentPreviewSheet: View {
         .frame(minHeight: 60)
         .border(borderColor, width: 0.5)
     }
-    
+
     private var coachingTalkingPointsSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -1924,7 +1972,7 @@ struct ReviewDocumentPreviewSheet: View {
                 Text("Talking Points")
                     .font(.system(size: 10, weight: .bold))
             }
-            
+
             if coachingTalkingPoints.isEmpty {
                 Text("• Key talking points will appear here")
                     .font(.system(size: 9))
@@ -1941,7 +1989,7 @@ struct ReviewDocumentPreviewSheet: View {
         .frame(minHeight: 80)
         .border(borderColor, width: 0.5)
     }
-    
+
     private var coachingQuestionsSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -1951,7 +1999,7 @@ struct ReviewDocumentPreviewSheet: View {
                 Text("Questions to Ask")
                     .font(.system(size: 10, weight: .bold))
             }
-            
+
             if coachingQuestions.isEmpty {
                 Text("• Questions to ask the employee...")
                     .font(.system(size: 9))
@@ -1968,7 +2016,7 @@ struct ReviewDocumentPreviewSheet: View {
         .frame(minHeight: 60)
         .border(borderColor, width: 0.5)
     }
-    
+
     private var coachingFollowUpSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -1978,7 +2026,7 @@ struct ReviewDocumentPreviewSheet: View {
                 Text("Follow-Up Plan")
                     .font(.system(size: 10, weight: .bold))
             }
-            
+
             Text(coachingFollowUp.isEmpty ? "Follow-up timeline: 30 days" : coachingFollowUp)
                 .font(.system(size: 9))
                 .foregroundColor(.primary)
@@ -1988,12 +2036,12 @@ struct ReviewDocumentPreviewSheet: View {
         .frame(minHeight: 40)
         .border(borderColor, width: 0.5)
     }
-    
+
     private var coachingNotesSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Session Notes:")
                 .font(.system(size: 10, weight: .bold))
-            
+
             Text("_________________________________________________________________")
                 .font(.system(size: 9))
             Text("_________________________________________________________________")
@@ -2006,7 +2054,7 @@ struct ReviewDocumentPreviewSheet: View {
         .frame(minHeight: 70)
         .border(borderColor, width: 0.5)
     }
-    
+
     private var coachingSignatureSection: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
@@ -2017,60 +2065,60 @@ struct ReviewDocumentPreviewSheet: View {
             }
         }
     }
-    
+
     // MARK: - =====================================================
     // MARK: DOCUMENTED COUNSELING TEMPLATE
     // MARK: - =====================================================
-    
+
     // Get counseling-specific content
     private var counselingSummary: String {
         sections.first(where: { $0.id == "summary" })?.content ?? ""
     }
-    
+
     private var counselingExpectations: String {
         sections.first(where: { $0.id == "expectations" })?.content ?? ""
     }
-    
+
     private var counselingConsequences: String {
         sections.first(where: { $0.id == "consequences" })?.content ?? ""
     }
-    
+
     private var counselingAcknowledgment: String {
         sections.first(where: { $0.id == "acknowledgment" })?.content ?? ""
     }
-    
+
     private var documentedCounselingTemplate: some View {
         VStack(spacing: 0) {
             // Company Logo Section
             companyLogoSection
-            
+
             // Title Section
             counselingTitleSection
-            
+
             // Info Statement
             counselingInfoSection
-            
+
             // Date and Case Info
             counselingDateSection
-            
+
             // Employee Info Table
             counselingEmployeeInfo
-            
+
             // Incident Summary
             counselingIncidentSection
-            
+
             // Expectations
             counselingExpectationsSection
-            
+
             // Policy References
             counselingPolicySection
-            
+
             // Consequences
             counselingConsequencesSection
-            
+
             // Acknowledgment
             counselingAcknowledgmentSection
-            
+
             // Signature Section
             counselingSignatureSection
         }
@@ -2080,7 +2128,7 @@ struct ReviewDocumentPreviewSheet: View {
                 .stroke(borderColor, lineWidth: 1)
         )
     }
-    
+
     private var counselingTitleSection: some View {
         VStack(spacing: 2) {
             Text("DOCUMENTED COUNSELING")
@@ -2096,13 +2144,13 @@ struct ReviewDocumentPreviewSheet: View {
         .background(Color.blue.opacity(0.1))
         .border(borderColor, width: 0.5)
     }
-    
+
     private var counselingInfoSection: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("This documented counseling serves as a formal record of a discussion regarding workplace conduct. It is intended to clarify expectations and provide the employee an opportunity for improvement before further disciplinary action.")
                 .font(.system(size: 8))
                 .foregroundColor(.primary)
-            
+
             Text("Esta consejería documentada sirve como registro formal de una discusión sobre la conducta laboral. Tiene la intención de aclarar expectativas y dar al empleado la oportunidad de mejorar antes de tomar acciones disciplinarias adicionales.")
                 .font(.system(size: 8))
                 .italic()
@@ -2113,7 +2161,7 @@ struct ReviewDocumentPreviewSheet: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .border(borderColor, width: 0.5)
     }
-    
+
     private var counselingDateSection: some View {
         HStack(spacing: 4) {
             Text("Date:")
@@ -2121,17 +2169,17 @@ struct ReviewDocumentPreviewSheet: View {
             Text(Date().formatted(date: .numeric, time: .omitted))
                 .font(.system(size: 9))
                 .underline()
-            
+
             Spacer()
-            
+
             Text("Case Reference:")
                 .font(.system(size: 9, weight: .medium))
             Text(conflictCase.caseNumber)
                 .font(.system(size: 9))
                 .underline()
-            
+
             Spacer()
-            
+
             Text("Incident Date:")
                 .font(.system(size: 9, weight: .medium))
             Text(conflictCase.incidentDate.formatted(date: .numeric, time: .omitted))
@@ -2142,7 +2190,7 @@ struct ReviewDocumentPreviewSheet: View {
         .padding(.vertical, 6)
         .border(borderColor, width: 0.5)
     }
-    
+
     private var counselingEmployeeInfo: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
@@ -2156,7 +2204,7 @@ struct ReviewDocumentPreviewSheet: View {
                 .padding(6)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .border(borderColor, width: 0.5)
-                
+
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Employee ID:")
                         .font(.system(size: 9))
@@ -2168,7 +2216,7 @@ struct ReviewDocumentPreviewSheet: View {
                 .frame(width: 120, alignment: .leading)
                 .border(borderColor, width: 0.5)
             }
-            
+
             HStack(spacing: 0) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Position:")
@@ -2180,7 +2228,7 @@ struct ReviewDocumentPreviewSheet: View {
                 .padding(6)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .border(borderColor, width: 0.5)
-                
+
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Department:")
                         .font(.system(size: 9))
@@ -2194,7 +2242,7 @@ struct ReviewDocumentPreviewSheet: View {
             }
         }
     }
-    
+
     private var counselingIncidentSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -2204,7 +2252,7 @@ struct ReviewDocumentPreviewSheet: View {
                 Text("Incident Summary")
                     .font(.system(size: 10, weight: .bold))
             }
-            
+
             Text(counselingSummary.isEmpty ? "Description of the incident..." : counselingSummary)
                 .font(.system(size: 9))
                 .foregroundColor(.primary)
@@ -2215,7 +2263,7 @@ struct ReviewDocumentPreviewSheet: View {
         .frame(minHeight: 80)
         .border(borderColor, width: 0.5)
     }
-    
+
     private var counselingExpectationsSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -2225,7 +2273,7 @@ struct ReviewDocumentPreviewSheet: View {
                 Text("Expectations for Improvement")
                     .font(.system(size: 10, weight: .bold))
             }
-            
+
             if counselingExpectations.isEmpty {
                 Text("• Employee is expected to...")
                     .font(.system(size: 9))
@@ -2242,7 +2290,7 @@ struct ReviewDocumentPreviewSheet: View {
         .frame(minHeight: 60)
         .border(borderColor, width: 0.5)
     }
-    
+
     private var counselingPolicySection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -2252,7 +2300,7 @@ struct ReviewDocumentPreviewSheet: View {
                 Text("Policy References")
                     .font(.system(size: 10, weight: .bold))
             }
-            
+
             Text(policyViolatedContent.isEmpty ? "Applicable company policies..." : policyViolatedContent)
                 .font(.system(size: 9))
                 .foregroundColor(.primary)
@@ -2262,7 +2310,7 @@ struct ReviewDocumentPreviewSheet: View {
         .frame(minHeight: 40)
         .border(borderColor, width: 0.5)
     }
-    
+
     private var counselingConsequencesSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -2272,7 +2320,7 @@ struct ReviewDocumentPreviewSheet: View {
                 Text("Consequences of Continued Violations")
                     .font(.system(size: 10, weight: .bold))
             }
-            
+
             Text(counselingConsequences.isEmpty ? "Failure to improve may result in further disciplinary action up to and including termination." : counselingConsequences)
                 .font(.system(size: 9))
                 .foregroundColor(.primary)
@@ -2282,16 +2330,16 @@ struct ReviewDocumentPreviewSheet: View {
         .frame(minHeight: 50)
         .border(borderColor, width: 0.5)
     }
-    
+
     private var counselingAcknowledgmentSection: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Employee Acknowledgment:")
                 .font(.system(size: 10, weight: .bold))
-            
+
             Text(counselingAcknowledgment.isEmpty ? "I acknowledge that I have received and understand this documented counseling. My signature indicates that I have discussed this matter with my supervisor and understand the expectations outlined above." : counselingAcknowledgment)
                 .font(.system(size: 8))
                 .foregroundColor(.primary)
-            
+
             Text("Reconozco que he recibido y entiendo esta consejería documentada. Mi firma indica que he discutido este asunto con mi supervisor y entiendo las expectativas descritas anteriormente.")
                 .font(.system(size: 8))
                 .italic()
@@ -2301,7 +2349,7 @@ struct ReviewDocumentPreviewSheet: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .border(borderColor, width: 0.5)
     }
-    
+
     private var counselingSignatureSection: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
@@ -2318,63 +2366,63 @@ struct ReviewDocumentPreviewSheet: View {
             }
         }
     }
-    
+
     // MARK: - =====================================================
     // MARK: HR ESCALATION TEMPLATE
     // MARK: - =====================================================
-    
+
     // Get escalation-specific content
     private var escalationSummary: String {
         sections.first(where: { $0.id == "summary" })?.content ?? ""
     }
-    
+
     private var escalationUrgency: String {
         sections.first(where: { $0.id == "urgency" })?.content ?? ""
     }
-    
+
     private var escalationNotes: String {
         sections.first(where: { $0.id == "notes" })?.content ?? ""
     }
-    
+
     private var escalationRecommendations: String {
         sections.first(where: { $0.id == "recommendations" })?.content ?? ""
     }
-    
+
     private var hrEscalationTemplate: some View {
         VStack(spacing: 0) {
             // Company Logo Section
             companyLogoSection
-            
+
             // Title Section
             escalationTitleSection
-            
+
             // CONFIDENTIAL Banner
             escalationConfidentialBanner
-            
+
             // Date and Routing Info
             escalationRoutingSection
-            
+
             // Primary Subject - the selected employee
             escalationPrimarySubjectSection
-            
+
             // Case Summary
             escalationCaseSummarySection
-            
+
             // All Involved Parties
             escalationPartiesSection
-            
+
             // Supervisor Notes
             escalationNotesSection
-            
+
             // Recommended HR Actions
             escalationRecommendationsSection
-            
+
             // Urgency Level
             escalationUrgencySection
-            
+
             // Approval Section
             escalationApprovalSection
-            
+
             // HR Response Section
             escalationHRResponseSection
         }
@@ -2384,7 +2432,7 @@ struct ReviewDocumentPreviewSheet: View {
                 .stroke(borderColor, lineWidth: 1)
         )
     }
-    
+
     private var escalationTitleSection: some View {
         VStack(spacing: 2) {
             Text("HR ESCALATION REQUEST")
@@ -2400,7 +2448,7 @@ struct ReviewDocumentPreviewSheet: View {
         .background(Color.red.opacity(0.1))
         .border(borderColor, width: 0.5)
     }
-    
+
     private var escalationConfidentialBanner: some View {
         HStack {
             Image(systemName: "lock.shield")
@@ -2416,7 +2464,7 @@ struct ReviewDocumentPreviewSheet: View {
         .background(Color.red.opacity(0.05))
         .border(borderColor, width: 0.5)
     }
-    
+
     private var escalationRoutingSection: some View {
         VStack(spacing: 0) {
             HStack(spacing: 4) {
@@ -2425,9 +2473,9 @@ struct ReviewDocumentPreviewSheet: View {
                 Text(Date().formatted(date: .numeric, time: .omitted))
                     .font(.system(size: 9))
                     .underline()
-                
+
                 Spacer()
-                
+
                 Text("Submitted By:")
                     .font(.system(size: 9, weight: .medium))
                 Text("_______________")
@@ -2437,16 +2485,16 @@ struct ReviewDocumentPreviewSheet: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .border(borderColor, width: 0.5)
-            
+
             HStack(spacing: 4) {
                 Text("Department:")
                     .font(.system(size: 9, weight: .medium))
                 Text(conflictCase.department)
                     .font(.system(size: 9))
                     .underline()
-                
+
                 Spacer()
-                
+
                 Text("Location:")
                     .font(.system(size: 9, weight: .medium))
                 Text(conflictCase.location)
@@ -2458,7 +2506,7 @@ struct ReviewDocumentPreviewSheet: View {
             .border(borderColor, width: 0.5)
         }
     }
-    
+
     // MARK: - Escalation Primary Subject Section
     private var escalationPrimarySubjectSection: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -2469,7 +2517,7 @@ struct ReviewDocumentPreviewSheet: View {
                 Text("Primary Subject of Escalation")
                     .font(.system(size: 10, weight: .bold))
             }
-            
+
             VStack(spacing: 0) {
                 HStack(spacing: 0) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -2482,7 +2530,7 @@ struct ReviewDocumentPreviewSheet: View {
                     .padding(6)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .border(borderColor, width: 0.5)
-                    
+
                     VStack(alignment: .leading, spacing: 2) {
                         Text("File Number:")
                             .font(.system(size: 9))
@@ -2493,7 +2541,7 @@ struct ReviewDocumentPreviewSheet: View {
                     .padding(6)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .border(borderColor, width: 0.5)
-                    
+
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Position:")
                             .font(.system(size: 9))
@@ -2511,7 +2559,7 @@ struct ReviewDocumentPreviewSheet: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .border(borderColor, width: 0.5)
     }
-    
+
     private var escalationCaseSummarySection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -2521,7 +2569,7 @@ struct ReviewDocumentPreviewSheet: View {
                 Text("Case Summary")
                     .font(.system(size: 10, weight: .bold))
             }
-            
+
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text("Case Number:")
@@ -2542,7 +2590,7 @@ struct ReviewDocumentPreviewSheet: View {
                         .font(.system(size: 9))
                 }
             }
-            
+
             if !escalationSummary.isEmpty {
                 Text(escalationSummary)
                     .font(.system(size: 9))
@@ -2555,7 +2603,7 @@ struct ReviewDocumentPreviewSheet: View {
         .frame(minHeight: 80)
         .border(borderColor, width: 0.5)
     }
-    
+
     private var escalationPartiesSection: some View {
         let complainants = conflictCase.involvedEmployees.filter { $0.isComplainant }
         return VStack(alignment: .leading, spacing: 6) {
@@ -2566,7 +2614,7 @@ struct ReviewDocumentPreviewSheet: View {
                 Text("All Involved Parties")
                     .font(.system(size: 10, weight: .bold))
             }
-            
+
             ForEach(Array(complainants.enumerated()), id: \.element.id) { index, employee in
                 HStack {
                     if index == employeeIndex {
@@ -2600,7 +2648,7 @@ struct ReviewDocumentPreviewSheet: View {
         .frame(minHeight: 50)
         .border(borderColor, width: 0.5)
     }
-    
+
     private var escalationNotesSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -2610,7 +2658,7 @@ struct ReviewDocumentPreviewSheet: View {
                 Text("Supervisor Notes")
                     .font(.system(size: 10, weight: .bold))
             }
-            
+
             Text(escalationNotes.isEmpty ? "Notes from supervising manager..." : escalationNotes)
                 .font(.system(size: 9))
                 .foregroundColor(.primary)
@@ -2621,7 +2669,7 @@ struct ReviewDocumentPreviewSheet: View {
         .frame(minHeight: 80)
         .border(borderColor, width: 0.5)
     }
-    
+
     private var escalationRecommendationsSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -2631,7 +2679,7 @@ struct ReviewDocumentPreviewSheet: View {
                 Text("Recommended HR Actions")
                     .font(.system(size: 10, weight: .bold))
             }
-            
+
             if escalationRecommendations.isEmpty {
                 Text("• Formal investigation required\n• Interview all involved parties\n• Review relevant documentation")
                     .font(.system(size: 9))
@@ -2648,27 +2696,27 @@ struct ReviewDocumentPreviewSheet: View {
         .frame(minHeight: 60)
         .border(borderColor, width: 0.5)
     }
-    
+
     private var escalationUrgencySection: some View {
         HStack {
             Text("Urgency Level:")
                 .font(.system(size: 10, weight: .bold))
-            
+
             Spacer()
-            
+
             ForEach(["Standard", "High", "Critical"], id: \.self) { level in
                 HStack(spacing: 4) {
                     ZStack {
                         Rectangle()
                             .stroke(borderColor, lineWidth: 1)
                             .frame(width: 12, height: 12)
-                        
+
                         if escalationUrgency.lowercased().contains(level.lowercased()) {
                             Text("X")
                                 .font(.system(size: 10, weight: .bold))
                         }
                     }
-                    
+
                     Text(level)
                         .font(.system(size: 9, weight: level == "Critical" ? .bold : .regular))
                         .foregroundColor(level == "Critical" ? .red : .primary)
@@ -2678,7 +2726,7 @@ struct ReviewDocumentPreviewSheet: View {
         .padding(8)
         .border(borderColor, width: 0.5)
     }
-    
+
     private var escalationApprovalSection: some View {
         VStack(spacing: 0) {
             HStack {
@@ -2689,7 +2737,7 @@ struct ReviewDocumentPreviewSheet: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .border(borderColor, width: 0.5)
-            
+
             HStack(spacing: 0) {
                 signatureCell(label: "Supervisor Signature")
                 signatureCell(label: "Date")
@@ -2698,7 +2746,7 @@ struct ReviewDocumentPreviewSheet: View {
             }
         }
     }
-    
+
     private var escalationHRResponseSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -2708,7 +2756,7 @@ struct ReviewDocumentPreviewSheet: View {
                 Text("HR Response (For HR Use Only)")
                     .font(.system(size: 10, weight: .bold))
             }
-            
+
             Text("Date Received: _____________")
                 .font(.system(size: 9))
             Text("Assigned To: _____________")
@@ -2717,7 +2765,7 @@ struct ReviewDocumentPreviewSheet: View {
                 .font(.system(size: 9))
             Text("_________________________________________________________")
                 .font(.system(size: 9))
-            
+
             HStack(spacing: 0) {
                 signatureCell(label: "HR Representative")
                 signatureCell(label: "Date")
@@ -2727,64 +2775,54 @@ struct ReviewDocumentPreviewSheet: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .border(borderColor, width: 0.5)
     }
-    
+
     // MARK: - Helper Methods
     private func dayOfWeek(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "EEEE"
         return formatter.string(from: date)
     }
-    
-    // MARK: - Export PDF
-    private func exportToPDF() {
+
+    // MARK: - Export Word Document
+    private func exportToDocx() {
         isExporting = true
-        
-        DispatchQueue.main.async {
-            let data = self.generateWarningNoticePDF()
-            
-            // Save to temp file
-            let tempDir = FileManager.default.temporaryDirectory
-            let fileName = "WarningNotice_\(conflictCase.caseNumber)_\(employeeName.replacingOccurrences(of: " ", with: "_")).pdf"
-            let fileURL = tempDir.appendingPathComponent(fileName)
-            
+
+        Task {
             do {
-                try data.write(to: fileURL)
-                self.pdfURL = fileURL
-                self.showShareSheet = true
+                let docxData = try await DocumentExportService.shared.exportDocument(
+                    document.document,
+                    format: .docx,
+                    caseNumber: conflictCase.caseNumber
+                )
+
+                let tempDir = FileManager.default.temporaryDirectory
+                let empNameSafe = employeeName.replacingOccurrences(of: " ", with: "_")
+                let typeLabel: String
+                switch document.actionType {
+                case .coaching: typeLabel = "Coaching_Session"
+                case .counseling: typeLabel = "Documented_Counseling"
+                case .warning: typeLabel = "Warning_Notice"
+                case .escalate: typeLabel = "HR_Escalation"
+                }
+                let fileName = "\(typeLabel)_\(empNameSafe)_\(conflictCase.caseNumber).docx"
+                let fileURL = tempDir.appendingPathComponent(fileName)
+
+                try docxData.write(to: fileURL)
+
+                await MainActor.run {
+                    self.pdfURL = fileURL
+                    self.showShareSheet = true
+                    self.isExporting = false
+                }
             } catch {
-                self.exportError = "Failed to save PDF: \(error.localizedDescription)"
-            }
-            
-            self.isExporting = false
-        }
-    }
-    
-    // MARK: - Print Document
-    private func printDocument() {
-        isExporting = true
-        
-        DispatchQueue.main.async {
-            let data = self.generateWarningNoticePDF()
-            
-            // Print
-            let printController = UIPrintInteractionController.shared
-            printController.printingItem = data
-            
-            let printInfo = UIPrintInfo(dictionary: nil)
-            printInfo.jobName = "Warning Notice - \(conflictCase.caseNumber)"
-            printInfo.outputType = .general
-            printController.printInfo = printInfo
-            
-            printController.present(animated: true) { _, completed, error in
-                if let error = error {
-                    self.exportError = "Print failed: \(error.localizedDescription)"
+                await MainActor.run {
+                    self.exportError = "Failed to export document: \(error.localizedDescription)"
+                    self.isExporting = false
                 }
             }
-            
-            self.isExporting = false
         }
     }
-    
+
     // MARK: - Generate Warning Notice PDF (Exact Match to UI)
     private func generateWarningNoticePDF() -> Data {
         // A4 size in points: 595.28 x 841.89, US Letter: 612 x 792
@@ -2796,13 +2834,13 @@ struct ReviewDocumentPreviewSheet: View {
         let borderColor = UIColor.darkGray
         let lineWidth: CGFloat = 0.5
         let maxY = pageHeight - bottomMargin
-        
+
         let pdfRenderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight))
-        
+
         return pdfRenderer.pdfData { context in
             context.beginPage()
             var currentY: CGFloat = margin
-            
+
             // Helper function to draw bordered cell
             func drawBorderedRect(_ rect: CGRect) {
                 let path = UIBezierPath(rect: rect)
@@ -2810,7 +2848,7 @@ struct ReviewDocumentPreviewSheet: View {
                 path.lineWidth = lineWidth
                 path.stroke()
             }
-            
+
             // Helper function to calculate text height
             func textHeight(_ text: String, font: UIFont, width: CGFloat) -> CGFloat {
                 let attrs: [NSAttributedString.Key: Any] = [.font: font]
@@ -2822,7 +2860,7 @@ struct ReviewDocumentPreviewSheet: View {
                 )
                 return ceil(boundingRect.height)
             }
-            
+
             // Helper to check page break
             func checkPageBreak(neededHeight: CGFloat) {
                 if currentY + neededHeight > maxY {
@@ -2830,13 +2868,13 @@ struct ReviewDocumentPreviewSheet: View {
                     currentY = margin
                 }
             }
-            
+
             // ===== 1. COMPANY LOGO SECTION =====
             let logoSectionHeight: CGFloat = 70
             checkPageBreak(neededHeight: logoSectionHeight)
             let logoRect = CGRect(x: margin, y: currentY, width: contentWidth, height: logoSectionHeight)
             drawBorderedRect(logoRect)
-            
+
             if let logo = companyLogo {
                 let logoHeight: CGFloat = 55
                 let aspectRatio = logo.size.width / logo.size.height
@@ -2856,13 +2894,13 @@ struct ReviewDocumentPreviewSheet: View {
                 placeholder.draw(at: CGPoint(x: placeholderX, y: placeholderY), withAttributes: placeholderAttrs)
             }
             currentY += logoSectionHeight
-            
+
             // ===== 2. TITLE SECTION =====
             let titleSectionHeight: CGFloat = 28
             checkPageBreak(neededHeight: titleSectionHeight)
             let titleRect = CGRect(x: margin, y: currentY, width: contentWidth, height: titleSectionHeight)
             drawBorderedRect(titleRect)
-            
+
             let titleAttrs: [NSAttributedString.Key: Any] = [
                 .font: UIFont.systemFont(ofSize: 14, weight: .bold),
                 .foregroundColor: UIColor.black
@@ -2873,36 +2911,36 @@ struct ReviewDocumentPreviewSheet: View {
             let titleY = currentY + (titleSectionHeight - titleSize.height) / 2
             title.draw(at: CGPoint(x: titleX, y: titleY), withAttributes: titleAttrs)
             currentY += titleSectionHeight
-            
+
             // ===== 3. INTENTION STATEMENT =====
             let intentionPadding: CGFloat = 8
             let intentionFont = UIFont.systemFont(ofSize: 9)
             let intentionItalicFont = UIFont.italicSystemFont(ofSize: 9)
-            
+
             let intentionEnglish = "The intention of this action is to enable the employee to understand what is expected. Therefore, it is meant to be a pro-active step to clarify a situation and avoid further occurrences."
             let intentionSpanish = "La intención de esta acción disciplinaria es hacerle entender al empleado lo que se espera de el/ella. Esta acción es un paso pro-activo para clarificar situaciones y evitar ocurrencias futuras."
-            
+
             let englishHeight = textHeight(intentionEnglish, font: intentionFont, width: contentWidth - intentionPadding * 2)
             let spanishHeight = textHeight(intentionSpanish, font: intentionItalicFont, width: contentWidth - intentionPadding * 2)
             let intentionSectionHeight = englishHeight + spanishHeight + intentionPadding * 2 + 6
-            
+
             checkPageBreak(neededHeight: intentionSectionHeight)
             let intentionRect = CGRect(x: margin, y: currentY, width: contentWidth, height: intentionSectionHeight)
             drawBorderedRect(intentionRect)
-            
+
             let englishAttrs: [NSAttributedString.Key: Any] = [.font: intentionFont, .foregroundColor: UIColor.black]
             let spanishAttrs: [NSAttributedString.Key: Any] = [.font: intentionItalicFont, .foregroundColor: UIColor.gray]
-            
+
             intentionEnglish.draw(in: CGRect(x: margin + intentionPadding, y: currentY + intentionPadding, width: contentWidth - intentionPadding * 2, height: englishHeight), withAttributes: englishAttrs)
             intentionSpanish.draw(in: CGRect(x: margin + intentionPadding, y: currentY + intentionPadding + englishHeight + 4, width: contentWidth - intentionPadding * 2, height: spanishHeight), withAttributes: spanishAttrs)
             currentY += intentionSectionHeight
-            
+
             // ===== 4. DATE LINE =====
             let dateSectionHeight: CGFloat = 24
             checkPageBreak(neededHeight: dateSectionHeight)
             let dateRect = CGRect(x: margin, y: currentY, width: contentWidth, height: dateSectionHeight)
             drawBorderedRect(dateRect)
-            
+
             let dateFormatter = DateFormatter()
             dateFormatter.dateFormat = "M/dd/yyyy"
             let todayDate = dateFormatter.string(from: Date())
@@ -2910,13 +2948,13 @@ struct ReviewDocumentPreviewSheet: View {
             dateFormatter.dateFormat = "EEEE"
             let todayDay = dateFormatter.string(from: Date())
             let incidentDay = dateFormatter.string(from: conflictCase.incidentDate)
-            
+
             let dateLabelAttrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 9, weight: .medium), .foregroundColor: UIColor.black]
             let dateValueAttrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 9), .foregroundColor: UIColor.black]
-            
+
             var dateX: CGFloat = margin + 8
             let dateY = currentY + 7
-            
+
             "Today's Date:".draw(at: CGPoint(x: dateX, y: dateY), withAttributes: dateLabelAttrs)
             dateX += 60
             todayDate.draw(at: CGPoint(x: dateX, y: dateY), withAttributes: dateValueAttrs)
@@ -2933,236 +2971,236 @@ struct ReviewDocumentPreviewSheet: View {
             dateX += 25
             incidentDay.draw(at: CGPoint(x: dateX, y: dateY), withAttributes: dateValueAttrs)
             currentY += dateSectionHeight
-            
+
             // ===== 5. WARNING TYPE ROW =====
             let typeSectionHeight: CGFloat = 24
             checkPageBreak(neededHeight: typeSectionHeight)
             let typeRect = CGRect(x: margin, y: currentY, width: contentWidth, height: typeSectionHeight)
             drawBorderedRect(typeRect)
-            
+
             let checkboxFont = UIFont.systemFont(ofSize: 10)
             let checkboxBoldFont = UIFont.systemFont(ofSize: 10, weight: .bold)
             let checkboxSize: CGFloat = 12
             var typeX: CGFloat = margin + 8
             let typeY = currentY + 6
-            
+
             func drawCheckbox(label: String, isChecked: Bool, isBold: Bool = false) {
                 let checkboxRect = CGRect(x: typeX, y: typeY, width: checkboxSize, height: checkboxSize)
                 borderColor.setStroke()
                 UIBezierPath(rect: checkboxRect).stroke()
-                
+
                 if isChecked {
                     let checkAttrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 10, weight: .bold), .foregroundColor: UIColor.black]
                     "X".draw(at: CGPoint(x: typeX + 2, y: typeY), withAttributes: checkAttrs)
                 }
-                
+
                 typeX += checkboxSize + 4
                 let labelAttrs: [NSAttributedString.Key: Any] = [.font: isBold ? checkboxBoldFont : checkboxFont, .foregroundColor: UIColor.black]
                 label.draw(at: CGPoint(x: typeX, y: typeY), withAttributes: labelAttrs)
                 typeX += label.size(withAttributes: labelAttrs).width + 20
             }
-            
+
             drawCheckbox(label: "Verbal", isChecked: warningType == .verbal)
             drawCheckbox(label: "Written", isChecked: warningType == .written, isBold: true)
             drawCheckbox(label: "Suspension", isChecked: warningType == .suspension)
             drawCheckbox(label: "Termination", isChecked: warningType == .termination)
             drawCheckbox(label: "Other", isChecked: warningType == .other)
             currentY += typeSectionHeight
-            
+
             // ===== 6. EMPLOYEE INFO TABLE =====
             let empRow1Height: CGFloat = 48
             checkPageBreak(neededHeight: empRow1Height)
             let nameWidth = contentWidth * 0.5
             let priorWidth = contentWidth * 0.5
-            
+
             let nameRect = CGRect(x: margin, y: currentY, width: nameWidth, height: empRow1Height)
             drawBorderedRect(nameRect)
-            
+
             let labelFont = UIFont.systemFont(ofSize: 9)
             let valueFont = UIFont.systemFont(ofSize: 11, weight: .medium)
             let labelColor = UIColor.gray
             let valueColor = UIColor.black
-            
+
             "Name:".draw(at: CGPoint(x: margin + 8, y: currentY + 6), withAttributes: [.font: labelFont, .foregroundColor: labelColor])
             employeeName.draw(at: CGPoint(x: margin + 8, y: currentY + 22), withAttributes: [.font: valueFont, .foregroundColor: valueColor])
-            
+
             let priorRect = CGRect(x: margin + nameWidth, y: currentY, width: priorWidth, height: empRow1Height)
             drawBorderedRect(priorRect)
-            
+
             let priorX = margin + nameWidth + 8
             "Prior Warnings:".draw(at: CGPoint(x: priorX, y: currentY + 6), withAttributes: [.font: labelFont, .foregroundColor: labelColor])
-            
+
             let smallFont = UIFont.systemFont(ofSize: 8)
             let smallAttrs: [NSAttributedString.Key: Any] = [.font: smallFont, .foregroundColor: UIColor.black]
             "Date: ________  (V, W, S) Circle One".draw(at: CGPoint(x: priorX + 70, y: currentY + 14), withAttributes: smallAttrs)
             "Date: ________  (V, W, S) Circle One".draw(at: CGPoint(x: priorX + 70, y: currentY + 30), withAttributes: smallAttrs)
             currentY += empRow1Height
-            
+
             // Row 2
             let empRow2Height: CGFloat = 40
             checkPageBreak(neededHeight: empRow2Height)
             let titleWidth = contentWidth * 0.4
             let deptWidth = contentWidth * 0.35
             let fileWidth = contentWidth * 0.25
-            
+
             let titleCellRect = CGRect(x: margin, y: currentY, width: titleWidth, height: empRow2Height)
             drawBorderedRect(titleCellRect)
             "Title:".draw(at: CGPoint(x: margin + 8, y: currentY + 6), withAttributes: [.font: labelFont, .foregroundColor: labelColor])
             employeeTitle.draw(at: CGPoint(x: margin + 8, y: currentY + 20), withAttributes: [.font: valueFont, .foregroundColor: valueColor])
-            
+
             let deptRect = CGRect(x: margin + titleWidth, y: currentY, width: deptWidth, height: empRow2Height)
             drawBorderedRect(deptRect)
             "Department:".draw(at: CGPoint(x: margin + titleWidth + 8, y: currentY + 6), withAttributes: [.font: labelFont, .foregroundColor: labelColor])
             conflictCase.department.draw(at: CGPoint(x: margin + titleWidth + 8, y: currentY + 20), withAttributes: [.font: valueFont, .foregroundColor: valueColor])
-            
+
             let fileRect = CGRect(x: margin + titleWidth + deptWidth, y: currentY, width: fileWidth, height: empRow2Height)
             drawBorderedRect(fileRect)
             "File No.".draw(at: CGPoint(x: margin + titleWidth + deptWidth + 8, y: currentY + 6), withAttributes: [.font: labelFont, .foregroundColor: labelColor])
             employeeFileNo.draw(at: CGPoint(x: margin + titleWidth + deptWidth + 8, y: currentY + 20), withAttributes: [.font: valueFont, .foregroundColor: valueColor])
             currentY += empRow2Height
-            
+
             // ===== 7. COMPANY RULES VIOLATED =====
             let sectionTitleFont = UIFont.systemFont(ofSize: 11, weight: .bold)
             let sectionContentFont = UIFont.systemFont(ofSize: 10)
             let sectionPadding: CGFloat = 10
             let orangeColor = UIColor.orange
-            
+
             let rulesContent = policyViolatedContent.isEmpty ? "• ________________________________" : policyViolatedContent
             let rulesContentHeight = textHeight(rulesContent, font: sectionContentFont, width: contentWidth - sectionPadding * 2)
             let rulesSectionHeight = max(55, 26 + rulesContentHeight + sectionPadding)
-            
+
             checkPageBreak(neededHeight: rulesSectionHeight)
             let rulesRect = CGRect(x: margin, y: currentY, width: contentWidth, height: rulesSectionHeight)
             drawBorderedRect(rulesRect)
-            
+
             let iconRect = CGRect(x: margin + sectionPadding, y: currentY + sectionPadding, width: 10, height: 10)
             orangeColor.setFill()
             UIBezierPath(rect: iconRect).fill()
-            
+
             "Company rules violated".draw(at: CGPoint(x: margin + sectionPadding + 14, y: currentY + sectionPadding - 1), withAttributes: [.font: sectionTitleFont, .foregroundColor: UIColor.black])
             rulesContent.draw(in: CGRect(x: margin + sectionPadding, y: currentY + 26, width: contentWidth - sectionPadding * 2, height: rulesContentHeight + 10), withAttributes: [.font: sectionContentFont, .foregroundColor: UIColor.black])
             currentY += rulesSectionHeight
-            
+
             // ===== 8. DESCRIBE IN DETAIL WHAT HAPPENED =====
             let descContent = descriptionContent.isEmpty ? " " : descriptionContent
             let descContentHeight = textHeight(descContent, font: sectionContentFont, width: contentWidth - sectionPadding * 2)
             let descSectionHeight = max(80, 26 + descContentHeight + sectionPadding)
-            
+
             checkPageBreak(neededHeight: descSectionHeight)
             let descRect = CGRect(x: margin, y: currentY, width: contentWidth, height: descSectionHeight)
             drawBorderedRect(descRect)
-            
+
             let descIconRect = CGRect(x: margin + sectionPadding, y: currentY + sectionPadding, width: 10, height: 10)
             orangeColor.setFill()
             UIBezierPath(rect: descIconRect).fill()
-            
+
             "Describe in detail what happened".draw(at: CGPoint(x: margin + sectionPadding + 14, y: currentY + sectionPadding - 1), withAttributes: [.font: sectionTitleFont, .foregroundColor: UIColor.black])
             descContent.draw(in: CGRect(x: margin + sectionPadding, y: currentY + 26, width: contentWidth - sectionPadding * 2, height: descContentHeight + 15), withAttributes: [.font: sectionContentFont, .foregroundColor: UIColor.black])
             currentY += descSectionHeight
-            
+
             // ===== 9. CONDUCT DEFICIENCY =====
             let conductContent = conductDeficiencyContent.isEmpty ? "________________________________" : conductDeficiencyContent
             let conductContentHeight = textHeight(conductContent, font: sectionContentFont, width: contentWidth - sectionPadding * 2)
             let conductSectionHeight = max(50, 26 + conductContentHeight + sectionPadding)
-            
+
             checkPageBreak(neededHeight: conductSectionHeight)
             let conductRect = CGRect(x: margin, y: currentY, width: contentWidth, height: conductSectionHeight)
             drawBorderedRect(conductRect)
-            
+
             let triangleIconRect = CGRect(x: margin + sectionPadding, y: currentY + sectionPadding, width: 10, height: 10)
             orangeColor.setFill()
             UIBezierPath(rect: triangleIconRect).fill()
-            
+
             "Conduct Deficiency:".draw(at: CGPoint(x: margin + sectionPadding + 14, y: currentY + sectionPadding - 1), withAttributes: [.font: sectionTitleFont, .foregroundColor: UIColor.black])
             conductContent.draw(in: CGRect(x: margin + sectionPadding, y: currentY + 26, width: contentWidth - sectionPadding * 2, height: conductContentHeight + 10), withAttributes: [.font: sectionContentFont, .foregroundColor: UIColor.black])
             currentY += conductSectionHeight
-            
+
             // ===== 10. REQUIRED CORRECTIVE ACTION =====
             let correctiveContent = correctiveActionContent.isEmpty ? " " : correctiveActionContent
             let correctiveContentHeight = textHeight(correctiveContent, font: sectionContentFont, width: contentWidth - sectionPadding * 2)
             let correctiveSectionHeight = max(60, 26 + correctiveContentHeight + sectionPadding)
-            
+
             checkPageBreak(neededHeight: correctiveSectionHeight)
             let correctiveRect = CGRect(x: margin, y: currentY, width: contentWidth, height: correctiveSectionHeight)
             drawBorderedRect(correctiveRect)
-            
+
             let correctiveIconRect = CGRect(x: margin + sectionPadding, y: currentY + sectionPadding, width: 10, height: 10)
             orangeColor.setFill()
             UIBezierPath(rect: correctiveIconRect).fill()
-            
+
             "Required Corrective Action:".draw(at: CGPoint(x: margin + sectionPadding + 14, y: currentY + sectionPadding - 1), withAttributes: [.font: sectionTitleFont, .foregroundColor: UIColor.black])
             correctiveContent.draw(in: CGRect(x: margin + sectionPadding, y: currentY + 26, width: contentWidth - sectionPadding * 2, height: correctiveContentHeight + 10), withAttributes: [.font: sectionContentFont, .foregroundColor: UIColor.black])
             currentY += correctiveSectionHeight
-            
+
             // ===== 11. CONSEQUENCES OF NOT PERFORMING =====
             let consequencesText = consequencesContent.isEmpty ? " " : consequencesContent
             let consequencesContentHeight = textHeight(consequencesText, font: sectionContentFont, width: contentWidth - sectionPadding * 2)
             let consequencesSectionHeight = max(55, 26 + consequencesContentHeight + sectionPadding)
-            
+
             checkPageBreak(neededHeight: consequencesSectionHeight)
             let consequencesRect = CGRect(x: margin, y: currentY, width: contentWidth, height: consequencesSectionHeight)
             drawBorderedRect(consequencesRect)
-            
+
             let consequencesIconRect = CGRect(x: margin + sectionPadding, y: currentY + sectionPadding, width: 10, height: 10)
             UIColor.red.setFill()
             UIBezierPath(rect: consequencesIconRect).fill()
-            
+
             "Consequences of not performing:".draw(at: CGPoint(x: margin + sectionPadding + 14, y: currentY + sectionPadding - 1), withAttributes: [.font: sectionTitleFont, .foregroundColor: UIColor.black])
             consequencesText.draw(in: CGRect(x: margin + sectionPadding, y: currentY + 26, width: contentWidth - sectionPadding * 2, height: consequencesContentHeight + 10), withAttributes: [.font: sectionContentFont, .foregroundColor: UIColor.black])
             currentY += consequencesSectionHeight
-            
+
             // ===== 12. SIGNATURE SECTION =====
             let sigRowHeight: CGFloat = 50
             let sigCellWidth = contentWidth / 4
             let sigLabelFont = UIFont.systemFont(ofSize: 8)
             let sigLabelColor = UIColor.gray
-            
+
             func drawSignatureCell(x: CGFloat, y: CGFloat, label: String) {
                 let cellRect = CGRect(x: x, y: y, width: sigCellWidth, height: sigRowHeight)
                 drawBorderedRect(cellRect)
-                
+
                 let lineY = y + sigRowHeight - 18
                 let lineStartX = x + 6
                 let lineEndX = x + sigCellWidth - 8
-                
+
                 let linePath = UIBezierPath()
                 linePath.move(to: CGPoint(x: lineStartX, y: lineY))
                 linePath.addLine(to: CGPoint(x: lineEndX, y: lineY))
                 borderColor.setStroke()
                 linePath.lineWidth = 0.5
                 linePath.stroke()
-                
+
                 label.draw(at: CGPoint(x: lineStartX, y: lineY + 3), withAttributes: [.font: sigLabelFont, .foregroundColor: sigLabelColor])
             }
-            
+
             checkPageBreak(neededHeight: sigRowHeight * 2 + 60)
             drawSignatureCell(x: margin, y: currentY, label: "Supervisor")
             drawSignatureCell(x: margin + sigCellWidth, y: currentY, label: "Date")
             drawSignatureCell(x: margin + sigCellWidth * 2, y: currentY, label: "Manager")
             drawSignatureCell(x: margin + sigCellWidth * 3, y: currentY, label: "Date")
             currentY += sigRowHeight
-            
+
             drawSignatureCell(x: margin, y: currentY, label: "H.R. Department")
             drawSignatureCell(x: margin + sigCellWidth, y: currentY, label: "Date")
             drawSignatureCell(x: margin + sigCellWidth * 2, y: currentY, label: "Employee Signature")
             drawSignatureCell(x: margin + sigCellWidth * 3, y: currentY, label: "Date")
             currentY += sigRowHeight
-            
+
             // ===== 13. CERTIFICATION STATEMENT =====
             let certEnglish = "I, the undersigned, hereby certify that the situation has been explained to me. I understand the consequences if the infraction is not remedied. I certify that I have received a copy of this notice."
             let certSpanish = "Yo doy a conocer que se me ha explicado la situación presente. Yo entiendo las consecuencias futuras si no cumplo con las reglas. Yo certifico que he recibido una copia de este documento siempre y cuando lo firme."
-            
+
             let certFont = UIFont.systemFont(ofSize: 9, weight: .bold)
             let certItalicFont = UIFont.italicSystemFont(ofSize: 9)
-            
+
             let certEnglishHeight = textHeight(certEnglish, font: certFont, width: contentWidth - sectionPadding * 2)
             let certSpanishHeight = textHeight(certSpanish, font: certItalicFont, width: contentWidth - sectionPadding * 2)
             let certSectionHeight = certEnglishHeight + certSpanishHeight + sectionPadding * 2 + 6
-            
+
             checkPageBreak(neededHeight: certSectionHeight)
             let certRect = CGRect(x: margin, y: currentY, width: contentWidth, height: certSectionHeight)
             drawBorderedRect(certRect)
-            
+
             certEnglish.draw(in: CGRect(x: margin + sectionPadding, y: currentY + sectionPadding, width: contentWidth - sectionPadding * 2, height: certEnglishHeight), withAttributes: [.font: certFont, .foregroundColor: UIColor.black])
             certSpanish.draw(in: CGRect(x: margin + sectionPadding, y: currentY + sectionPadding + certEnglishHeight + 4, width: contentWidth - sectionPadding * 2, height: certSpanishHeight), withAttributes: [.font: certItalicFont, .foregroundColor: UIColor.gray])
         }
@@ -3182,34 +3220,34 @@ enum WarningType: String, CaseIterable {
 struct LogoImagePicker: UIViewControllerRepresentable {
     @Binding var image: UIImage?
     @Environment(\.dismiss) private var dismiss
-    
+
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()
         picker.delegate = context.coordinator
         picker.sourceType = .photoLibrary
         return picker
     }
-    
+
     func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
-    
+
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
-    
+
     class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
         let parent: LogoImagePicker
-        
+
         init(_ parent: LogoImagePicker) {
             self.parent = parent
         }
-        
+
         func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
             if let image = info[.originalImage] as? UIImage {
                 parent.image = image
             }
             parent.dismiss()
         }
-        
+
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
             parent.dismiss()
         }
@@ -3219,14 +3257,14 @@ struct LogoImagePicker: UIViewControllerRepresentable {
 // MARK: - Comment Tracking Service (Database API)
 class CommentTrackingService: ObservableObject {
     static let shared = CommentTrackingService()
-    
+
     private let baseURL = "https://dashmet-rca-api.onrender.com/api/conflict-cases"
-    
+
     @Published var isLoading = false
     @Published var error: String?
-    
+
     private init() {}
-    
+
     // MARK: - Add Comment (Save to Database)
     func addComment(
         caseId: String,
@@ -3237,24 +3275,24 @@ class CommentTrackingService: ObservableObject {
         guard let url = URL(string: "\(baseURL)/\(caseId)/review-comments") else {
             throw CommentTrackingError.invalidURL
         }
-        
+
         let requestBody: [String: Any] = [
             "section": section,
             "comment": comment,
             "createdBy": createdBy
         ]
-        
+
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
-        
+
         let (data, response) = try await URLSession.shared.data(for: request)
-        
+
         guard let httpResponse = response as? HTTPURLResponse else {
             throw CommentTrackingError.invalidResponse
         }
-        
+
         guard httpResponse.statusCode == 201 else {
             if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let errorMessage = json["error"] as? String {
@@ -3262,58 +3300,58 @@ class CommentTrackingService: ObservableObject {
             }
             throw CommentTrackingError.apiError("Failed to save comment: HTTP \(httpResponse.statusCode)")
         }
-        
+
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let dataObj = json["data"] as? [String: Any] else {
             throw CommentTrackingError.parsingError
         }
-        
+
         return parseReviewComment(from: dataObj)
     }
-    
+
     // MARK: - Get Comments for Case (From Database)
     func getComments(for caseId: String) async throws -> [ReviewComment] {
         guard let url = URL(string: "\(baseURL)/\(caseId)/review-comments") else {
             throw CommentTrackingError.invalidURL
         }
-        
+
         await MainActor.run { self.isLoading = true }
         defer { Task { @MainActor in self.isLoading = false } }
-        
+
         let (data, response) = try await URLSession.shared.data(from: url)
-        
+
         guard let httpResponse = response as? HTTPURLResponse else {
             throw CommentTrackingError.invalidResponse
         }
-        
+
         guard httpResponse.statusCode == 200 else {
             throw CommentTrackingError.apiError("Failed to fetch comments: HTTP \(httpResponse.statusCode)")
         }
-        
+
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let commentsData = json["data"] as? [[String: Any]] else {
             throw CommentTrackingError.parsingError
         }
-        
+
         return commentsData.map { parseReviewComment(from: $0) }
     }
-    
+
     // MARK: - Resolve Comment (Update in Database)
     func resolveComment(caseId: String, commentId: String) async throws {
         guard let url = URL(string: "\(baseURL)/\(caseId)/review-comments/\(commentId)/resolve") else {
             throw CommentTrackingError.invalidURL
         }
-        
+
         var request = URLRequest(url: url)
         request.httpMethod = "PATCH"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
+
         let (data, response) = try await URLSession.shared.data(for: request)
-        
+
         guard let httpResponse = response as? HTTPURLResponse else {
             throw CommentTrackingError.invalidResponse
         }
-        
+
         guard httpResponse.statusCode == 200 else {
             if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let errorMessage = json["error"] as? String {
@@ -3322,23 +3360,23 @@ class CommentTrackingService: ObservableObject {
             throw CommentTrackingError.apiError("Failed to resolve comment: HTTP \(httpResponse.statusCode)")
         }
     }
-    
+
     // MARK: - Delete Comment (From Database)
     func deleteComment(caseId: String, commentId: String) async throws {
         guard let url = URL(string: "\(baseURL)/\(caseId)/review-comments/\(commentId)") else {
             throw CommentTrackingError.invalidURL
         }
-        
+
         var request = URLRequest(url: url)
         request.httpMethod = "DELETE"
-        
+
         let (_, response) = try await URLSession.shared.data(for: request)
-        
+
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
             throw CommentTrackingError.apiError("Failed to delete comment")
         }
     }
-    
+
     // MARK: - Parse Comment from JSON
     private func parseReviewComment(from data: [String: Any]) -> ReviewComment {
         let databaseId = data["id"] as? String
@@ -3346,7 +3384,7 @@ class CommentTrackingService: ObservableObject {
         let comment = data["comment"] as? String ?? ""
         let createdBy = data["createdBy"] as? String ?? "Unknown"
         let isResolved = data["isResolved"] as? Bool ?? false
-        
+
         var createdAt = Date()
         if let createdAtString = data["createdAt"] as? String {
             let isoFormatter = ISO8601DateFormatter()
@@ -3360,7 +3398,7 @@ class CommentTrackingService: ObservableObject {
                 }
             }
         }
-        
+
         return ReviewComment(
             databaseId: databaseId,
             section: section,
@@ -3378,7 +3416,7 @@ enum CommentTrackingError: Error, LocalizedError {
     case invalidResponse
     case parsingError
     case apiError(String)
-    
+
     var errorDescription: String? {
         switch self {
         case .invalidURL:

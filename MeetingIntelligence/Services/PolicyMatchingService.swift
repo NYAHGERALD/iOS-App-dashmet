@@ -11,13 +11,13 @@ import Foundation
 // MARK: - Policy Matching Service
 class PolicyMatchingService {
     static let shared = PolicyMatchingService()
-    
+
     private let baseURL = "https://dashmet-rca-api.onrender.com/api/policy-matching"
-    
+
     private init() {}
-    
+
     // MARK: - Match Policies
-    
+
     /// Matches case complaints against policy sections
     /// - Parameters:
     ///   - conflictCase: The conflict case with details
@@ -41,11 +41,11 @@ class PolicyMatchingService {
         policySections: [PolicySection],
         priorHistoryContext: String? = nil
     ) async throws -> PolicyMatchingResult {
-        
+
         guard let url = URL(string: baseURL + "/match") else {
             throw PolicyMatchingError.invalidURL
         }
-        
+
         // Build case details
         let caseDetails: [String: Any] = [
             "caseType": conflictCase.type.rawValue,
@@ -53,19 +53,19 @@ class PolicyMatchingService {
             "location": conflictCase.location,
             "department": conflictCase.department
         ]
-        
+
         // Build complaint A
         let complaintAData: [String: Any] = [
             "employeeName": complaintAEmployee.name,
             "text": complaintA.cleanedText
         ]
-        
+
         // Build complaint B
         let complaintBData: [String: Any] = [
             "employeeName": complaintBEmployee.name,
             "text": complaintB.cleanedText
         ]
-        
+
         // Build analysis result if available
         var analysisData: [String: Any]? = nil
         if let analysis = analysisResult {
@@ -75,7 +75,7 @@ class PolicyMatchingService {
                 "neutralSummary": analysis.neutralSummary
             ]
         }
-        
+
         // Build witness statements
         let witnessData: [[String: String]] = witnessStatements.map { witness in
             [
@@ -83,7 +83,7 @@ class PolicyMatchingService {
                 "text": witness.text
             ]
         }
-        
+
         // Build policy sections
         let policySectionsData: [[String: Any]] = policySections.map { section in
             var dict: [String: Any] = [
@@ -99,7 +99,7 @@ class PolicyMatchingService {
             if let v = section.fourthProgression { dict["fourthProgression"] = v }
             return dict
         }
-        
+
         // Build full request body
         var requestBody: [String: Any] = [
             "caseDetails": caseDetails,
@@ -107,43 +107,43 @@ class PolicyMatchingService {
             "complaintB": complaintBData,
             "policySections": policySectionsData
         ]
-        
+
         if let analysis = analysisData {
             requestBody["analysisResult"] = analysis
         }
-        
+
         if !witnessData.isEmpty {
             requestBody["witnessStatements"] = witnessData
         }
-        
+
         // Include prior history context for better policy matching
         if let priorHistory = priorHistoryContext {
             requestBody["priorHistoryContext"] = priorHistory
         }
-        
+
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
         request.timeoutInterval = 120 // 2 minutes for policy matching (accounts for Render cold start + GPT-4o processing)
-        
+
         let startTime = Date()
         print("PolicyMatchingService: Starting policy matching at \(startTime)")
         print("PolicyMatchingService: Sending \(policySections.count) policy sections for analysis...")
-        
+
         let (data, response) = try await URLSession.shared.data(for: request)
-        
+
         let elapsed = Date().timeIntervalSince(startTime)
         print("PolicyMatchingService: Response received in \(String(format: "%.1f", elapsed))s")
-        
+
         guard let httpResponse = response as? HTTPURLResponse else {
             throw PolicyMatchingError.invalidResponse
         }
-        
+
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw PolicyMatchingError.invalidResponse
         }
-        
+
         // Check for error
         if httpResponse.statusCode != 200 {
             if let errorMessage = json["message"] as? String {
@@ -154,24 +154,24 @@ class PolicyMatchingService {
             }
             throw PolicyMatchingError.apiError("Server error: HTTP \(httpResponse.statusCode)")
         }
-        
+
         // Check success
         guard let success = json["success"] as? Bool, success,
               let resultData = json["data"] as? [String: Any] else {
             throw PolicyMatchingError.parsingError
         }
-        
+
         // Parse result
         return try parseMatchingResult(resultData)
     }
-    
+
     // MARK: - Parse Result
-    
+
     private func parseMatchingResult(_ data: [String: Any]) throws -> PolicyMatchingResult {
         let matchesData = data["matches"] as? [[String: Any]] ?? []
         let overallGuidance = data["overallGuidance"] as? String ?? ""
         let generatedAt = data["generatedAt"] as? String ?? ISO8601DateFormatter().string(from: Date())
-        
+
         let matches: [PolicyMatchResult] = matchesData.compactMap { matchData in
             guard let sectionId = matchData["sectionId"] as? String,
                   let sectionNumber = matchData["sectionNumber"] as? String,
@@ -180,9 +180,9 @@ class PolicyMatchingService {
                   let matchConfidence = matchData["matchConfidence"] as? Double else {
                 return nil
             }
-            
+
             let keyPhrases = matchData["keyPhrases"] as? [String] ?? []
-            
+
             return PolicyMatchResult(
                 sectionId: UUID(uuidString: sectionId) ?? UUID(),
                 sectionNumber: sectionNumber,
@@ -192,7 +192,7 @@ class PolicyMatchingService {
                 keyPhrases: keyPhrases
             )
         }
-        
+
         return PolicyMatchingResult(
             matches: matches,
             overallGuidance: overallGuidance,
@@ -209,7 +209,7 @@ enum PolicyMatchingError: Error, LocalizedError {
     case parsingError
     case apiError(String)
     case noPolicySections
-    
+
     var errorDescription: String? {
         switch self {
         case .invalidURL:
@@ -233,15 +233,15 @@ struct PolicyMatchingResult: Codable {
     let matches: [PolicyMatchResult]
     let overallGuidance: String
     let generatedAt: Date
-    
+
     var hasMatches: Bool {
         !matches.isEmpty
     }
-    
+
     var highConfidenceMatches: [PolicyMatchResult] {
         matches.filter { $0.matchConfidence >= 0.75 }
     }
-    
+
     var moderateConfidenceMatches: [PolicyMatchResult] {
         matches.filter { $0.matchConfidence >= 0.5 && $0.matchConfidence < 0.75 }
     }
@@ -256,7 +256,35 @@ struct PolicyMatchResult: Identifiable, Codable {
     let relevanceExplanation: String
     let matchConfidence: Double
     let keyPhrases: [String]
-    
+
+    enum CodingKeys: String, CodingKey {
+        case id, sectionId, sectionNumber, sectionTitle
+        case relevanceExplanation, matchConfidence, keyPhrases
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // id may be missing (web-generated data doesn't include it)
+        if let decoded = try? container.decode(UUID.self, forKey: .id) {
+            id = decoded
+        } else {
+            id = UUID()
+        }
+        // sectionId may be a non-UUID string (GPT-generated) or missing
+        if let decoded = try? container.decode(UUID.self, forKey: .sectionId) {
+            sectionId = decoded
+        } else if let str = try? container.decode(String.self, forKey: .sectionId), let uuid = UUID(uuidString: str) {
+            sectionId = uuid
+        } else {
+            sectionId = UUID()
+        }
+        sectionNumber = try container.decode(String.self, forKey: .sectionNumber)
+        sectionTitle = try container.decode(String.self, forKey: .sectionTitle)
+        relevanceExplanation = try container.decode(String.self, forKey: .relevanceExplanation)
+        matchConfidence = try container.decode(Double.self, forKey: .matchConfidence)
+        keyPhrases = (try? container.decode([String].self, forKey: .keyPhrases)) ?? []
+    }
+
     init(id: UUID = UUID(), sectionId: UUID, sectionNumber: String, sectionTitle: String, relevanceExplanation: String, matchConfidence: Double, keyPhrases: [String]) {
         self.id = id
         self.sectionId = sectionId
@@ -266,7 +294,7 @@ struct PolicyMatchResult: Identifiable, Codable {
         self.matchConfidence = matchConfidence
         self.keyPhrases = keyPhrases
     }
-    
+
     /// Confidence level category
     var confidenceLevel: ConfidenceLevel {
         if matchConfidence >= 0.8 {
@@ -277,7 +305,7 @@ struct PolicyMatchResult: Identifiable, Codable {
             return .low
         }
     }
-    
+
     /// Color for confidence indicator
     var confidenceColor: String {
         switch confidenceLevel {
@@ -286,10 +314,10 @@ struct PolicyMatchResult: Identifiable, Codable {
         case .low: return "gray"
         }
     }
-    
+
     enum ConfidenceLevel {
         case high, moderate, low
-        
+
         var label: String {
             switch self {
             case .high: return "High Relevance"
